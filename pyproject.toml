@@ -25,6 +25,7 @@ loamz-server = { workspace = true }
 loamz-core = { git = "https://github.com/loamz/loamz-python", subdirectory = "sdk/python/core" }
 loamz-identity = { git = "https://github.com/loamz/loamz-python", subdirectory = "sdk/python/identity" }
 loamz-data = { git = "https://github.com/loamz/loamz-python", subdirectory = "sdk/python/data" }
+loamz-agents = { git = "https://github.com/loamz/loamz-python", subdirectory = "sdk/python/agents" }
 
 [dependency-groups]
 dev = [
@@ -32,6 +33,7 @@ dev = [
     "import-linter>=2.11",
     "pytest>=9.0",
     "pytest-asyncio>=1.4",
+    "loamz-agents",  # the end-to-end script drives the agents API through it
 ]
 
 # One style for every loamz package (packages without their own [tool.ruff] inherit this).

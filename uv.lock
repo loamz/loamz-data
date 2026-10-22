@@ -16,6 +16,7 @@ members = [
 [manifest.dependency-groups]
 dev = [
     { name = "import-linter", specifier = ">=2.11" },
+    { name = "loamz-agents", git = "https://github.com/loamz/loamz-python?subdirectory=sdk%2Fpython%2Fagents" },
     { name = "pytest", specifier = ">=9.0" },
     { name = "pytest-asyncio", specifier = ">=1.4" },
     { name = "ruff", specifier = ">=0.15.0" },
@@ -1777,9 +1778,19 @@ wheels = [
 ]
 
 [[package]]
+name = "loamz-agents"
+version = "0.1.0"
+source = { git = "https://github.com/loamz/loamz-python?subdirectory=sdk%2Fpython%2Fagents#4a29635bb466b1855543ff38f857e19c9fb2f137" }
+dependencies = [
+    { name = "httpx" },
+    { name = "loamz-core" },
+    { name = "loamz-identity" },
+]
+
+[[package]]
 name = "loamz-core"
 version = "0.1.0"
-source = { git = "https://github.com/loamz/loamz-python?subdirectory=sdk%2Fpython%2Fcore#25743da4c8e77de772b8388f6aaf01a82cab932f" }
+source = { git = "https://github.com/loamz/loamz-python?subdirectory=sdk%2Fpython%2Fcore#4a29635bb466b1855543ff38f857e19c9fb2f137" }
 dependencies = [
     { name = "httpx" },
 ]
@@ -1787,7 +1798,7 @@ dependencies = [
 [[package]]
 name = "loamz-data"
 version = "0.1.0"
-source = { git = "https://github.com/loamz/loamz-python?subdirectory=sdk%2Fpython%2Fdata#25743da4c8e77de772b8388f6aaf01a82cab932f" }
+source = { git = "https://github.com/loamz/loamz-python?subdirectory=sdk%2Fpython%2Fdata#4a29635bb466b1855543ff38f857e19c9fb2f137" }
 dependencies = [
     { name = "httpx" },
     { name = "loamz-core" },
@@ -1993,7 +2004,7 @@ dev = [
 [[package]]
 name = "loamz-identity"
 version = "0.1.0"
-source = { git = "https://github.com/loamz/loamz-python?subdirectory=sdk%2Fpython%2Fidentity#25743da4c8e77de772b8388f6aaf01a82cab932f" }
+source = { git = "https://github.com/loamz/loamz-python?subdirectory=sdk%2Fpython%2Fidentity#4a29635bb466b1855543ff38f857e19c9fb2f137" }
 dependencies = [
     { name = "httpx" },
     { name = "loamz-core" },

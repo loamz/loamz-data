@@ -222,41 +222,21 @@ if (
     or ENV.get("ANTHROPIC_API_KEY")
     or ENV.get("OPENROUTER_API_KEY")
 ):
-    r = http.post(f"{AGENT}/threads", headers=user, json={"name": "e2e"})
-    step(
-        "chat: create a thread",
-        r.status_code in (200, 201),
-        str(r.status_code) + r.text[:200],
-    )
-    thread = r.json()["id"]
-    import json as _json
+    # The Python client library drives the agents API: a thread, then a streamed run.
+    from loamz.agents import AgentsClient
 
-    body = {
-        "thread_id": thread,
-        "messages": [
-            {
-                "role": "user",
-                "content": "Read the attached file and tell me in one sentence where cells keep data.",
-            }
-        ],
-        "file_ids": [file_id],
-    }
-    answer, failed, events = "", False, []
-    # The chat endpoint answers with the run's event stream (SSE).
-    with http.stream("POST", f"{AGENT}/chat", headers=user, json=body, timeout=180) as r:
-        step("chat: start a run", r.status_code == 200, str(r.status_code))
-        for line in r.iter_lines():
-            if not line.startswith("data:") or line.strip() == "data: [DONE]":
-                continue
-            event = _json.loads(line[5:])
-            events.append(event.get("type"))
-            if event.get("type") == "text.delta":
-                answer += event.get("delta") or event.get("text") or ""
-            if event.get("type") in ("run.failed", "error"):
-                failed = True
-                answer = str(event)
-            if event.get("type") in ("run.completed", "run.failed"):
-                break
+    token = user["Authorization"].split(" ", 1)[1]
+    with AgentsClient(AGENT.removesuffix("/api/v1"), token, timeout=180) as agents:
+        thread = agents.create_thread(name="e2e")["id"]
+        step("chat: create a thread (SDK)", bool(thread), thread)
+        answer, failed, events = "", False, []
+        prompt = "Read the attached file and tell me in one sentence where cells keep data."
+        for event in agents.invoke_agent(thread, prompt, file_ids=[file_id]):
+            events.append(event.type)
+            answer += event.text
+            if event.failed:
+                failed, answer = True, str(event.data)
+        step("chat: start a run", bool(events), ",".join(events[:3]))
     step("chat: the answer streams back", answer != "" and not failed, answer[-300:])
     step("chat: it read the file", "cloud" in answer.lower(), answer[-300:])
 else:
