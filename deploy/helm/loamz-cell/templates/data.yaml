@@ -17,11 +17,11 @@
   valueFrom: { %s }
 - name: LOAMZ_DATA_RETRIEVAL_URL
   value: "postgresql://%s:$(POSTGRES_PASSWORD)@%s:%s/%s?sslmode=%s"
-- { name: LOAMZ_DATA_RETRIEVAL_DIR, value: /var/lib/substrate-data/retrieval }
+- { name: LOAMZ_DATA_RETRIEVAL_DIR, value: /var/lib/loamz-data/retrieval }
 - { name: LOAMZ_DATA_TICKET_PRIVATE_KEY_FILE, value: /keys/ticket.pem }
 - { name: LOAMZ_DATA_VOLUMES_PUBLIC_ENDPOINT_URL, value: %s }
-- { name: LOAMZ_DATA_SCRATCH, value: /var/lib/substrate-data/tmp }` $dataEnv (include "cell.pgUser" .) (include "cell.pgHost" .) (include "cell.pgPort" .) .Values.postgres.databases.data (include "cell.pgSslmode" .) (include "cell.secretRef" (dict "root" . "key" "controller-token")) (include "cell.secretRef" (dict "root" . "key" "control-s3-access-key-id")) (include "cell.secretRef" (dict "root" . "key" "control-s3-secret-access-key")) (include "cell.secretRef" (dict "root" . "key" "mask-salt")) (include "cell.pgUser" .) (include "cell.pgHost" .) (include "cell.pgPort" .) .Values.postgres.databases.retrieval (include "cell.pgSslmode" .) (.Values.publicUrls.s3 | quote) }}
-{{- include "cell.workload" (dict "root" . "component" "data-api" "repo" "substrate-data" "override" $img "port" 8020 "probePath" "/readyz" "args" (list "serve" "--host" "0.0.0.0" "--port" "8020") "cfg" .Values.data.api "env" $apiEnv "writable" (list (dict "name" "state" "path" "/var/lib/substrate-data") (dict "name" "home" "path" "/opt/substrate/home-rw")) "scheme" "HTTP" "volumes" (list (dict "name" "ticket" "secret" (dict "secretName" $tkName "items" (list (dict "key" "ticket.pem" "path" "ticket.pem")))) (dict "name" "tls" "secret" (dict "secretName" (printf "%s-internal-tls" $kc)))) "volumeMounts" (list (dict "name" "ticket" "mountPath" "/keys" "readOnly" true) (dict "name" "tls" "mountPath" "/tls" "readOnly" true))) }}
+- { name: LOAMZ_DATA_SCRATCH, value: /var/lib/loamz-data/tmp }` $dataEnv (include "cell.pgUser" .) (include "cell.pgHost" .) (include "cell.pgPort" .) .Values.postgres.databases.data (include "cell.pgSslmode" .) (include "cell.secretRef" (dict "root" . "key" "controller-token")) (include "cell.secretRef" (dict "root" . "key" "control-s3-access-key-id")) (include "cell.secretRef" (dict "root" . "key" "control-s3-secret-access-key")) (include "cell.secretRef" (dict "root" . "key" "mask-salt")) (include "cell.pgUser" .) (include "cell.pgHost" .) (include "cell.pgPort" .) .Values.postgres.databases.retrieval (include "cell.pgSslmode" .) (.Values.publicUrls.s3 | quote) }}
+{{- include "cell.workload" (dict "root" . "component" "data-api" "repo" "loamz-data" "override" $img "port" 8020 "probePath" "/readyz" "args" (list "serve" "--host" "0.0.0.0" "--port" "8020") "cfg" .Values.data.api "env" $apiEnv "writable" (list (dict "name" "state" "path" "/var/lib/loamz-data") (dict "name" "home" "path" "/opt/loamz/home-rw")) "scheme" "HTTP" "volumes" (list (dict "name" "ticket" "secret" (dict "secretName" $tkName "items" (list (dict "key" "ticket.pem" "path" "ticket.pem")))) (dict "name" "tls" "secret" (dict "secretName" (printf "%s-internal-tls" $kc)))) "volumeMounts" (list (dict "name" "ticket" "mountPath" "/keys" "readOnly" true) (dict "name" "tls" "mountPath" "/tls" "readOnly" true))) }}
 
 {{- /* controller: one active, its queue in a PVC */}}
 {{- $ctrlEnv := printf `%s
@@ -41,7 +41,7 @@ spec:
   storageClassName: {{ . }}
   {{- end }}
   resources: { requests: { storage: {{ .Values.data.controller.storage }} } }
-{{ "\n" }}{{- include "cell.workload" (dict "root" . "component" "data-controller" "repo" "substrate-data" "override" $img "port" 8040 "probePath" "/readyz" "args" (list "controller" "--host" "0.0.0.0" "--port" "8040") "cfg" .Values.data.controller "env" $ctrlEnv "scheme" "HTTPS" "volumes" (list (dict "name" "state" "persistentVolumeClaim" (dict "claimName" (printf "%s-data-controller" $kc))) (dict "name" "tls" "secret" (dict "secretName" (printf "%s-internal-tls" $kc)))) "volumeMounts" (list (dict "name" "state" "mountPath" "/var/lib/substrate-data") (dict "name" "tls" "mountPath" "/tls" "readOnly" true))) }}
+{{ "\n" }}{{- include "cell.workload" (dict "root" . "component" "data-controller" "repo" "loamz-data" "override" $img "port" 8040 "probePath" "/readyz" "args" (list "controller" "--host" "0.0.0.0" "--port" "8040") "cfg" .Values.data.controller "env" $ctrlEnv "scheme" "HTTPS" "volumes" (list (dict "name" "state" "persistentVolumeClaim" (dict "claimName" (printf "%s-data-controller" $kc))) (dict "name" "tls" "secret" (dict "secretName" (printf "%s-internal-tls" $kc)))) "volumeMounts" (list (dict "name" "state" "mountPath" "/var/lib/loamz-data") (dict "name" "tls" "mountPath" "/tls" "readOnly" true))) }}
 
 {{- /* workers: SQL, jobs, RAG */}}
 {{- $ports := dict "sql" 8041 "jobs" 8042 "rag" 8043 }}
@@ -58,7 +58,7 @@ spec:
 - { name: LOAMZ_DATA_TLS_CERT_FILE, value: /tls/tls.crt }
 - { name: LOAMZ_DATA_TLS_KEY_FILE, value: /tls/tls.key }` $dataEnv (include "cell.secretRef" (dict "root" . "key" "worker-token")) (include "cell.secretRef" (dict "root" . "key" "worker-s3-access-key-id")) (include "cell.secretRef" (dict "root" . "key" "worker-s3-secret-access-key")) (.Values.data.workers.memoryLimit | quote) }}
 {{- range $role, $port := $ports }}
-{{- include "cell.workload" (dict "root" $ "component" (printf "data-worker-%s" $role) "repo" "substrate-data" "override" $img "port" $port "probePath" "/readyz" "args" (list "worker" "--role" $role "--port" ($port | toString)) "cfg" (index $.Values.data.workers $role) "env" $workerEnv "writable" (list (dict "name" "state" "path" "/var/lib/substrate-data")) "scheme" "HTTPS" "volumes" (list (dict "name" "ticket" "secret" (dict "secretName" $tkName "items" (list (dict "key" "ticket.pub.pem" "path" "ticket.pub.pem")))) (dict "name" "tls" "secret" (dict "secretName" (printf "%s-internal-tls" $kc)))) "volumeMounts" (list (dict "name" "ticket" "mountPath" "/keys" "readOnly" true) (dict "name" "tls" "mountPath" "/tls" "readOnly" true))) }}
+{{- include "cell.workload" (dict "root" $ "component" (printf "data-worker-%s" $role) "repo" "loamz-data" "override" $img "port" $port "probePath" "/readyz" "args" (list "worker" "--role" $role "--port" ($port | toString)) "cfg" (index $.Values.data.workers $role) "env" $workerEnv "writable" (list (dict "name" "state" "path" "/var/lib/loamz-data")) "scheme" "HTTPS" "volumes" (list (dict "name" "ticket" "secret" (dict "secretName" $tkName "items" (list (dict "key" "ticket.pub.pem" "path" "ticket.pub.pem")))) (dict "name" "tls" "secret" (dict "secretName" (printf "%s-internal-tls" $kc)))) "volumeMounts" (list (dict "name" "ticket" "mountPath" "/keys" "readOnly" true) (dict "name" "tls" "mountPath" "/tls" "readOnly" true))) }}
 {{- end }}
 
 {{- /* Ticket key pair: Helm cannot make Ed25519 keys, so a pre-install Job does (unless you bring data.ticketKeys.existingSecret). */}}
@@ -104,7 +104,7 @@ spec:
       securityContext: { runAsNonRoot: true, runAsUser: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: keygen
-          image: {{ include "cell.image" (dict "root" . "repo" "substrate-data" "override" $img) }}
+          image: {{ include "cell.image" (dict "root" . "repo" "loamz-data" "override" $img) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           command: [python, -c]
           args:
@@ -149,14 +149,14 @@ spec:
       securityContext: { runAsNonRoot: true, runAsUser: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: attach
-          image: {{ include "cell.image" (dict "root" . "repo" "substrate-data" "override" $img) }}
+          image: {{ include "cell.image" (dict "root" . "repo" "loamz-data" "override" $img) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           command: [sh, -ec]
           args:
             - |
               for role in sql jobs rag; do
                 case $role in sql) port=8041;; jobs) port=8042;; rag) port=8043;; esac
-                substrate-data attach --name "$role" --role "$role" --url "https://{{ $kc }}-data-worker-$role:$port" --token-env LOAMZ_DATA_WORKER_TOKEN
+                loamz-server data attach --name "$role" --role "$role" --url "https://{{ $kc }}-data-worker-$role:$port" --token-env LOAMZ_DATA_WORKER_TOKEN
               done
           env:
             {{- $dataEnv | nindent 12 }}
@@ -169,7 +169,7 @@ spec:
       volumes: [ { name: tmp, emptyDir: {} }, { name: tls, secret: { secretName: {{ $kc }}-internal-tls } } ]
 
 ---
-{{- /* Private CA + one certificate for the controller and workers (substrate-data refuses plain HTTP between them). Kept across upgrades. */}}
+{{- /* Private CA + one certificate for the controller and workers (loamz-data refuses plain HTTP between them). Kept across upgrades. */}}
 {{- $tlsName := printf "%s-internal-tls" $kc }}
 {{- $oldTls := lookup "v1" "Secret" .Release.Namespace $tlsName }}
 {{- $hosts := list "localhost" }}
@@ -186,8 +186,8 @@ data:
   tls.crt: {{ index $oldTls.data "tls.crt" }}
   tls.key: {{ index $oldTls.data "tls.key" }}
   {{- else }}
-  {{- $ca := genCA "substrate cell internal CA" 3650 }}
-  {{- $cert := genSignedCert "substrate-data internal" nil $hosts 825 $ca }}
+  {{- $ca := genCA "loamz cell internal CA" 3650 }}
+  {{- $cert := genSignedCert "loamz-data internal" nil $hosts 825 $ca }}
   ca.crt: {{ $ca.Cert | b64enc }}
   tls.crt: {{ $cert.Cert | b64enc }}
   tls.key: {{ $cert.Key | b64enc }}

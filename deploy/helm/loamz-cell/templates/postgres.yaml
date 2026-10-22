@@ -67,14 +67,14 @@ spec:
           image: {{ .Values.postgres.bundled.image }}
           args: [postgres, -c, ssl=on, -c, ssl_cert_file=/tls/tls.crt, -c, ssl_key_file=/tls/tls.key]
           env:
-            - { name: POSTGRES_USER, value: substrate }
+            - { name: POSTGRES_USER, value: loamz }
             - { name: POSTGRES_DB, value: {{ .Values.postgres.databases.agent }} }
             - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
             - name: POSTGRES_PASSWORD
               valueFrom: { {{ include "cell.secretRef" (dict "root" . "key" "postgres-password") }} }
           ports: [ { name: pg, containerPort: 5432 } ]
-          readinessProbe: { exec: { command: [pg_isready, -U, substrate] }, periodSeconds: 5 }
-          livenessProbe: { exec: { command: [pg_isready, -U, substrate] }, periodSeconds: 20, initialDelaySeconds: 30 }
+          readinessProbe: { exec: { command: [pg_isready, -U, loamz] }, periodSeconds: 5 }
+          livenessProbe: { exec: { command: [pg_isready, -U, loamz] }, periodSeconds: 20, initialDelaySeconds: 30 }
           resources: {{- toYaml .Values.postgres.bundled.resources | nindent 12 }}
           securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
           volumeMounts:

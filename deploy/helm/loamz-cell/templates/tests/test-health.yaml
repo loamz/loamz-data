@@ -10,7 +10,7 @@ spec:
   securityContext: { runAsNonRoot: true, runAsUser: 10001, seccompProfile: { type: RuntimeDefault } }
   containers:
     - name: probe
-      image: {{ include "cell.image" (dict "root" . "repo" "substrate-data" "override" .Values.data.image) }}
+      image: {{ include "cell.image" (dict "root" . "repo" "loamz-data" "override" .Values.data.image) }}
       command: [python, -c]
       args:
         - |

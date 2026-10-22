@@ -44,7 +44,7 @@ export const Editor = dynamic(
 
 export function configureEditorThemes(monaco: typeof import("monaco-editor")) {
   for (const dark of [false, true]) {
-    monaco.editor.defineTheme(dark ? "substrate-dark" : "substrate-light", {
+    monaco.editor.defineTheme(dark ? "loamz-dark" : "loamz-light", {
       base: dark ? "vs-dark" : "vs",
       inherit: true,
       rules: [

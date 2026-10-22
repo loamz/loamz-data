@@ -14,7 +14,7 @@ export function ComputeApplicationAccess({
     typeof window === "undefined"
       ? ""
       : window.location.origin.replace(":3011", ":8020");
-  const python = `from substrate_data_client import DataClient, ClientCredentials
+  const python = `from loamz.data import DataClient, ClientCredentials
 
 client = DataClient(
     "${origin}",

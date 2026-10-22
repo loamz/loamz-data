@@ -1,4 +1,4 @@
-# Substrate cell. Everything here has a working default for a laptop (kind) install; production overrides are
+# Loamz cell. Everything here has a working default for a laptop (kind) install; production overrides are
 # marked "production:". The chart never holds a real secret: see secrets.* and docs in deploy/README.md.
 
 nameOverride: ""
@@ -10,7 +10,7 @@ global:
   imageTag: ""
   imagePullPolicy: IfNotPresent
   imagePullSecrets: []
-  # Extra env for every Substrate container (list of Kubernetes env entries).
+  # Extra env for every Loamz container (list of Kubernetes env entries).
   extraEnv: []
   # Pod /etc/hosts entries, for clusters where the public hostnames do not resolve from inside (kind with *.localtest.me:
   # map them to the ingress controller's ClusterIP). Applies to the workloads this chart creates.
@@ -54,12 +54,12 @@ postgres:
   external:
     host: ""
     port: 5432
-    user: substrate
-    # sslmode require | verify-ca | verify-full. substrate-data refuses anything weaker off-machine.
+    user: loamz
+    # sslmode require | verify-ca | verify-full. loamz-data refuses anything weaker off-machine.
     sslmode: require
-    # The databases must exist: agentdb (with pgvector and uuid-ossp), keycloak, substrate_data, data_retrieval (pgvector: the
-    # documents and memory index, ADR 0008), substrate_ui.
-  databases: { agent: agentdb, keycloak: keycloak, data: substrate_data, retrieval: data_retrieval, ui: substrate_ui }
+    # The databases must exist: agentdb (with pgvector and uuid-ossp), keycloak, loamz_data, data_retrieval (pgvector: the
+    # documents and memory index, ADR 0008), loamz_ui.
+  databases: { agent: agentdb, keycloak: keycloak, data: loamz_data, retrieval: data_retrieval, ui: loamz_ui }
 
 redis:
   enabled: true
@@ -89,8 +89,8 @@ s3:
     icebergCatalogUrl: ""
   buckets:
     warehouse: warehouse
-    staging: substrate-staging
-    volumes: substrate-volumes
+    staging: loamz-staging
+    volumes: loamz-volumes
     agents: agent-files
   # Names the warehouse independently of how each process reaches it. Same on every component.
   storageId: ""
@@ -115,7 +115,7 @@ keycloak:
     #     providerId: oidc
     #     enabled: true
     #     config:
-    #       clientId: substrate-cell
+    #       clientId: loamz-cell
     #       clientSecret: "${ACCOUNTS_BROKER_CLIENT_SECRET}"
     #       authorizationUrl: https://accounts.example.com/realms/accounts/protocol/openid-connect/auth
     #       tokenUrl: https://accounts.example.com/realms/accounts/protocol/openid-connect/token
@@ -155,11 +155,11 @@ agents:
     live_stream: { port: 8017, replicas: 1, resources: { requests: { cpu: 100m, memory: 256Mi } } }
     admin: { port: 8019, replicas: 1, resources: { requests: { cpu: 100m, memory: 256Mi } } }
 
-# ── substrate-data ────────────────────────────────────────────────────────────
+# ── loamz-data ────────────────────────────────────────────────────────────
 data:
   image: { repository: "", tag: "" }
   # The services sit on the cluster network behind the ingress that terminates TLS. Plain HTTP between them is an
-  # explicit opt-in in substrate-data; NetworkPolicy keeps other namespaces out. production: terminate TLS in a mesh.
+  # explicit opt-in in loamz-data; NetworkPolicy keeps other namespaces out. production: terminate TLS in a mesh.
   behindTlsProxy: true
   # Ed25519 ticket signing keys. Empty = a pre-install Job generates them; or name a Secret with ticket.pem and ticket.pub.pem.
   ticketKeys:

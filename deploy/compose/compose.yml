@@ -1,4 +1,4 @@
-# Substrate cell: the self-host bundle (ADR 0006). One identical stack for every hosting model's smallest form.
+# Loamz cell: the self-host bundle (ADR 0006). One identical stack for every hosting model's smallest form.
 #
 #   ./gen-env.sh                                   # secrets
 #   docker compose --profile agents up -d --build        # agent server as one process (default choice)
@@ -21,8 +21,8 @@ x-data-env: &data-env
   LOAMZ_DATA_S3_ENDPOINT_URL: http://seaweedfs:8333
   LOAMZ_DATA_ICEBERG_CATALOG_URL: http://seaweedfs:8181
   LOAMZ_DATA_WAREHOUSE: ${WAREHOUSE_BUCKET:-warehouse}
-  LOAMZ_DATA_STAGING_BUCKET: ${STAGING_BUCKET:-substrate-staging}
-  LOAMZ_DATA_VOLUMES_BUCKET: ${VOLUMES_BUCKET:-substrate-volumes}
+  LOAMZ_DATA_STAGING_BUCKET: ${STAGING_BUCKET:-loamz-staging}
+  LOAMZ_DATA_VOLUMES_BUCKET: ${VOLUMES_BUCKET:-loamz-volumes}
   LOAMZ_DATA_STORAGE_ID: cell-warehouse
   LOAMZ_DATA_CONTROLLER_URL: https://data-controller:8040
 
@@ -49,7 +49,7 @@ x-worker-env: &worker-env
   LOAMZ_DATA_S3_ACCESS_KEY_ID: ${WORKER_S3_ACCESS_KEY_ID:?}
   LOAMZ_DATA_S3_SECRET_ACCESS_KEY: ${WORKER_S3_SECRET_ACCESS_KEY:?}
   LOAMZ_DATA_TICKET_PUBLIC_KEY_FILE: /keys/ticket.pub.pem
-  LOAMZ_DATA_WORKER_MEMORY_LIMIT: ${LOAMZ_DATA_WORKER_MEMORY_LIMIT:-${SUBSTRATE_DATA_WORKER_MEMORY_LIMIT:-2GB}}
+  LOAMZ_DATA_WORKER_MEMORY_LIMIT: ${LOAMZ_DATA_WORKER_MEMORY_LIMIT:-2GB}
 
 x-agent-image: &agent-image
   image: ${IMAGE_REGISTRY:-ghcr.io/ravikumarchavva}/loamz-agents:${IMAGE_TAG:-local}
@@ -57,12 +57,12 @@ x-agent-image: &agent-image
 
 x-agent-env: &agent-env
   # Loamz Agents native settings tree (LOAMZ_AGENTS_<SECTION>__<NAME>)
-  LOAMZ_AGENTS_DATABASE__URL: postgresql://${POSTGRES_USER:-substrate}:${POSTGRES_PASSWORD:?run ./gen-env.sh}@postgres:5432/agentdb?sslmode=require
+  LOAMZ_AGENTS_DATABASE__URL: postgresql://${POSTGRES_USER:-loamz}:${POSTGRES_PASSWORD:?run ./gen-env.sh}@postgres:5432/agentdb?sslmode=require
   LOAMZ_AGENTS_REDIS__URL: redis://:${REDIS_PASSWORD:?}@redis:6379/0
   LOAMZ_AGENTS_OIDC__ISSUER: ${KEYCLOAK_PUBLIC_URL:-http://keycloak.localhost:${PORT_KEYCLOAK:-8081}}/realms/loamz
   LOAMZ_AGENTS_OIDC__AUDIENCE: loamz-agents
   LOAMZ_AGENTS_OIDC__INSECURE_HTTP: "true"
-  LOAMZ_AGENTS_HTTP__FRONTEND_URL: ${AGENTS_CONSOLE_URL:-${SUBSTRATE_UI_URL:-http://localhost:3000}}
+  LOAMZ_AGENTS_HTTP__FRONTEND_URL: ${AGENTS_CONSOLE_URL:-http://localhost:3000}
   LOAMZ_AGENTS_SANDBOX__RUNTIME: ${SANDBOX_RUNTIME:-nsjail}
   LOAMZ_AGENTS_LLM__MODEL: ${CHAT_MODEL:-google/gemini-3.1-flash-lite}
   LOAMZ_AGENTS_LLM__OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -86,7 +86,7 @@ x-microservice: &microservice
   profiles: [microservices]
   environment: &microservice-env
     <<: *agent-env
-    SUBSTRATE_MODE: microservices
+    LOAMZ_MODE: microservices
     # How the services find each other: {name} is the service in dashes, {port} its port (deploy/PORTS.md).
     SERVICE_URL_TEMPLATE: http://agent-{name}:{port}
     AGENT_RUNTIME_SERVICE_URL: http://agent-runtime:8014
@@ -106,8 +106,8 @@ services:
     command: []
     environment:
       WAREHOUSE_BUCKET: ${WAREHOUSE_BUCKET:-warehouse}
-      STAGING_BUCKET: ${STAGING_BUCKET:-substrate-staging}
-      VOLUMES_BUCKET: ${VOLUMES_BUCKET:-substrate-volumes}
+      STAGING_BUCKET: ${STAGING_BUCKET:-loamz-staging}
+      VOLUMES_BUCKET: ${VOLUMES_BUCKET:-loamz-volumes}
       AGENTS_BUCKET: ${AGENTS_BUCKET:-agent-files}
       CONTROL_S3_ACCESS_KEY_ID: ${CONTROL_S3_ACCESS_KEY_ID:?run ./gen-env.sh}
       CONTROL_S3_SECRET_ACCESS_KEY: ${CONTROL_S3_SECRET_ACCESS_KEY:?}
@@ -135,7 +135,7 @@ services:
       - -c
       - ssl_key_file=/tls/server.key
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-substrate}
+      POSTGRES_USER: ${POSTGRES_USER:-loamz}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run ./gen-env.sh}
       POSTGRES_DB: agentdb
     volumes:
@@ -179,7 +179,7 @@ services:
       - -s3.port.iceberg=8181
       - -s3.allowDeleteBucketNotEmpty=false
       # Browsers upload straight to presigned URLs; only the workspace UI origin may.
-      - -s3.allowedOrigins=${SUBSTRATE_DATA_WEB_URL:-http://localhost:3011}
+      - -s3.allowedOrigins=${DATA_WORKSPACE_URL:-http://localhost:3011}
       - -master.volumeSizeLimitMB=1024
       - -volume.max=0
       - -master.telemetry=false
@@ -209,8 +209,8 @@ services:
         echo "$$out" | tail -5
         if echo "$$out" | grep -qi error && ! echo "$$out" | grep -qi exist; then exit 1; fi
     environment:
-      STAGING_BUCKET: ${STAGING_BUCKET:-substrate-staging}
-      VOLUMES_BUCKET: ${VOLUMES_BUCKET:-substrate-volumes}
+      STAGING_BUCKET: ${STAGING_BUCKET:-loamz-staging}
+      VOLUMES_BUCKET: ${VOLUMES_BUCKET:-loamz-volumes}
       AGENTS_BUCKET: ${AGENTS_BUCKET:-agent-files}
       WAREHOUSE_BUCKET: ${WAREHOUSE_BUCKET:-warehouse}
     depends_on:
@@ -228,19 +228,15 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?run ./gen-env.sh}
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak?sslmode=require
-      KC_DB_USERNAME: ${POSTGRES_USER:-substrate}
+      KC_DB_USERNAME: ${POSTGRES_USER:-loamz}
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
       # Substituted into the realm file at import. All three are required: an unset one becomes the literal text.
-      AGENTS_CONSOLE_CLIENT_SECRET: ${AGENTS_CONSOLE_CLIENT_SECRET:-${SUBSTRATE_UI_CLIENT_SECRET:?run ./gen-env.sh}}
-      DATA_WORKSPACE_CLIENT_SECRET: ${DATA_WORKSPACE_CLIENT_SECRET:-${SUBSTRATE_DATA_WEB_CLIENT_SECRET:?}}
-      SUBSTRATE_UI_CLIENT_SECRET: ${SUBSTRATE_UI_CLIENT_SECRET:?run ./gen-env.sh}
-      SUBSTRATE_DATA_WEB_CLIENT_SECRET: ${SUBSTRATE_DATA_WEB_CLIENT_SECRET:?}
+      AGENTS_CONSOLE_CLIENT_SECRET: ${AGENTS_CONSOLE_CLIENT_SECRET:?run ./gen-env.sh}
+      DATA_WORKSPACE_CLIENT_SECRET: ${DATA_WORKSPACE_CLIENT_SECRET:?}
       CELL_ADMIN_CLIENT_SECRET: ${CELL_ADMIN_CLIENT_SECRET:?}
       AGENT_MEMBERSHIP_CLIENT_SECRET: ${AGENT_MEMBERSHIP_CLIENT_SECRET:?}
-      AGENTS_CONSOLE_URL: ${AGENTS_CONSOLE_URL:-${SUBSTRATE_UI_URL:-http://localhost:3000}}
-      DATA_WORKSPACE_URL: ${DATA_WORKSPACE_URL:-${SUBSTRATE_DATA_WEB_URL:-http://localhost:3011}}
-      SUBSTRATE_UI_URL: ${SUBSTRATE_UI_URL:-http://localhost:3000}
-      SUBSTRATE_DATA_WEB_URL: ${SUBSTRATE_DATA_WEB_URL:-http://localhost:3011}
+      AGENTS_CONSOLE_URL: ${AGENTS_CONSOLE_URL:-http://localhost:3000}
+      DATA_WORKSPACE_URL: ${DATA_WORKSPACE_URL:-http://localhost:3011}
     volumes:
       - ../keycloak/realm-loamz.json:/opt/keycloak/data/import/realm-loamz.json:ro
     ports:
@@ -263,7 +259,7 @@ services:
     environment:
       <<: *data-env
       PORT: "8020"
-      LOAMZ_DATA_METADATA_URL: postgresql://${POSTGRES_USER:-substrate}:${POSTGRES_PASSWORD}@postgres:5432/substrate_data?sslmode=require
+      LOAMZ_DATA_METADATA_URL: postgresql://${POSTGRES_USER:-loamz}:${POSTGRES_PASSWORD}@postgres:5432/loamz_data?sslmode=require
       LOAMZ_DATA_CONTROLLER_TOKEN: ${CONTROLLER_TOKEN:?run ./gen-env.sh}
       LOAMZ_DATA_S3_ACCESS_KEY_ID: ${CONTROL_S3_ACCESS_KEY_ID}
       LOAMZ_DATA_S3_SECRET_ACCESS_KEY: ${CONTROL_S3_SECRET_ACCESS_KEY}
@@ -271,7 +267,7 @@ services:
       LOAMZ_DATA_VOLUMES_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_URL:-http://s3.localhost:8333}
       LOAMZ_DATA_MASK_SALT: ${MASK_SALT:-}
       # The documents and memory index (ADR 0008): its own database, with pgvector. The folder holds only scratch (no bundles).
-      LOAMZ_DATA_RETRIEVAL_URL: postgresql://${POSTGRES_USER:-substrate}:${POSTGRES_PASSWORD}@postgres:5432/data_retrieval?sslmode=require
+      LOAMZ_DATA_RETRIEVAL_URL: postgresql://${POSTGRES_USER:-loamz}:${POSTGRES_PASSWORD}@postgres:5432/data_retrieval?sslmode=require
       LOAMZ_DATA_RETRIEVAL_DIR: /var/lib/loamz-data/retrieval
       LOAMZ_DATA_DOCUMENT_READER_URL: ${DOCUMENT_READER_URL:-}
       LOAMZ_DATA_DOCUMENT_EMBEDDING_URL: ${DOCUMENT_EMBEDDING_URL:-}
@@ -341,7 +337,7 @@ services:
         for spec in sql:8041 jobs:8042 documents:8043; do
           role=$${spec%%:*}; port=$${spec##*:}
           for i in $$(seq 1 30); do
-            loamz-data attach --name "$$role" --role "$$role" --url "https://data-worker-$$role:$$port" --token-env LOAMZ_DATA_WORKER_TOKEN && break
+            loamz-server data attach --name "$$role" --role "$$role" --url "https://data-worker-$$role:$$port" --token-env LOAMZ_DATA_WORKER_TOKEN && break
             sleep 2
           done
         done
@@ -360,7 +356,7 @@ services:
     profiles: [agents, monolith]
     environment:
       <<: *agent-env
-      SUBSTRATE_MODE: monolith
+      LOAMZ_MODE: monolith
     volumes:
       - agent-data:/data
     ports:
@@ -376,33 +372,33 @@ services:
     <<: *microservice
     environment:
       <<: *microservice-env
-      SUBSTRATE_SERVICE: gateway
+      LOAMZ_SERVICE: gateway
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${PORT_AGENT:-8000}:8001"
   agent-policy:
     <<: *microservice
-    environment: { <<: *microservice-env, SUBSTRATE_SERVICE: policy }
+    environment: { <<: *microservice-env, LOAMZ_SERVICE: policy }
   agent-conversation:
     <<: *microservice
-    environment: { <<: *microservice-env, SUBSTRATE_SERVICE: conversation }
+    environment: { <<: *microservice-env, LOAMZ_SERVICE: conversation }
   agent-job-controller:
     <<: *microservice
-    environment: { <<: *microservice-env, SUBSTRATE_SERVICE: job_controller }
+    environment: { <<: *microservice-env, LOAMZ_SERVICE: job_controller }
   agent-runtime:
     <<: *microservice
-    environment: { <<: *microservice-env, SUBSTRATE_SERVICE: agent_runtime }
+    environment: { <<: *microservice-env, LOAMZ_SERVICE: agent_runtime }
   agent-tool-executor:
     <<: *microservice
-    environment: { <<: *microservice-env, SUBSTRATE_SERVICE: tool_executor }
+    environment: { <<: *microservice-env, LOAMZ_SERVICE: tool_executor }
   agent-human-gate:
     <<: *microservice
-    environment: { <<: *microservice-env, SUBSTRATE_SERVICE: human_gate }
+    environment: { <<: *microservice-env, LOAMZ_SERVICE: human_gate }
   agent-live-stream:
     <<: *microservice
-    environment: { <<: *microservice-env, SUBSTRATE_SERVICE: live_stream }
+    environment: { <<: *microservice-env, LOAMZ_SERVICE: live_stream }
   agent-admin:
     <<: *microservice
-    environment: { <<: *microservice-env, SUBSTRATE_SERVICE: admin }
+    environment: { <<: *microservice-env, LOAMZ_SERVICE: admin }
 
   # ── Web ─────────────────────────────────────────────────────────────────────
   agents-console:
@@ -410,12 +406,12 @@ services:
     build: { context: ../.., dockerfile: deploy/docker/loamz-agents-console.Dockerfile }
     environment:
       BACKEND_API_URL: http://${AGENT_UPSTREAM:-agent-server:8000}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-substrate}:${POSTGRES_PASSWORD}@postgres:5432/substrate_ui?sslmode=require
+      DATABASE_URL: postgresql://${POSTGRES_USER:-loamz}:${POSTGRES_PASSWORD}@postgres:5432/loamz_ui?sslmode=require
       OIDC_ISSUER: ${KEYCLOAK_PUBLIC_URL:-http://keycloak.localhost:${PORT_KEYCLOAK:-8081}}/realms/loamz
       OIDC_CLIENT_ID: agents-console
-      OIDC_CLIENT_SECRET: ${AGENTS_CONSOLE_CLIENT_SECRET:-${SUBSTRATE_UI_CLIENT_SECRET:?}}
+      OIDC_CLIENT_SECRET: ${AGENTS_CONSOLE_CLIENT_SECRET:?}
       SESSION_SECRET: ${UI_SESSION_SECRET:?}
-      PUBLIC_URL: ${SUBSTRATE_UI_URL:-http://localhost:3000}
+      PUBLIC_URL: ${AGENTS_CONSOLE_URL:-http://localhost:3000}
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${PORT_UI:-3000}:3000"
     depends_on:
@@ -429,9 +425,9 @@ services:
       DATA_API_URL: http://data-api:8020
       LOAMZ_DATA_OIDC_ISSUER: ${KEYCLOAK_PUBLIC_URL:-http://keycloak.localhost:${PORT_KEYCLOAK:-8081}}/realms/loamz
       WEB_CLIENT_ID: data-workspace
-      WEB_CLIENT_SECRET: ${DATA_WORKSPACE_CLIENT_SECRET:-${SUBSTRATE_DATA_WEB_CLIENT_SECRET:?}}
+      WEB_CLIENT_SECRET: ${DATA_WORKSPACE_CLIENT_SECRET:?}
       WEB_SESSION_SECRET: ${WEB_SESSION_SECRET:?}
-      WEB_PUBLIC_URL: ${SUBSTRATE_DATA_WEB_URL:-http://localhost:3011}
+      WEB_PUBLIC_URL: ${DATA_WORKSPACE_URL:-http://localhost:3011}
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${PORT_DATA_WEB:-3011}:3011"
     depends_on: [data-api]

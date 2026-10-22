@@ -21,7 +21,7 @@ describe("workspace API client", () => {
         ok: false,
         status: 503,
         json: async () => ({
-          type: "https://substrate.dev/problems/compute-unavailable",
+          type: "https://loamz.dev/problems/compute-unavailable",
           detail: "No SQL compute is attached and ready",
         }),
       }),

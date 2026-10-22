@@ -8,7 +8,7 @@ const path = require("node:path");
 
 const env = Object.fromEntries(
   fs
-    .readFileSync(path.join(__dirname, "../../substrate-data/.env"), "utf8")
+    .readFileSync(path.join(__dirname, "../../loamz-data/.env"), "utf8")
     .split("\n")
     .filter((line) => line.includes("=") && !line.startsWith("#"))
     .map((line) => [
@@ -17,7 +17,7 @@ const env = Object.fromEntries(
     ]),
 );
 const base = process.env.DATA_UI_URL || "http://127.0.0.1:3011";
-const shots = path.join(__dirname, "../../substrate-data/docs/screenshots");
+const shots = path.join(__dirname, "../../loamz-data/docs/screenshots");
 
 (async () => {
   const browser = await chromium.launch({
@@ -35,7 +35,7 @@ const shots = path.join(__dirname, "../../substrate-data/docs/screenshots");
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(base, { waitUntil: "networkidle" });
     // Unauthenticated users land on the identity provider's form.
-    assert.match(page.url(), /18080\/realms\/substrate/);
+    assert.match(page.url(), /18080\/realms\/loamz/);
     await page.locator("#username").fill("alice");
     await page.locator("#password").fill(env.DEV_ALICE_PASSWORD);
     await page.locator("#kc-login").click();

@@ -7,15 +7,12 @@ body:
     attributes:
       label: Package
       options:
-        - agent-substrate
-        - substrate-cloud
-        - substrate-ui
-        - substrate-data
-        - substrate-data-client
-        - substrate-data-web
-        - document-intelligence
-        - embedding-reranker
-        - inference-pool
+        - loamz-engine
+        - loamz-server
+        - loamz-reader
+        - agents-console
+        - data-workspace
+        - deploy (compose, Helm, Terraform)
         - other / unsure
     validations:
       required: true

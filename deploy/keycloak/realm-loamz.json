@@ -337,7 +337,7 @@
     },
     {
       "name": "groups",
-      "description": "Group membership (group names without the leading slash are used by substrate-data).",
+      "description": "Group membership (group names without the leading slash are used by loamz-data).",
       "protocol": "openid-connect",
       "attributes": {
         "include.in.token.scope": "false",

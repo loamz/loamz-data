@@ -19,7 +19,7 @@ const { mkdirSync } = require("node:fs");
     { name: "sd_session", value: "ui-review-fixture", url: origin },
   ]);
   await context.addInitScript(() =>
-    localStorage.setItem("substrate-data-theme", "dark"),
+    localStorage.setItem("loamz-data-theme", "dark"),
   );
   const page = await context.newPage();
   page.setDefaultTimeout(10000);
@@ -66,7 +66,7 @@ const { mkdirSync } = require("node:fs");
       name: "documents",
       full_name: "main.default.documents",
       kind: "volume",
-      properties: { bucket: "substrate-staging", prefix: "volumes/test/" },
+      properties: { bucket: "loamz-staging", prefix: "volumes/test/" },
     },
   ];
   const models = [
@@ -145,7 +145,7 @@ const { mkdirSync } = require("node:fs");
     else data = {};
     await route.fulfill({ json: data });
   });
-  mkdirSync("/tmp/substrate-ui-review", { recursive: true });
+  mkdirSync("/tmp/agents-console-review", { recursive: true });
   try {
     await page.goto(origin);
     await page.getByRole("button", { name: "Catalog", exact: true }).click();
@@ -157,7 +157,7 @@ const { mkdirSync } = require("node:fs");
       .click();
     await page.getByRole("heading", { name: "Volumes", exact: true }).waitFor();
     await page.screenshot({
-      path: "/tmp/substrate-ui-review/catalog-dark.png",
+      path: "/tmp/agents-console-review/catalog-dark.png",
       fullPage: true,
     });
     await page
@@ -217,7 +217,7 @@ const { mkdirSync } = require("node:fs");
     const download = await downloadPromise;
     assert(download.suggestedFilename().endsWith(".csv"));
     await page.screenshot({
-      path: "/tmp/substrate-ui-review/table-dark.png",
+      path: "/tmp/agents-console-review/table-dark.png",
       fullPage: true,
     });
     await page
@@ -246,7 +246,7 @@ const { mkdirSync } = require("node:fs");
       .click();
     await page.getByRole("textbox", { name: "Search loaded rows" }).waitFor();
     await page.screenshot({
-      path: "/tmp/substrate-ui-review/sql-dark.png",
+      path: "/tmp/agents-console-review/sql-dark.png",
       fullPage: true,
     });
     await page.setViewportSize({ width: 1900, height: 1000 });
@@ -282,7 +282,7 @@ const { mkdirSync } = require("node:fs");
       font: "12px",
     });
     await page.screenshot({
-      path: "/tmp/substrate-ui-review/sql-expanded-dark.png",
+      path: "/tmp/agents-console-review/sql-expanded-dark.png",
       fullPage: true,
     });
     await page
@@ -320,7 +320,7 @@ const { mkdirSync } = require("node:fs");
       document.querySelector(".monaco-editor")?.classList.contains("vs"),
     );
     await page.screenshot({
-      path: "/tmp/substrate-ui-review/sql-light.png",
+      path: "/tmp/agents-console-review/sql-light.png",
       fullPage: true,
     });
     assert.equal(
@@ -354,7 +354,7 @@ const { mkdirSync } = require("node:fs");
       "catalog must fit a smaller viewport",
     );
     await page.screenshot({
-      path: "/tmp/substrate-ui-review/catalog-small.png",
+      path: "/tmp/agents-console-review/catalog-small.png",
       fullPage: true,
     });
     // A web update must not blank the catalog when the API has not been restarted yet.
@@ -377,7 +377,7 @@ const { mkdirSync } = require("node:fs");
     assert.equal(await page.locator(".alert.error").count(), 0);
     assert.deepEqual(errors, []);
     console.log(
-      "UI checks passed: catalog assets, file browser, table search, visibility, pinning, selection, CSV export, navigation collapse, SQL results, light/dark. Screenshots: /tmp/substrate-ui-review",
+      "UI checks passed: catalog assets, file browser, table search, visibility, pinning, selection, CSV export, navigation collapse, SQL results, light/dark. Screenshots: /tmp/agents-console-review",
     );
   } finally {
     await browser.close();

@@ -2,7 +2,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 
 const session = new Map<string, boolean>();
-const eventName = "substrate-panel-preference";
+const eventName = "loamz-panel-preference";
 const subscribe = (listener: () => void) => {
   window.addEventListener("storage", listener);
   window.addEventListener(eventName, listener);
@@ -13,7 +13,7 @@ const subscribe = (listener: () => void) => {
 };
 /** Persist layout preferences only; query text and credentials never enter this store. */
 export function usePanelPreference(name: string, initial: boolean) {
-  const key = `substrate-data-layout:${name}`;
+  const key = `loamz-data-layout:${name}`;
   const snapshot = useCallback(() => {
     try {
       const saved = localStorage.getItem(key);

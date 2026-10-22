@@ -1,12 +1,12 @@
 """One-shot cell bootstrap for the compose bundle. Idempotent: existing files are left alone.
 
-Runs inside the substrate-data image (it has `cryptography`) as root, once, before the stateful services start.
+Runs inside the loamz-data image (it has `cryptography`) as root, once, before the stateful services start.
   /out/seaweed/s3.json        SeaweedFS S3 identities: least privilege per service (same shape as data bootstrap)
   /out/ticket-private/ticket.pem   Ed25519 ticket signing key (control plane only)
   /out/ticket-public/ticket.pub.pem   its public half (workers)
   /out/postgres-tls/server.{crt,key}  self-signed server certificate, so database connections are encrypted
   /out/internal-tls/{ca.crt,server.crt,server.key}  private CA and one certificate for the controller and the workers:
-                              substrate-data refuses plain HTTP between them off loopback, so they serve HTTPS
+                              loamz-data refuses plain HTTP between them off loopback, so they serve HTTPS
 Secrets come from the environment (.env); nothing here invents a credential.
 """
 
@@ -53,7 +53,7 @@ def s3_identities() -> None:
         "identities": [
             {
                 # Control plane: commits table metadata, signs upload URLs, and alone holds the volumes bucket.
-                "name": "substrate-control",
+                "name": "loamz-control",
                 "credentials": [
                     {
                         "accessKey": need("CONTROL_S3_ACCESS_KEY_ID"),
@@ -69,7 +69,7 @@ def s3_identities() -> None:
             },
             {
                 # Attached compute: reads tables, writes data files, reads staged uploads. Nothing on volumes.
-                "name": "substrate-worker",
+                "name": "loamz-worker",
                 "credentials": [
                     {
                         "accessKey": need("WORKER_S3_ACCESS_KEY_ID"),
@@ -83,7 +83,7 @@ def s3_identities() -> None:
             },
             {
                 # The agent server's own file store bucket (FILE_STORE_*), separate from governed data.
-                "name": "substrate-agents",
+                "name": "loamz-agents",
                 "credentials": [
                     {
                         "accessKey": need("AGENTS_S3_ACCESS_KEY_ID"),
@@ -109,7 +109,7 @@ def ticket_keys() -> None:
     pem = key.private_bytes(
         serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
     )
-    # uid 10001 is the unprivileged user of the substrate-data image.
+    # uid 10001 is the unprivileged user of the loamz-data image.
     write(private, pem, 0o400, (10001, 10001))
     write(
         public,
@@ -158,7 +158,7 @@ def internal_tls() -> None:
         return
     now = datetime.datetime.now(datetime.UTC)
     ca_key = ec.generate_private_key(ec.SECP256R1())
-    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "substrate cell internal CA")])
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "loamz cell internal CA")])
     ca = (
         x509.CertificateBuilder()
         .subject_name(ca_name)
@@ -187,7 +187,7 @@ def internal_tls() -> None:
     cert = (
         x509.CertificateBuilder()
         .subject_name(
-            x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "substrate-data internal")])
+            x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "loamz-data internal")])
         )
         .issuer_name(ca_name)
         .public_key(key.public_key())

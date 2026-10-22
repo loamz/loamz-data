@@ -96,4 +96,4 @@ r = http.post(
     json={"tenant_id": org_id, "alias": tenant_alias(org_id)},
 )
 r.raise_for_status()
-print(f"Sign in at {ENV.get('SUBSTRATE_UI_URL', 'http://localhost:3000')}/chat as {NAME} / {NAME}")
+print(f"Sign in at {ENV.get('AGENTS_CONSOLE_URL', 'http://localhost:3000')}/chat as {NAME} / {NAME}")

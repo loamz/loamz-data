@@ -5,7 +5,7 @@
 {$DOMAIN} {
 	encode gzip
 	# Stream SSE without buffering so agent responses arrive token-by-token.
-	reverse_proxy substrate-ui:3000 {
+	reverse_proxy loamz-ui:3000 {
 		flush_interval -1
 	}
 }

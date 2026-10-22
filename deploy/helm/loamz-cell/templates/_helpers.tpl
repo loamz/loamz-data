@@ -33,7 +33,7 @@ app.kubernetes.io/component: {{ .component }}
 {{/* Endpoints that are bundled or external */}}
 {{- define "cell.pgHost" -}}{{ if .Values.postgres.bundled.enabled }}{{ include "cell.fullname" . }}-postgres{{ else }}{{ required "postgres.external.host is required when postgres.bundled.enabled=false" .Values.postgres.external.host }}{{ end }}{{- end -}}
 {{- define "cell.pgPort" -}}{{ if .Values.postgres.bundled.enabled }}5432{{ else }}{{ .Values.postgres.external.port }}{{ end }}{{- end -}}
-{{- define "cell.pgUser" -}}{{ if .Values.postgres.bundled.enabled }}substrate{{ else }}{{ .Values.postgres.external.user }}{{ end }}{{- end -}}
+{{- define "cell.pgUser" -}}{{ if .Values.postgres.bundled.enabled }}loamz{{ else }}{{ .Values.postgres.external.user }}{{ end }}{{- end -}}
 {{- define "cell.pgSslmode" -}}{{ if .Values.postgres.bundled.enabled }}require{{ else }}{{ .Values.postgres.external.sslmode }}{{ end }}{{- end -}}
 {{- define "cell.redisHost" -}}{{ if .Values.redis.bundled.enabled }}{{ include "cell.fullname" . }}-redis{{ else }}{{ required "redis.external.host is required when redis.bundled.enabled=false" .Values.redis.external.host }}{{ end }}{{- end -}}
 {{- define "cell.s3Endpoint" -}}{{ if .Values.s3.bundled.enabled }}http://{{ include "cell.fullname" . }}-seaweedfs:8333{{ else }}{{ required "s3.external.endpoint is required when s3.bundled.enabled=false" .Values.s3.external.endpoint }}{{ end }}{{- end -}}
@@ -48,7 +48,7 @@ app.kubernetes.io/component: {{ .component }}
 {{- printf "%s://%s:$(POSTGRES_PASSWORD)@%s:%v/%s" .scheme (include "cell.pgUser" .root) (include "cell.pgHost" .root) (include "cell.pgPort" .root) .db -}}
 {{- end -}}
 
-{{/* In-cluster hosts substrate-data may speak plain HTTP to (explicit opt-in there); NetworkPolicy fences the namespace. */}}
+{{/* In-cluster hosts loamz-data may speak plain HTTP to (explicit opt-in there); NetworkPolicy fences the namespace. */}}
 {{- define "cell.insecureHosts" -}}
 {{- $f := include "cell.fullname" . -}}
 {{- $own := list (printf "%s-seaweedfs" $f) (printf "%s-keycloak" $f) -}}
@@ -59,7 +59,7 @@ app.kubernetes.io/component: {{ .component }}
 {{- concat $own $pub .Values.data.insecureHttpHosts | toJson -}}
 {{- end -}}
 
-{{/* Env shared by everything that talks to substrate-data's storage */}}
+{{/* Env shared by everything that talks to loamz-data's storage */}}
 {{- define "cell.dataEnv" -}}
 - name: POSTGRES_PASSWORD
   valueFrom: { {{ include "cell.secretRef" (dict "root" . "key" "postgres-password") }} }
@@ -74,7 +74,7 @@ app.kubernetes.io/component: {{ .component }}
   value: "{{ include "cell.keycloakInternal" . }}/realms/{{ .Values.keycloak.realm.name }}/protocol/openid-connect/certs"
 {{- end }}
 - name: LOAMZ_DATA_OIDC_AUDIENCE
-  value: substrate-data
+  value: loamz-data
 - name: LOAMZ_DATA_S3_ENDPOINT_URL
   value: {{ include "cell.s3Endpoint" . | quote }}
 - name: LOAMZ_DATA_S3_REGION

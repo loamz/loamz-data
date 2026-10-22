@@ -6,4 +6,4 @@ version: 0.1.0
 appVersion: "0.1.0"
 kubeVersion: ">=1.27.0-0"
 keywords: [loamz, agents, data, keycloak]
-home: https://github.com/Ravikumarchavva/agent-substrate
+home: https://github.com/loamz/loamz-server

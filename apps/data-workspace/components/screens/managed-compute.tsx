@@ -218,7 +218,7 @@ const computeTabs: { id: ComputeTab; label: string; desc: string }[] = [
   {
     id: "all",
     label: "All compute",
-    desc: "Compute endpoints attached to this workspace. Substrate Data stores no engine and starts no compute: it routes work to endpoints that you operate.",
+    desc: "Compute endpoints attached to this workspace. Loamz Data stores no engine and starts no compute: it routes work to endpoints that you operate.",
   },
   {
     id: "sql_warehouse",
@@ -913,7 +913,7 @@ function AttachComputeModal({
               className="muted"
               style={{ margin: "4px 0 0", fontSize: "11px" }}
             >
-              Substrate Data decouples persistent storage & catalog metadata
+              Loamz Data decouples persistent storage & catalog metadata
               from compute execution.
             </p>
           </div>
@@ -1024,7 +1024,7 @@ function AttachComputeModal({
               />
             </label>
             <p className="muted" style={{ gridColumn: "1 / -1", margin: 0 }}>
-              Substrate Data attaches to compute that you run elsewhere. It
+              Loamz Data attaches to compute that you run elsewhere. It
               never starts, sizes or stops it, and the token is stored by the
               controller and never shown again.
             </p>

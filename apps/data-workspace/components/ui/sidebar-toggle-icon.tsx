@@ -7,7 +7,7 @@ interface SidebarToggleIconProps extends SVGProps<SVGSVGElement> {
 }
 
 /**
- * Modern Substrate sidebar toggle icon from substrate-ui.
+ * Modern Loamz sidebar toggle icon from agents-console.
  */
 export function SidebarToggleIcon({
   direction = "close",

@@ -1075,7 +1075,7 @@ export function SqlScreen({ model }: { model: WorkspaceModel }) {
             <Editor
               height="100%"
               language="sql"
-              theme={resolved === "dark" ? "substrate-dark" : "substrate-light"}
+              theme={resolved === "dark" ? "loamz-dark" : "loamz-light"}
               beforeMount={configureEditorThemes}
               onMount={(editor) => {
                 editorRef.current = editor;

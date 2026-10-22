@@ -6,7 +6,7 @@ import { LOGIN_COOKIE, SESSION_COOKIE } from "./session-cookie";
 // cookie. The browser never sees an access token; route handlers attach it when calling the API.
 
 export function config() {
-  const issuer = process.env.LOAMZ_DATA_OIDC_ISSUER || process.env.SUBSTRATE_DATA_OIDC_ISSUER;
+  const issuer = process.env.LOAMZ_DATA_OIDC_ISSUER || process.env.LOAMZ_DATA_OIDC_ISSUER;
   const secret = process.env.WEB_SESSION_SECRET;
   const clientSecret = process.env.WEB_CLIENT_SECRET;
   if (!issuer || !secret || secret.length < 32 || !clientSecret) {

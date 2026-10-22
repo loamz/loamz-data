@@ -26,9 +26,8 @@ minors are not backported.
 
 | Package | Supported |
 | --- | --- |
-| agent-substrate | latest release |
-| substrate-data-client | latest release |
-| substrate-data, substrate-cloud, substrate-ui, substrate-data-web | latest release (container images) |
+| loamz-engine, loamz-server, loamz-reader | latest release |
+| loamz-data, loamz-agents (clients), container images | latest release |
 
 ## Scope
 

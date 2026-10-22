@@ -15,7 +15,7 @@ type Theme = {
   setPreference: (value: ThemePreference) => void;
 };
 const ThemeContext = createContext<Theme | null>(null);
-const key = "substrate-data-theme";
+const key = "loamz-data-theme";
 let volatilePreference: ThemePreference = "system";
 function snapshot() {
   let preference = volatilePreference;
@@ -38,11 +38,11 @@ function subscribe(listener: () => void) {
   const media = matchMedia("(prefers-color-scheme: dark)");
   media.addEventListener("change", listener);
   window.addEventListener("storage", listener);
-  window.addEventListener("substrate-theme", listener);
+  window.addEventListener("loamz-theme", listener);
   return () => {
     media.removeEventListener("change", listener);
     window.removeEventListener("storage", listener);
-    window.removeEventListener("substrate-theme", listener);
+    window.removeEventListener("loamz-theme", listener);
   };
 }
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
@@ -62,7 +62,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     } catch {
       /* Still support this session. */
     }
-    window.dispatchEvent(new Event("substrate-theme"));
+    window.dispatchEvent(new Event("loamz-theme"));
   }
   return (
     <ThemeContext.Provider value={{ preference, resolved, setPreference }}>

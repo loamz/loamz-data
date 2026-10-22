@@ -3,7 +3,7 @@
 resource "google_service_account" "cell" {
   project      = var.project_id
   account_id   = "${var.name}-cell"
-  display_name = "Substrate cell ${var.name}"
+  display_name = "Loamz cell ${var.name}"
 }
 
 resource "google_service_account_iam_member" "workload_identity" {

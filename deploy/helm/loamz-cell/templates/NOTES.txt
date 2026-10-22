@@ -1,4 +1,4 @@
-Substrate cell {{ .Release.Name }} installed in mode "{{ .Values.mode }}".
+Loamz cell {{ .Release.Name }} installed in mode "{{ .Values.mode }}".
 
   Console       {{ .Values.publicUrls.ui }}
   Data          {{ .Values.publicUrls.dataWeb }}
@@ -17,5 +17,5 @@ The default addresses use *.localtest.me (resolves to 127.0.0.1): port-forward y
 {{- end }}
 {{- if and .Values.keycloak.enabled (not .Values.keycloak.realm.import) }}
 
-keycloak.realm.import is off: import deploy/keycloak/realm-substrate.json into your Keycloak yourself.
+keycloak.realm.import is off: import deploy/keycloak/realm-loamz.json into your Keycloak yourself.
 {{- end }}
