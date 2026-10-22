@@ -1779,7 +1779,7 @@ wheels = [
 [[package]]
 name = "loamz-core"
 version = "0.1.0"
-source = { git = "file:///home/ravikumar/personal/agent-framework/loamz-python?subdirectory=sdk%2Fpython%2Fcore#25743da4c8e77de772b8388f6aaf01a82cab932f" }
+source = { git = "https://github.com/loamz/loamz-python?subdirectory=sdk%2Fpython%2Fcore#25743da4c8e77de772b8388f6aaf01a82cab932f" }
 dependencies = [
     { name = "httpx" },
 ]
@@ -1787,7 +1787,7 @@ dependencies = [
 [[package]]
 name = "loamz-data"
 version = "0.1.0"
-source = { git = "file:///home/ravikumar/personal/agent-framework/loamz-python?subdirectory=sdk%2Fpython%2Fdata#25743da4c8e77de772b8388f6aaf01a82cab932f" }
+source = { git = "https://github.com/loamz/loamz-python?subdirectory=sdk%2Fpython%2Fdata#25743da4c8e77de772b8388f6aaf01a82cab932f" }
 dependencies = [
     { name = "httpx" },
     { name = "loamz-core" },
@@ -1936,7 +1936,7 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'safety'", specifier = ">=0.25.0" },
     { name = "k8s-agent-sandbox", marker = "extra == 'code'", specifier = ">=0.4.6" },
     { name = "kokoro", marker = "extra == 'tts'", specifier = ">=0.9.4" },
-    { name = "loamz-data", marker = "extra == 'data'", git = "file:///home/ravikumar/personal/agent-framework/loamz-python?subdirectory=sdk%2Fpython%2Fdata" },
+    { name = "loamz-data", marker = "extra == 'data'", git = "https://github.com/loamz/loamz-python?subdirectory=sdk%2Fpython%2Fdata" },
     { name = "matplotlib", marker = "extra == 'sandbox'", specifier = ">=3.9.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0.0" },
     { name = "onnxruntime", marker = "extra == 'ocr'", specifier = ">=1.23.0" },
@@ -1993,7 +1993,7 @@ dev = [
 [[package]]
 name = "loamz-identity"
 version = "0.1.0"
-source = { git = "file:///home/ravikumar/personal/agent-framework/loamz-python?subdirectory=sdk%2Fpython%2Fidentity#25743da4c8e77de772b8388f6aaf01a82cab932f" }
+source = { git = "https://github.com/loamz/loamz-python?subdirectory=sdk%2Fpython%2Fidentity#25743da4c8e77de772b8388f6aaf01a82cab932f" }
 dependencies = [
     { name = "httpx" },
     { name = "loamz-core" },
@@ -2059,7 +2059,7 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.4,<2" },
     { name = "fastapi", specifier = ">=0.128" },
     { name = "httpx", specifier = ">=0.28,<1" },
-    { name = "loamz-core", git = "file:///home/ravikumar/personal/agent-framework/loamz-python?subdirectory=sdk%2Fpython%2Fcore" },
+    { name = "loamz-core", git = "https://github.com/loamz/loamz-python?subdirectory=sdk%2Fpython%2Fcore" },
     { name = "loamz-engine", extras = ["logging"], editable = "server/engine" },
     { name = "loamz-engine", extras = ["openai", "anthropic", "gemini", "redis", "mcp", "tools", "data"], marker = "extra == 'agents'", editable = "server/engine" },
     { name = "loamz-engine", extras = ["postgres", "pdf"], editable = "server/engine" },
@@ -2085,7 +2085,7 @@ provides-extras = ["inference", "gpu", "agents", "console"]
 [package.metadata.requires-dev]
 dev = [
     { name = "hypothesis", specifier = ">=6.168.3" },
-    { name = "loamz-data", extras = ["arrow"], git = "file:///home/ravikumar/personal/agent-framework/loamz-python?subdirectory=sdk%2Fpython%2Fdata" },
+    { name = "loamz-data", extras = ["arrow"], git = "https://github.com/loamz/loamz-python?subdirectory=sdk%2Fpython%2Fdata" },
     { name = "loamz-engine", extras = ["openai", "tools", "redis"], editable = "server/engine" },
     { name = "prompt-toolkit", specifier = ">=3.0.0" },
     { name = "pytest", specifier = ">=9" },
