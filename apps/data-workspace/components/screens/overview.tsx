@@ -103,17 +103,17 @@ export function OverviewScreen({ model }: { model: WorkspaceModel }) {
   return (
     <div className="workspace-view">
       <div className="workspace-tabs-bar">
-        <div className="databricks-tabs">
+        <div className="dw-tabs">
           <button
             type="button"
-            className={`databricks-tab ${activeTab === "recents" ? "active" : ""}`}
+            className={`dw-tab ${activeTab === "recents" ? "active" : ""}`}
             onClick={() => setActiveTab("recents")}
           >
             Recents
           </button>
           <button
             type="button"
-            className={`databricks-tab ${activeTab === "tables" ? "active" : ""}`}
+            className={`dw-tab ${activeTab === "tables" ? "active" : ""}`}
             onClick={() => setActiveTab("tables")}
           >
             Catalog tables
@@ -121,7 +121,7 @@ export function OverviewScreen({ model }: { model: WorkspaceModel }) {
           </button>
           <button
             type="button"
-            className={`databricks-tab ${activeTab === "queries" ? "active" : ""}`}
+            className={`dw-tab ${activeTab === "queries" ? "active" : ""}`}
             onClick={() => setActiveTab("queries")}
           >
             SQL queries
@@ -129,7 +129,7 @@ export function OverviewScreen({ model }: { model: WorkspaceModel }) {
           </button>
           <button
             type="button"
-            className={`databricks-tab ${activeTab === "pipelines" ? "active" : ""}`}
+            className={`dw-tab ${activeTab === "pipelines" ? "active" : ""}`}
             onClick={() => setActiveTab("pipelines")}
           >
             Pipeline runs
@@ -165,7 +165,7 @@ export function OverviewScreen({ model }: { model: WorkspaceModel }) {
 
       {activeTab === "recents" && (
         <div className="table-overflow">
-          <table className="standard-table databricks-table">
+          <table className="standard-table dw-table">
             <thead>
               <tr>
                 <th>Name</th>
@@ -235,7 +235,7 @@ export function OverviewScreen({ model }: { model: WorkspaceModel }) {
 
       {activeTab === "tables" && (
         <div className="table-overflow">
-          <table className="standard-table databricks-table">
+          <table className="standard-table dw-table">
             <thead>
               <tr>
                 <th>Dataset</th>
@@ -298,7 +298,7 @@ export function OverviewScreen({ model }: { model: WorkspaceModel }) {
 
       {activeTab === "queries" && (
         <div className="table-overflow">
-          <table className="standard-table databricks-table">
+          <table className="standard-table dw-table">
             <thead>
               <tr>
                 <th>Query</th>
@@ -362,7 +362,7 @@ export function OverviewScreen({ model }: { model: WorkspaceModel }) {
 
       {activeTab === "pipelines" && (
         <div className="table-overflow">
-          <table className="standard-table databricks-table">
+          <table className="standard-table dw-table">
             <thead>
               <tr>
                 <th>Job name</th>

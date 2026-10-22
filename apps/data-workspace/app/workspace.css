@@ -251,7 +251,7 @@ main {
   height: calc(100dvh - var(--ui-bar)) !important;
   padding: 0 !important;
 }
-.workspace-ide .databricks-sql-layout {
+.workspace-ide .dw-sql-layout {
   height: 100% !important;
   max-height: calc(100dvh - var(--ui-bar)) !important;
 }
@@ -295,7 +295,7 @@ main {
 .sql-results-pane {
   min-height: 180px;
 }
-.databricks-grid-container {
+.dw-grid-container {
   min-width: 0;
 }
 .result-grid-toolbar {
@@ -356,23 +356,23 @@ main {
   min-height: 16px;
   accent-color: var(--violet);
 }
-.databricks-table th {
+.dw-table th {
   height: 32px;
   font-size: 12px;
 }
-.databricks-table .databricks-row {
+.dw-table .dw-row {
   height: var(--ui-row);
 }
-.databricks-table .databricks-row td {
+.dw-table .dw-row td {
   height: var(--ui-row);
   padding: 4px 8px;
   font-size: var(--ui-font);
   line-height: 18px;
 }
-.databricks-grid-scroll {
+.dw-grid-scroll {
   scrollbar-gutter: stable;
 }
-.databricks-table .grid-index-cell {
+.dw-table .grid-index-cell {
   color: var(--muted);
 }
 @media (max-width: 1100px) {
@@ -417,7 +417,7 @@ main {
 .catalog-property-list > div {
   display: contents;
 }
-.catalog-content > .databricks-grid-container {
+.catalog-content > .dw-grid-container {
   min-height: 300px;
 }
 .catalog-section-tabs button[aria-current="page"] {
@@ -433,15 +433,15 @@ main {
 .unity-tab.active {
   border-bottom-color: var(--violet);
 }
-.databricks-row.row-selected td,
-.databricks-row td.cell-in-selected-row {
+.dw-row.row-selected td,
+.dw-row td.cell-in-selected-row {
   background: var(--violet-soft);
 }
 .grid-row-index-wrap.selected-index,
 .grid-cell-wrapper.cell-selected {
   background: var(--violet-soft);
 }
-.databricks-filter-bar {
+.dw-filter-bar {
   padding: 4px 8px;
   min-height: 28px;
 }
@@ -465,10 +465,10 @@ main {
   font-size: var(--ui-font);
   padding-inline: 10px;
 }
-.databricks-dropdown-menu,
-.databricks-column-context-menu,
-.databricks-selection-context-menu,
-.databricks-sub-menu {
+.dw-dropdown-menu,
+.dw-column-context-menu,
+.dw-selection-context-menu,
+.dw-sub-menu {
   color: var(--text);
   background: var(--surface);
   border-color: var(--border);
@@ -517,7 +517,7 @@ main {
   margin: 4px;
   padding: 6px 8px;
 }
-.databricks-tooltip {
+.dw-tooltip {
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
@@ -635,7 +635,7 @@ main {
   flex-direction: column;
   min-height: 0;
 }
-.workspace-ide .databricks-sql-layout {
+.workspace-ide .dw-sql-layout {
   flex: 1;
   min-height: 0;
   height: auto !important;

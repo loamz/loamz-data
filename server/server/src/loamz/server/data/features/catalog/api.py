@@ -1,4 +1,4 @@
-"""/api/v1/catalogs, schemas, tables and grants (Unity Catalog-style three-level namespace)."""
+"""/api/v1/catalogs, schemas, tables and grants (three-level namespace)."""
 
 from __future__ import annotations
 

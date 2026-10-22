@@ -418,7 +418,7 @@ export function SqlScreen({ model }: { model: WorkspaceModel }) {
               >
                 <ChevronsRight size={12} />
               </button>
-              <span className="databricks-tooltip">Insert table name</span>
+              <span className="dw-tooltip">Insert table name</span>
             </div>
           </div>
         </div>
@@ -514,7 +514,7 @@ export function SqlScreen({ model }: { model: WorkspaceModel }) {
               >
                 <ChevronsRight size={12} />
               </button>
-              <span className="databricks-tooltip">Insert view name</span>
+              <span className="dw-tooltip">Insert view name</span>
             </div>
           </div>
         </div>
@@ -723,7 +723,7 @@ export function SqlScreen({ model }: { model: WorkspaceModel }) {
 
   return (
     <div
-      className={`sql-layout databricks-sql-layout ${sideOpen ? "" : "sql-collapsed"}`}
+      className={`sql-layout dw-sql-layout ${sideOpen ? "" : "sql-collapsed"}`}
       style={{
         display: "flex",
         flexDirection: "row",
@@ -731,11 +731,11 @@ export function SqlScreen({ model }: { model: WorkspaceModel }) {
         height: "100%",
       }}
     >
-      {/* LEFT SIDEBAR: Databricks Catalog Tree */}
+      {/* LEFT SIDEBAR: Catalog tree */}
       {sideOpen ? (
         <>
           <aside
-            className="sql-sidebar databricks-catalog-pane"
+            className="sql-sidebar dw-catalog-pane"
             style={{ width: `${sidebarWidth}px`, flexShrink: 0 }}
           >
             <div className="catalog-tree-header">
@@ -844,7 +844,7 @@ export function SqlScreen({ model }: { model: WorkspaceModel }) {
         </aside>
       )}
 
-      {/* RIGHT MAIN: Databricks SQL IDE */}
+      {/* RIGHT MAIN: SQL editor */}
       <section className="sql-main-ide" style={{ flex: 1, minWidth: 0 }}>
         {/* TOP TAB BAR: Query Tabs */}
         <div className="sql-query-tabs-bar">
@@ -880,7 +880,7 @@ export function SqlScreen({ model }: { model: WorkspaceModel }) {
           </div>
         </div>
 
-        {/* SQL ACTION TOOLBAR matching Databricks screenshot */}
+        {/* SQL ACTION TOOLBAR*/}
         <div className="sql-editor-toolbar">
           <div className="toolbar-left">
             <div className="sql-run-group">
@@ -916,10 +916,10 @@ export function SqlScreen({ model }: { model: WorkspaceModel }) {
             ) : null}
 
             {/* Decoupled 1: Catalog Selector */}
-            <div className="databricks-dropdown-wrapper" ref={catalogRef}>
+            <div className="dw-dropdown-wrapper" ref={catalogRef}>
               <button
                 type="button"
-                className="databricks-dropdown-trigger catalog-trigger"
+                className="dw-dropdown-trigger catalog-trigger"
                 onClick={() => {
                   setCatalogOpen(!catalogOpen);
                   setSchemaOpen(false);
@@ -936,7 +936,7 @@ export function SqlScreen({ model }: { model: WorkspaceModel }) {
               </button>
 
               {catalogOpen && (
-                <div className="databricks-dropdown-menu panel" role="listbox">
+                <div className="dw-dropdown-menu panel" role="listbox">
                   <div className="dropdown-menu-header">CATALOGS</div>
                   {Object.keys(CATALOG_SCHEMAS).map((cat) => (
                     <button
@@ -967,10 +967,10 @@ export function SqlScreen({ model }: { model: WorkspaceModel }) {
             <span className="context-separator">.</span>
 
             {/* Decoupled 2: Schema Selector (shows schemas of selected catalog) */}
-            <div className="databricks-dropdown-wrapper" ref={schemaRef}>
+            <div className="dw-dropdown-wrapper" ref={schemaRef}>
               <button
                 type="button"
-                className="databricks-dropdown-trigger schema-trigger"
+                className="dw-dropdown-trigger schema-trigger"
                 onClick={() => {
                   setSchemaOpen(!schemaOpen);
                   setCatalogOpen(false);
@@ -987,7 +987,7 @@ export function SqlScreen({ model }: { model: WorkspaceModel }) {
               </button>
 
               {schemaOpen && (
-                <div className="databricks-dropdown-menu panel" role="listbox">
+                <div className="dw-dropdown-menu panel" role="listbox">
                   <div className="dropdown-menu-header">
                     SCHEMAS IN {selectedCatalog}
                   </div>
@@ -1116,7 +1116,7 @@ export function SqlScreen({ model }: { model: WorkspaceModel }) {
           </div>
         )}
 
-        {/* DRAGGABLE RESIZER SPLITTER matching Databricks */}
+        {/* DRAGGABLE RESIZER SPLITTER*/}
         {maximizedView === "none" && (
           <div
             className={`sql-editor-resizer ${isDraggingResizer ? "dragging" : ""}`}
@@ -1162,8 +1162,8 @@ export function SqlScreen({ model }: { model: WorkspaceModel }) {
                   )}
                 </button>
 
-                {/* Databricks Export/Download Menu */}
-                <div className="databricks-dropdown-wrapper" ref={downloadRef}>
+                {/* Export/Download menu */}
+                <div className="dw-dropdown-wrapper" ref={downloadRef}>
                   <button
                     type="button"
                     className="results-icon-btn"
@@ -1175,7 +1175,7 @@ export function SqlScreen({ model }: { model: WorkspaceModel }) {
                   </button>
 
                   {downloadOpen && (
-                    <div className="databricks-dropdown-menu panel export-menu">
+                    <div className="dw-dropdown-menu panel export-menu">
                       <button
                         type="button"
                         className="dropdown-menu-item"

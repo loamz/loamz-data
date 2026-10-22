@@ -1,7 +1,7 @@
 """Authorize and plan a statement, then sign the ticket a worker will execute.
 
 Views are expanded into subqueries before planning. Reading a view needs `SELECT` on the view; what
-the view reads is authorized as the view's owner (definer rights, as in Unity Catalog), so a view can
+the view reads is authorized as the view's owner (definer rights), so a view can
 share a filtered or aggregated slice of a table its readers cannot query directly.
 """
 

@@ -1,4 +1,4 @@
-"""Unity Catalog-style securables: ownership, inherited privileges, USE on every ancestor."""
+"""Catalog securables: ownership, inherited privileges, USE on every ancestor."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def test_use_schema_on_a_table_does_not_open_the_schema(store):
 def test_owners_and_admins_hold_everything(store):
     table = store.table("main", "sales", "orders")
     alice = user("alice")
-    # As in Unity Catalog, owning a table does not open its parents.
+    # Owning a table does not open its parents.
     with pytest.raises(LoamzError, match="USE_SCHEMA"):
         store.require(alice, "table", table, "SELECT")
     store.grant("schema", table["schema_id"], "user:alice", "USE_SCHEMA", "admin")

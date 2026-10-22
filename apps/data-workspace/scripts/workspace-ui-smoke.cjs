@@ -190,14 +190,14 @@ const { mkdirSync } = require("node:fs");
       .uncheck();
     assert.equal(
       await page
-        .locator(".databricks-table th")
+        .locator(".dw-table th")
         .filter({ hasText: "region" })
         .count(),
       0,
     );
     await page.locator(".grid-column-picker summary").click();
     const header = page
-      .locator(".databricks-table th")
+      .locator(".dw-table th")
       .filter({ hasText: "revenue" });
     await header.locator(".menu-btn").click();
     await page.getByRole("button", { name: "Pin column", exact: true }).click();
@@ -269,7 +269,7 @@ const { mkdirSync } = require("node:fs");
       return {
         topbar: height(".topbar"),
         run: height(".sql-run-button"),
-        row: height(".databricks-row"),
+        row: height(".dw-row"),
         toolbar: height(".sql-editor-toolbar"),
         font: getComputedStyle(document.body).fontSize,
       };
@@ -292,13 +292,13 @@ const { mkdirSync } = require("node:fs");
     assert.equal(statements.at(-1).catalog, "main");
     assert.equal(statements.at(-1).schema, "default");
     const customerHeader = page
-      .locator(".databricks-table th")
+      .locator(".dw-table th")
       .filter({ hasText: "customer" });
     await customerHeader.locator(".sort-btn").click();
     await customerHeader.locator(".sort-btn").click();
     await page.waitForFunction(() =>
       document
-        .querySelector(".databricks-row")
+        .querySelector(".dw-row")
         ?.textContent.includes("Customer 100"),
     );
     await page.locator(".grid-row-index-wrap").first().click();

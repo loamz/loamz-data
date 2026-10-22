@@ -1983,7 +1983,7 @@ main.main-full-bleed {
   margin-top: 2px;
 }
 
-/* Databricks Clean Workspace View */
+/* Clean Workspace View */
 .workspace-view {
   display: flex;
   flex-direction: column;
@@ -1993,7 +1993,7 @@ main.main-full-bleed {
   border-bottom: 1px solid var(--border);
   margin-bottom: 4px;
 }
-.databricks-tabs {
+.dw-tabs {
   display: flex;
   align-items: center;
   gap: 24px;
@@ -2001,7 +2001,7 @@ main.main-full-bleed {
   margin-bottom: 16px;
   overflow-x: auto;
 }
-.databricks-tab {
+.dw-tab {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -2018,10 +2018,10 @@ main.main-full-bleed {
     color 0.15s ease,
     border-color 0.15s ease;
 }
-.databricks-tab:hover {
+.dw-tab:hover {
   color: var(--text);
 }
-.databricks-tab.active {
+.dw-tab.active {
   color: var(--violet);
   border-bottom-color: var(--violet);
   font-weight: 600;
@@ -2034,7 +2034,7 @@ main.main-full-bleed {
   background: var(--hover);
   color: var(--muted);
 }
-.databricks-tab.active .tab-count {
+.dw-tab.active .tab-count {
   background: var(--violet-soft);
   color: var(--violet);
 }
@@ -2059,8 +2059,8 @@ main.main-full-bleed {
   text-overflow: ellipsis;
 }
 
-/* Databricks SQL Editor IDE */
-.databricks-sql-layout {
+/* SQL Editor IDE */
+.dw-sql-layout {
   display: flex !important;
   flex-direction: row !important;
   gap: 0;
@@ -2070,7 +2070,7 @@ main.main-full-bleed {
   overflow: hidden;
   width: 100%;
 }
-.databricks-sql-layout.sql-collapsed {
+.dw-sql-layout.sql-collapsed {
   display: flex !important;
   flex-direction: row !important;
 }
@@ -2116,7 +2116,7 @@ main.main-full-bleed {
 }
 
 /* Left Catalog Sidebar */
-.databricks-catalog-pane {
+.dw-catalog-pane {
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -2335,14 +2335,14 @@ main.main-full-bleed {
 .tree-action-btn.insert-name-btn:hover {
   color: var(--accent, #0284c7);
 }
-/* Databricks Tooltip on hover */
+/* Tooltip on hover */
 .tooltip-wrapper {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
-.tooltip-wrapper .databricks-tooltip {
+.tooltip-wrapper .dw-tooltip {
   visibility: hidden;
   opacity: 0;
   position: absolute;
@@ -2364,7 +2364,7 @@ main.main-full-bleed {
   z-index: 9999;
   transition: opacity 0.12s ease-in-out;
 }
-.tooltip-wrapper .databricks-tooltip::after {
+.tooltip-wrapper .dw-tooltip::after {
   content: "";
   position: absolute;
   top: 100%;
@@ -2374,7 +2374,7 @@ main.main-full-bleed {
   border-style: solid;
   border-color: var(--text) transparent transparent transparent;
 }
-.tooltip-wrapper:hover .databricks-tooltip {
+.tooltip-wrapper:hover .dw-tooltip {
   visibility: visible;
   opacity: 1;
 }
@@ -2696,7 +2696,7 @@ main.main-full-bleed {
   min-height: 120px;
 }
 
-/* Resizable Splitter Handle between SQL Editor and Results matching Databricks */
+/* Resizable Splitter Handle between SQL Editor and Results*/
 .sql-editor-resizer {
   height: 6px;
   margin-top: -3px;
@@ -2872,7 +2872,7 @@ main.main-full-bleed {
   min-width: 175px;
 }
 
-/* Results Footer Bar matching Databricks screenshot */
+/* Results Footer Bar*/
 .results-footer-bar {
   display: flex;
   align-items: center;
@@ -2945,20 +2945,20 @@ main.main-full-bleed {
   opacity: 0.8;
 }
 
-/* Grid Databricks Index & Headers */
-.databricks-grid-scroll {
+/* Grid Index & Headers */
+.dw-grid-scroll {
   position: relative;
   overflow: auto;
   background: var(--surface);
 }
-.databricks-grid-scroll table {
+.dw-grid-scroll table {
   width: max-content;
   min-width: 0;
   border-collapse: separate;
   border-spacing: 0;
   background: var(--surface);
 }
-.databricks-grid-scroll th {
+.dw-grid-scroll th {
   border-bottom: 1px solid var(--border);
   border-right: 1px solid var(--border);
   background: var(--subtle);
@@ -2970,10 +2970,10 @@ main.main-full-bleed {
   height: 28px;
   padding: 0;
 }
-.databricks-grid-scroll th.pinned-header {
+.dw-grid-scroll th.pinned-header {
   background: rgba(59, 130, 246, 0.08);
 }
-.databricks-header-content {
+.dw-header-content {
   display: flex;
   align-items: center;
   height: 100%;
@@ -3029,7 +3029,7 @@ main.main-full-bleed {
     color 0.12s ease;
   flex-shrink: 0;
 }
-.databricks-grid-scroll th:hover .header-action-btn {
+.dw-grid-scroll th:hover .header-action-btn {
   opacity: 0.85;
 }
 .header-action-btn:hover {
@@ -3048,7 +3048,7 @@ main.main-full-bleed {
   opacity: 0.55;
 }
 
-.databricks-grid-scroll td {
+.dw-grid-scroll td {
   border-bottom: 1px solid var(--border);
   border-right: 1px solid var(--border);
   color: var(--text);
@@ -3060,12 +3060,12 @@ main.main-full-bleed {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.databricks-grid-scroll tr:hover td {
+.dw-grid-scroll tr:hover td {
   background: var(--hover);
 }
 
-/* Databricks Grid Container */
-.databricks-grid-container {
+/* Grid Container */
+.dw-grid-container {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -3075,8 +3075,8 @@ main.main-full-bleed {
   background: var(--surface);
 }
 
-/* Databricks Filter Bar */
-.databricks-filter-bar {
+/* Filter Bar */
+.dw-filter-bar {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3170,8 +3170,8 @@ main.main-full-bleed {
   color: var(--violet);
 }
 
-/* Databricks Filter Popover matching screenshots */
-.databricks-filter-popover {
+/* Filter Popover matching screenshots */
+.dw-filter-popover {
   position: fixed;
   z-index: 120;
   width: 290px;
@@ -3421,12 +3421,12 @@ main.main-full-bleed {
   text-decoration: underline;
 }
 
-/* Databricks Row & Cell Selection matching screenshot 2 */
-.databricks-row.row-selected td {
+/* Row & Cell Selection matching screenshot 2 */
+.dw-row.row-selected td {
   background: var(--violet-soft) !important;
   color: var(--text) !important;
 }
-.databricks-row.row-selected .cell-value {
+.dw-row.row-selected .cell-value {
   color: var(--text) !important;
 }
 .grid-row-index-wrap {
@@ -3484,7 +3484,7 @@ main.main-full-bleed {
 }
 
 /* Selection Right-Click Context Menu matching screenshot 2 */
-.databricks-selection-context-menu {
+.dw-selection-context-menu {
   position: fixed;
   z-index: 150;
   min-width: 200px;
@@ -3521,7 +3521,7 @@ main.main-full-bleed {
   align-items: center;
   gap: 8px;
 }
-.databricks-sub-menu {
+.dw-sub-menu {
   position: absolute;
   top: 0;
   left: calc(100% + 2px);
@@ -3536,8 +3536,8 @@ main.main-full-bleed {
   z-index: 160;
 }
 
-/* Floating Column Header Context Menu matching Databricks */
-.databricks-column-context-menu {
+/* Floating Column Header Context Menu*/
+.dw-column-context-menu {
   position: fixed;
   z-index: 100;
   min-width: 190px;
@@ -3579,7 +3579,7 @@ main.main-full-bleed {
 }
 
 /* Toast feedback notification */
-.databricks-toast {
+.dw-toast {
   position: absolute;
   bottom: 12px;
   right: 16px;
@@ -3601,7 +3601,7 @@ main.main-full-bleed {
   color: #10b981;
 }
 
-/* Databricks Clean Compute Layout */
+/* Clean Compute Layout */
 .compute-filter-bar {
   display: flex;
   align-items: center;
@@ -3635,7 +3635,7 @@ main.main-full-bleed {
 .compute-actions-right {
   margin-left: auto;
 }
-.compute-table.databricks-style th {
+.compute-table.dw-style th {
   font-size: 10px;
   font-weight: 500;
   text-transform: uppercase;
@@ -3644,7 +3644,7 @@ main.main-full-bleed {
   background: var(--subtle);
   padding: 10px 14px;
 }
-.compute-table.databricks-style td {
+.compute-table.dw-style td {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
   font-size: 11px;
@@ -3827,13 +3827,13 @@ main.main-full-bleed {
   border-top: 1px solid var(--border);
 }
 
-/* Databricks Custom Dropdowns */
-.databricks-dropdown-wrapper {
+/* Custom Dropdowns */
+.dw-dropdown-wrapper {
   position: relative;
   display: inline-flex;
   align-items: center;
 }
-.databricks-dropdown-trigger {
+.dw-dropdown-trigger {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -3847,19 +3847,19 @@ main.main-full-bleed {
   transition: all 0.15s ease;
   white-space: nowrap;
 }
-.databricks-dropdown-trigger:hover {
+.dw-dropdown-trigger:hover {
   background: var(--hover);
   border-color: var(--text);
 }
-.databricks-dropdown-trigger .trigger-icon {
+.dw-dropdown-trigger .trigger-icon {
   color: var(--violet);
   flex-shrink: 0;
 }
-.databricks-dropdown-trigger .trigger-chevron {
+.dw-dropdown-trigger .trigger-chevron {
   color: var(--muted);
   transition: transform 0.15s ease;
 }
-.databricks-dropdown-trigger .trigger-chevron.open {
+.dw-dropdown-trigger .trigger-chevron.open {
   transform: rotate(180deg);
 }
 .context-separator {
@@ -3870,7 +3870,7 @@ main.main-full-bleed {
   opacity: 0.6;
   margin: 0 1px;
 }
-.databricks-dropdown-menu {
+.dw-dropdown-menu {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
@@ -3885,7 +3885,7 @@ main.main-full-bleed {
   flex-direction: column;
   gap: 2px;
 }
-.databricks-dropdown-menu.save-menu {
+.dw-dropdown-menu.save-menu {
   right: 0;
   left: auto;
   min-width: 180px;
@@ -3987,13 +3987,13 @@ main.main-full-bleed {
   height: calc(100vh - 40px) !important;
   max-height: calc(100vh - 40px) !important;
 }
-.workspace-ide .databricks-sql-layout {
+.workspace-ide .dw-sql-layout {
   height: 100% !important;
   max-height: calc(100vh - 40px) !important;
 }
 
 /* ==========================================================================
-   Unity Catalog OSS Design System & Iconography
+   Design system and iconography
    ========================================================================== */
 
 /* Asset Colors */

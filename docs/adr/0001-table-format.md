@@ -40,7 +40,7 @@ v1 stores warehouse tables as **Apache Iceberg**, committed through **SeaweedFS'
 1. **Faster on both engines.** Reads were faster on the read paths we use (Polars and DuckDB), and writes were twice as fast.
 2. **We don't own the commit catalog.** SeaweedFS provides commits with compare-and-swap, namespaces, views, scan reports and maintenance compaction. The control plane keeps grants, policies and audit, and does not reimplement commit coordination.
 3. **Credential vending is already there.** SeaweedFS vends table-scoped credentials (`-s3.iceberg.credentialRole`), which gives Milestone 4 a ready base.
-4. **The open standard.** Iceberg REST is what DuckDB, Spark, Trino, Dremio and Unity Catalog all speak, so outside engines can read our tables without an export.
+4. **The open standard.** Iceberg REST is what DuckDB, Spark, Trino and Dremio all speak, so outside engines can read our tables without an export.
 
 ## Consequences and follow-ups
 

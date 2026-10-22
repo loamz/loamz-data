@@ -49,7 +49,7 @@ export type FilterOperator =
   | "contains"
   | "does_not_contain";
 
-export interface DatabricksFilter {
+export interface StructuredFilter {
   id: string;
   column: string;
   operator: FilterOperator;
@@ -138,9 +138,9 @@ export function Grid({
   const [activeMenuCol, setActiveMenuCol] = useState<string | null>(null);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
 
-  // Databricks structured filters state
-  const [filters, updateFilters] = useState<DatabricksFilter[]>([]);
-  const setFilters: React.Dispatch<React.SetStateAction<DatabricksFilter[]>> = (
+  // structured filters state
+  const [filters, updateFilters] = useState<StructuredFilter[]>([]);
+  const setFilters: React.Dispatch<React.SetStateAction<StructuredFilter[]>> = (
     value,
   ) => {
     setSelectedRowIndices(new Set());
@@ -231,7 +231,7 @@ export function Grid({
     };
   }, []);
 
-  // Filter rows by global filterText AND Databricks structured filters
+  // Filter rows by global filterText AND structured filters
   const filteredRows = useMemo(() => {
     let result = rows;
 
@@ -255,7 +255,7 @@ export function Grid({
         ),
       );
     }
-    // 2. Structured Databricks filters
+    // 2. Structured filters
     for (const f of filters) {
       if (!f.enabled || f.values.length === 0) continue;
       result = result.filter((r) => {
@@ -558,7 +558,7 @@ export function Grid({
   // Filter creation & opening
   const handleAddFilter = (columnName?: string) => {
     const targetCol = columnName || columns[0] || "";
-    const newFilter: DatabricksFilter = {
+    const newFilter: StructuredFilter = {
       id: `filter-${Date.now()}`,
       column: targetCol,
       operator: "is_one_of",
@@ -650,10 +650,10 @@ export function Grid({
   };
 
   return (
-    <div className="databricks-grid-container">
+    <div className="dw-grid-container">
       {/* Toast Feedback Notification */}
       {toastMessage && (
-        <div className="databricks-toast">
+        <div className="dw-toast">
           <Check size={12} className="toast-icon" />
           <span>{toastMessage}</span>
         </div>
@@ -761,7 +761,7 @@ export function Grid({
         </div>
       </div>
       {/* Filters apply to the loaded result, never silently to the entire dataset. */}
-      <div className="databricks-filter-bar">
+      <div className="dw-filter-bar">
         {filters.map((f) => {
           const valPreview =
             f.values.length > 0
@@ -825,7 +825,7 @@ export function Grid({
       {/* DATABRICKS FILTER POPOVER (Modal matching screenshots 3, 4, 5) */}
       {activeEditingFilter && filterPopoverPos && (
         <div
-          className="databricks-filter-popover"
+          className="dw-filter-popover"
           style={{
             top: `${filterPopoverPos.y}px`,
             left: `${filterPopoverPos.x}px`,
@@ -1065,10 +1065,10 @@ export function Grid({
         </div>
       )}
 
-      {/* Floating Column Header 3-Dots Context Menu (EXACT Databricks options, NO duplicate sorting!) */}
+      {/* Floating Column Header 3-Dots Context Menu (no duplicate sorting) */}
       {activeMenuCol && menuPos && (
         <div
-          className="databricks-column-context-menu"
+          className="dw-column-context-menu"
           style={{ top: `${menuPos.y}px`, left: `${menuPos.x}px` }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -1146,7 +1146,7 @@ export function Grid({
       {/* DATABRICKS CELL / SELECTION RIGHT-CLICK CONTEXT MENU (Matching screenshot 2) */}
       {selectionMenu && (
         <div
-          className="databricks-selection-context-menu"
+          className="dw-selection-context-menu"
           style={{ top: `${selectionMenu.y}px`, left: `${selectionMenu.x}px` }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -1174,7 +1174,7 @@ export function Grid({
             </div>
 
             {copyAsSubmenuOpen && (
-              <div className="databricks-sub-menu">
+              <div className="dw-sub-menu">
                 <button
                   type="button"
                   className="col-menu-item"
@@ -1224,7 +1224,7 @@ export function Grid({
             type="button"
             className="col-menu-item"
             onClick={() => {
-              const newFilter: DatabricksFilter = {
+              const newFilter: StructuredFilter = {
                 id: `filter-${Date.now()}`,
                 column: selectionMenu.clickedColumn,
                 operator: "equals",
@@ -1245,7 +1245,7 @@ export function Grid({
             type="button"
             className="col-menu-item"
             onClick={() => {
-              const newFilter: DatabricksFilter = {
+              const newFilter: StructuredFilter = {
                 id: `filter-${Date.now()}`,
                 column: selectionMenu.clickedColumn,
                 operator: "not_equals",
@@ -1265,8 +1265,8 @@ export function Grid({
       )}
 
       {/* Grid Table */}
-      <div className="grid-scroll databricks-grid-scroll" ref={parent}>
-        <table className="databricks-table">
+      <div className="grid-scroll dw-grid-scroll" ref={parent}>
+        <table className="dw-table">
           <thead>
             {table.getHeaderGroups().map((group) => (
               <tr key={group.id}>
@@ -1323,7 +1323,7 @@ export function Grid({
                       }}
                     >
                       {!isIndex ? (
-                        <div className="databricks-header-content">
+                        <div className="dw-header-content">
                           {/* Data Type Badge: Abc, #, 📅, TF */}
                           <span className="column-type-badge">
                             {type === "number" ? (
@@ -1439,7 +1439,7 @@ export function Grid({
               return (
                 <tr
                   key={row.id}
-                  className={`databricks-row ${isSelected ? "row-selected" : ""}`}
+                  className={`dw-row ${isSelected ? "row-selected" : ""}`}
                 >
                   {row.getVisibleCells().map((c) => (
                     <td

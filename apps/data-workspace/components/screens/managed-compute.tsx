@@ -146,10 +146,10 @@ export function ResourcePicker({
   const displayLabel = selected ? selected.name : defaultLabel;
 
   return (
-    <div className="databricks-dropdown-wrapper" ref={ref}>
+    <div className="dw-dropdown-wrapper" ref={ref}>
       <button
         type="button"
-        className="databricks-dropdown-trigger"
+        className="dw-dropdown-trigger"
         aria-expanded={open}
         aria-haspopup="listbox"
         onClick={() => setOpen(!open)}
@@ -163,7 +163,7 @@ export function ResourcePicker({
       </button>
 
       {open && (
-        <div className="databricks-dropdown-menu panel" role="listbox">
+        <div className="dw-dropdown-menu panel" role="listbox">
           <div className="dropdown-menu-header">
             {role === "sql" ? "SQL WAREHOUSES" : "COMPUTE ENDPOINTS"}
           </div>
@@ -641,11 +641,11 @@ export function ManagedComputeScreen() {
   }
 
   // ----------------------------------------------------
-  // LIST VIEW: Clean, Simple, Spacious Table (like Databricks)
+  // LIST VIEW: Clean, Simple, Spacious Table
   // ----------------------------------------------------
   return (
     <div className="compute-layout">
-      {/* Secondary in-page nav bar (Tabs) matching Databricks Compute header */}
+      {/* Secondary in-page nav bar (Tabs)*/}
       <nav
         className="compute-nav-tabs tabs"
         role="tablist"
@@ -678,7 +678,7 @@ export function ManagedComputeScreen() {
         })}
       </nav>
 
-      {/* Spacious, minimal toolbar matching Databricks */}
+      {/* Spacious, minimal toolbar*/}
       <div className="compute-filter-bar">
         <div className="compute-search-input">
           <Search size={14} />
@@ -719,9 +719,9 @@ export function ManagedComputeScreen() {
         </p>
       )}
 
-      {/* Clean, spacious compute inventory table matching Databricks screenshot */}
+      {/* Clean, spacious compute inventory table*/}
       <section className="panel compute-table-wrap">
-        <table className="compute-table databricks-style">
+        <table className="compute-table dw-style">
           <thead>
             <tr>
               <th style={{ width: "40px" }}>State</th>
@@ -957,7 +957,7 @@ function AttachComputeModal({
                 name="name"
                 required
                 maxLength={80}
-                placeholder="e.g. Databricks SQL Warehouse or Spark ETL"
+                placeholder="e.g. SQL warehouse or Spark ETL"
                 defaultValue={initial?.name}
               />
             </label>
