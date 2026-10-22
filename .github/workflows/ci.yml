@@ -41,7 +41,6 @@ jobs:
           filters: |
             # Anything in `shared` affects every Python package.
             python:
-              - 'sdk/python/**'
               - 'server/engine/**'
               - 'server/server/**'
               - 'meta/**'
@@ -57,7 +56,6 @@ jobs:
               - '.github/workflows/ci.yml'
             server:
               - 'server/**'
-              - 'sdk/python/**'
               - 'specs/**'
             js:
               - 'apps/**'
@@ -120,9 +118,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: loamz-core, dir: sdk/python/core }
-          - { name: loamz-identity, dir: sdk/python/identity }
-          - { name: loamz-data, dir: sdk/python/data }
           - { name: loamz-engine, dir: server/engine }
           - { name: loamz-server, dir: server/server }
     services:

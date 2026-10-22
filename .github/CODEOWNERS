@@ -18,10 +18,8 @@
 /server/engine/                 @Ravikumarchavva
 /server/server/                 @Ravikumarchavva
 /server/reader/                 @Ravikumarchavva
-/sdk/python/                    @Ravikumarchavva
 /sdk/js/                        @Ravikumarchavva
 /apps/                          @Ravikumarchavva
-/meta/loamz/                    @Ravikumarchavva
 
 # Repo governance, CI and release machinery
 /.github/                       @Ravikumarchavva

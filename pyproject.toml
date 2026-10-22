@@ -7,10 +7,6 @@
 members = [
     "server/engine",
     "server/server",
-    "sdk/python/core",
-    "sdk/python/identity",
-    "sdk/python/data",
-    "meta/loamz",
 ]
 # loamz-reader runs on Python 3.13 (PaddlePaddle has no 3.14 wheels yet) with its own lock.
 exclude = ["server/reader"]
@@ -25,10 +21,10 @@ explicit = true
 torch = { index = "pytorch-cpu" }
 loamz-engine = { workspace = true }
 loamz-server = { workspace = true }
-loamz-core = { workspace = true }
-loamz-identity = { workspace = true }
-loamz-data = { workspace = true }
-loamz = { workspace = true }
+# The client libraries live in loamz-python; until they are on PyPI the server builds against its main branch.
+loamz-core = { git = "file:///home/ravikumar/personal/agent-framework/loamz-python", subdirectory = "sdk/python/core" }
+loamz-identity = { git = "file:///home/ravikumar/personal/agent-framework/loamz-python", subdirectory = "sdk/python/identity" }
+loamz-data = { git = "file:///home/ravikumar/personal/agent-framework/loamz-python", subdirectory = "sdk/python/data" }
 
 [dependency-groups]
 dev = [

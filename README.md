@@ -4,16 +4,18 @@ A governed data platform and durable agents built on it.
 
 | Directory | Distribution | What it is |
 | --- | --- | --- |
-| [`server/engine`](server/engine) | `loamz-engine` | Embeddable storage engine: SQL `Database` (SQLite & Postgres), vectors, memory, files, documents |
-| [`server/server/src/loamz/server/identity`](server/server/src/loamz/server/identity) | `loamz-identity` | OIDC verifier, JWKS, FastAPI helpers, and multi-tenant isolation rules |
-| [`sdk/python/data`](sdk/python/data) | `loamz-data` | Typed HTTP client for Loamz Data platform API |
-| [`server/server`](server/server) | `loamz-server` | Governed data platform: catalog, SQL, tables, compute, files, documents, memory, databases, audit |
-| [`server/reader`](server/reader) | `loamz-reader` | High-throughput document reader service (PaddleOCR & layout analysis) |
-| [`apps/data-workspace`](apps/data-workspace) | `data-workspace` | Next.js data workspace application |
-| [`server/engine`](server/engine) | `loamz-agents` | Agent reasoning loop, tool execution, sandboxes, durable runs, and agent server (`[server]`) |
-| [`apps/agents-console`](apps/agents-console) | `agents-console` | Next.js agent chat and operations console |
-| [`sdk/js/oidc-bff`](sdk/js/oidc-bff) | `@loamz/oidc-bff` | TypeScript browser BFF session library (Keycloak authorization code + PKCE) |
-| [`meta/loamz`](meta/loamz) | `loamz` | Convenience metapackage (`pip install "loamz[agents,data]"`) |
+| [`server/engine`](server/engine) | `loamz-engine` | Embeddable engines: SQL `Database` (SQLite and Postgres), vectors, memory, files, documents, and the durable agent runtime (`loamz.engine.agents`) |
+| [`server/server`](server/server) | `loamz-server` | The open platform: Loamz Data (`loamz.server.data`), agent hosting (`loamz.server.agents`) and token verification (`loamz.server.identity`); one CLI, `loamz-server data|agents` |
+| [`server/reader`](server/reader) | `loamz-reader` | High-throughput document reader service (PaddleOCR and layout analysis), Python 3.13 |
+| [`apps/data-workspace`](apps/data-workspace) | | Next.js data workspace |
+| [`apps/agents-console`](apps/agents-console) | | Next.js agent chat and operations console |
+| [`sdk/js/oidc-bff`](sdk/js/oidc-bff) | `@loamz/oidc-bff` | Browser BFF session library (Keycloak authorization code with PKCE) |
+| [`specs`](specs) | | OpenAPI specs (`agents/v1`, `data/v1`) that every SDK is generated or checked against |
+| [`deploy`](deploy) | | Docker, Compose cell, Helm chart `loamz-cell`, Terraform, Keycloak realm |
+
+The Python client libraries (`loamz-core`, `loamz-identity`, `loamz-data`, `loamz`) live in
+[loamz/loamz-python](https://github.com/loamz/loamz-python). Until they are on PyPI this repo builds against that
+repository's `main` branch (see `[tool.uv.sources]` in `pyproject.toml`).
 
 ## Quick Start
 

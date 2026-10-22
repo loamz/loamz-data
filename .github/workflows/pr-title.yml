@@ -30,8 +30,6 @@ jobs:
             revert
           scopes: |
             loamz
-            loamz-core
-            loamz-data
             loamz-engine
             loamz-server
             loamz-reader

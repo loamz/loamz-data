@@ -3,7 +3,7 @@
 # LOAMZ_TEST_POSTGRES_URL / LOAMZ_TEST_REDIS_URL point at a server, and skip otherwise.
 .PHONY: sync lint format imports test test-sdk test-engine test-server test-reader test-slow js-check check e2e help
 
-PY_DIRS := server/engine server/server server/reader sdk/python/core sdk/python/data meta/loamz
+PY_DIRS := server/engine server/server server/reader
 PYTEST := -q -n 4 --timeout=120
 
 help:
@@ -29,11 +29,6 @@ format:
 imports:
 	uv run lint-imports --config .importlinter
 
-test-sdk:
-	cd sdk/python/core && uv run --package loamz-core pytest $(PYTEST)
-	cd sdk/python/identity && uv run --package loamz-identity pytest $(PYTEST)
-	cd sdk/python/data && uv run --package loamz-data pytest $(PYTEST)
-
 test-engine:
 	cd server/engine && uv run --package loamz-engine pytest $(PYTEST)
 
@@ -55,6 +50,6 @@ js-check:
 	pnpm -r test
 
 e2e:
-	uv run --package loamz-core python deploy/compose/e2e.py deploy/compose/.env
+	uv run --package loamz-server python deploy/compose/e2e.py deploy/compose/.env
 
 check: lint imports test js-check

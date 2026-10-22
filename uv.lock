@@ -9,11 +9,7 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "loamz",
-    "loamz-core",
-    "loamz-data",
     "loamz-engine",
-    "loamz-identity",
     "loamz-server",
 ]
 
@@ -1781,64 +1777,17 @@ wheels = [
 ]
 
 [[package]]
-name = "loamz"
-version = "0.1.0"
-source = { editable = "meta/loamz" }
-dependencies = [
-    { name = "loamz-core" },
-    { name = "loamz-data" },
-    { name = "loamz-identity" },
-]
-
-[package.optional-dependencies]
-engine = [
-    { name = "loamz-engine" },
-]
-server = [
-    { name = "loamz-server" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "loamz-core", editable = "sdk/python/core" },
-    { name = "loamz-data", editable = "sdk/python/data" },
-    { name = "loamz-engine", marker = "extra == 'engine'", editable = "server/engine" },
-    { name = "loamz-identity", editable = "sdk/python/identity" },
-    { name = "loamz-server", marker = "extra == 'server'", editable = "server/server" },
-]
-provides-extras = ["engine", "server"]
-
-[[package]]
 name = "loamz-core"
 version = "0.1.0"
-source = { editable = "sdk/python/core" }
+source = { git = "file:///home/ravikumar/personal/agent-framework/loamz-python?subdirectory=sdk%2Fpython%2Fcore#25743da4c8e77de772b8388f6aaf01a82cab932f" }
 dependencies = [
     { name = "httpx" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-timeout" },
-    { name = "pytest-xdist" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "httpx", specifier = ">=0.28,<1" }]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=9" },
-    { name = "pytest-asyncio", specifier = ">=1.4" },
-    { name = "pytest-timeout", specifier = ">=2.3" },
-    { name = "pytest-xdist", specifier = ">=3.6" },
 ]
 
 [[package]]
 name = "loamz-data"
 version = "0.1.0"
-source = { editable = "sdk/python/data" }
+source = { git = "file:///home/ravikumar/personal/agent-framework/loamz-python?subdirectory=sdk%2Fpython%2Fdata#25743da4c8e77de772b8388f6aaf01a82cab932f" }
 dependencies = [
     { name = "httpx" },
     { name = "loamz-core" },
@@ -1849,40 +1798,6 @@ dependencies = [
 arrow = [
     { name = "polars" },
     { name = "pyarrow" },
-]
-http2 = [
-    { name = "httpx", extra = ["http2"] },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "polars" },
-    { name = "pyarrow" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-timeout" },
-    { name = "pytest-xdist" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.28,<1" },
-    { name = "httpx", extras = ["http2"], marker = "extra == 'http2'", specifier = ">=0.28,<1" },
-    { name = "loamz-core", editable = "sdk/python/core" },
-    { name = "loamz-identity", editable = "sdk/python/identity" },
-    { name = "polars", marker = "extra == 'arrow'", specifier = ">=1.44.2,<2" },
-    { name = "pyarrow", marker = "extra == 'arrow'", specifier = ">=22,<27" },
-]
-provides-extras = ["arrow", "http2"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "polars", specifier = ">=1.44.2,<2" },
-    { name = "pyarrow", specifier = ">=22,<27" },
-    { name = "pytest", specifier = ">=9" },
-    { name = "pytest-asyncio", specifier = ">=1.4" },
-    { name = "pytest-timeout", specifier = ">=2.3" },
-    { name = "pytest-xdist", specifier = ">=3.6" },
 ]
 
 [[package]]
@@ -2021,7 +1936,7 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'safety'", specifier = ">=0.25.0" },
     { name = "k8s-agent-sandbox", marker = "extra == 'code'", specifier = ">=0.4.6" },
     { name = "kokoro", marker = "extra == 'tts'", specifier = ">=0.9.4" },
-    { name = "loamz-data", marker = "extra == 'data'", editable = "sdk/python/data" },
+    { name = "loamz-data", marker = "extra == 'data'", git = "file:///home/ravikumar/personal/agent-framework/loamz-python?subdirectory=sdk%2Fpython%2Fdata" },
     { name = "matplotlib", marker = "extra == 'sandbox'", specifier = ">=3.9.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0.0" },
     { name = "onnxruntime", marker = "extra == 'ocr'", specifier = ">=1.23.0" },
@@ -2078,32 +1993,10 @@ dev = [
 [[package]]
 name = "loamz-identity"
 version = "0.1.0"
-source = { editable = "sdk/python/identity" }
+source = { git = "file:///home/ravikumar/personal/agent-framework/loamz-python?subdirectory=sdk%2Fpython%2Fidentity#25743da4c8e77de772b8388f6aaf01a82cab932f" }
 dependencies = [
     { name = "httpx" },
     { name = "loamz-core" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-timeout" },
-    { name = "pytest-xdist" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.28,<1" },
-    { name = "loamz-core", editable = "sdk/python/core" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=9" },
-    { name = "pytest-asyncio", specifier = ">=1.4" },
-    { name = "pytest-timeout", specifier = ">=2.3" },
-    { name = "pytest-xdist", specifier = ">=3.6" },
 ]
 
 [[package]]
@@ -2166,7 +2059,7 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.4,<2" },
     { name = "fastapi", specifier = ">=0.128" },
     { name = "httpx", specifier = ">=0.28,<1" },
-    { name = "loamz-core", editable = "sdk/python/core" },
+    { name = "loamz-core", git = "file:///home/ravikumar/personal/agent-framework/loamz-python?subdirectory=sdk%2Fpython%2Fcore" },
     { name = "loamz-engine", extras = ["logging"], editable = "server/engine" },
     { name = "loamz-engine", extras = ["openai", "anthropic", "gemini", "redis", "mcp", "tools", "data"], marker = "extra == 'agents'", editable = "server/engine" },
     { name = "loamz-engine", extras = ["postgres", "pdf"], editable = "server/engine" },
@@ -2192,7 +2085,7 @@ provides-extras = ["inference", "gpu", "agents", "console"]
 [package.metadata.requires-dev]
 dev = [
     { name = "hypothesis", specifier = ">=6.168.3" },
-    { name = "loamz-data", extras = ["arrow"], editable = "sdk/python/data" },
+    { name = "loamz-data", extras = ["arrow"], git = "file:///home/ravikumar/personal/agent-framework/loamz-python?subdirectory=sdk%2Fpython%2Fdata" },
     { name = "loamz-engine", extras = ["openai", "tools", "redis"], editable = "server/engine" },
     { name = "prompt-toolkit", specifier = ">=3.0.0" },
     { name = "pytest", specifier = ">=9" },

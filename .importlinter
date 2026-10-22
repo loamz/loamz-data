@@ -1,36 +1,16 @@
 # Loamz dependency rules. Run: uv run lint-imports --config .importlinter
 #
-#   loamz.core            naming rules, transport, errors            (the SDK's floor)
-#   loamz.data            client for Loamz Data                      (SDK; HTTP only)
-#   loamz.engine          the embeddable engines                     (sql, files, vectors, documents, agent runtime)
-#   loamz.server          the open platform                          (data, agents hosting, identity)
+#   loamz.core, loamz.identity, loamz.data   the client libraries (loamz-python repo; HTTP only)
+#   loamz.engine                             the embeddable engines (sql, files, vectors, documents, agent runtime)
+#   loamz.server                             the open platform (data, agents hosting, identity)
 #
-# The SDK never imports an engine or a server. The data platform never imports the agent runtime.
+# The engines import no server. The data platform never imports the agent runtime.
 [importlinter]
 root_packages =
     loamz
 include_external_packages = False
 # An import made only for type checking never runs, so it cannot drag a layer along.
 exclude_type_checking_imports = True
-
-[importlinter:contract:core-is-the-floor]
-name = loamz.core imports no other Loamz package
-type = forbidden
-source_modules =
-    loamz.core
-forbidden_modules =
-    loamz.data
-    loamz.engine
-    loamz.server
-
-[importlinter:contract:sdk-is-light]
-name = the client SDK never imports an engine or a server
-type = forbidden
-source_modules =
-    loamz.data
-forbidden_modules =
-    loamz.engine
-    loamz.server
 
 [importlinter:contract:engine-is-self-contained]
 name = the engines import no server and no client (only the data adapters, behind the data extra, use the client)

@@ -21,26 +21,6 @@
       "release-type": "python",
       "package-name": "loamz-reader",
       "component": "loamz-reader"
-    },
-    "sdk/python/core": {
-      "release-type": "python",
-      "package-name": "loamz-core",
-      "component": "loamz-core"
-    },
-    "sdk/python/identity": {
-      "release-type": "python",
-      "package-name": "loamz-identity",
-      "component": "loamz-identity"
-    },
-    "sdk/python/data": {
-      "release-type": "python",
-      "package-name": "loamz-data",
-      "component": "loamz-data"
-    },
-    "meta/loamz": {
-      "release-type": "python",
-      "package-name": "loamz",
-      "component": "loamz"
     }
   }
 }
