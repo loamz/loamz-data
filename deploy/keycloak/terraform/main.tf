@@ -71,7 +71,7 @@ resource "keycloak_openid_client" "loamz_data" {
 locals {
   resource_servers = {
     loamz_agents = keycloak_openid_client.loamz_agents.id
-    loamz_data  = keycloak_openid_client.loamz_data.id
+    loamz_data   = keycloak_openid_client.loamz_data.id
   }
   tenant_lifecycle_roles = ["provision-tenant", "erase-tenant"]
 }
