@@ -1,0 +1,85 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1" # weekly, so new advisories surface without a code change
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript, actions]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          deny-licenses: AGPL-3.0-only, AGPL-3.0-or-later, SSPL-1.0
+
+  audit:
+    name: Known vulnerabilities in locked dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: pip-audit against uv.lock
+        run: |
+          uv export --frozen --all-packages --all-extras --no-hashes --no-emit-workspace \
+            --no-emit-package loamz-core --no-emit-package loamz-identity --no-emit-package loamz-data --no-emit-package loamz-agents \
+            -o /tmp/requirements.txt
+          # PYSEC-2026-3740 (nltk): no fixed release exists; nltk arrives only through crawl4ai (the `web` extra).
+          uvx pip-audit --requirement /tmp/requirements.txt --disable-pip --no-deps --strict \
+            --ignore-vuln PYSEC-2026-3740
+      - name: pip-audit against the reader's lock
+        working-directory: server/reader
+        run: |
+          uv export --frozen --no-hashes --no-emit-project --no-emit-package loamz-engine -o /tmp/reader.txt
+          uvx pip-audit --requirement /tmp/reader.txt --disable-pip --no-deps --strict
+
+  scorecard:
+    name: OpenSSF Scorecard
+    if: github.event_name != 'pull_request' && github.event.repository.private == false
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      id-token: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ossf/scorecard-action@v2.4.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif

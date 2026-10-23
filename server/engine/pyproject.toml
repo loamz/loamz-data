@@ -30,7 +30,7 @@ sentence-transformers = ["sentence-transformers>=3.0.0"]
 # Redis: event bus, session-state cache
 redis = ["redis[hiredis]>=5.0.0"]
 # MCP tools
-mcp = ["mcp>=1.0.0"]
+mcp = ["mcp>=1.30.0,<2"]
 # text-to-speech
 tts = ["kokoro>=0.9.4", "soundfile>=0.12.1"]
 # skills (YAML front matter) and the spreadsheet skill
