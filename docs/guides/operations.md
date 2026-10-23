@@ -16,6 +16,13 @@
 
 ## Health and observability
 - Probes: `/health` and `/health/ready` (agent server), `/readyz` (data API, controller, workers).
+- **Metrics.** The agent server and the data API serve Prometheus metrics at `/metrics`:
+  `loamz_http_requests_total` (method, route template, status class), `loamz_http_request_duration_seconds`
+  (histogram) and `loamz_http_requests_in_flight`, labelled by `service`. Labels are route templates, so cardinality is
+  bounded. Keep `/metrics` on the cluster network, and set `LOAMZ_METRICS_TOKEN` to also require a bearer token. In the
+  chart, `metrics.enabled=true` lets the monitoring namespace through the network policy;
+  `metrics.serviceMonitor.enabled` and `metrics.alerts.enabled` create a ServiceMonitor and a PrometheusRule (error
+  rate, p95 latency, no reporting server) for the Prometheus Operator.
 - Every request carries a W3C `traceparent`; the servers emit OpenTelemetry traces when `OTEL_*` is enabled, and
   structured logs. `deploy/observability` has Grafana, Loki, Promtail and Tempo configuration.
 - Audit events stream to a SIEM through `audit-events:export`.

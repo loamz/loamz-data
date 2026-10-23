@@ -210,6 +210,18 @@ ingress:
   annotations: {}            # e.g. cert-manager.io/cluster-issuer: letsencrypt
   tls: { enabled: false, secretName: "" }   # one secret covering all hosts; cert-manager can create it
 
+# ── Metrics ──────────────────────────────────────────────────────────────────
+# Both API servers expose Prometheus metrics at /metrics. Scraping needs the monitoring stack to reach the pods
+# (the namespace selector below is added to the network policy) and, with the Prometheus Operator, the two CRD
+# objects this chart can create. Set LOAMZ_METRICS_TOKEN through `global.extraEnv` to require a bearer token.
+metrics:
+  enabled: false
+  monitoringNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: monitoring
+  serviceMonitor: { enabled: false, interval: 30s, labels: {} }
+  alerts: { enabled: false, labels: {} }
+
 # ── Network policy ───────────────────────────────────────────────────────────
 networkPolicy:
   enabled: true

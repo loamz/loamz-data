@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
 from loamz.engine.errors import LoamzError, ServiceUnavailableError
+from loamz.server import metrics
 from loamz.server.data.features import FEATURES, ROLES
 from loamz.server.data.features.files.service import files_service, sweep_files
 from loamz.server.data.features.tables.publications import job_publisher
@@ -82,6 +83,7 @@ def create_app(container: Container | None = None, *, roles: set[str] | None = N
     )
     app.state.container = container
     problems.install(app, settings)
+    metrics.install(app, service="data")
     for feature in FEATURES:
         if "all" in wanted or feature.role in wanted:
             app.include_router(feature.router())
