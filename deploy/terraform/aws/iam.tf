@@ -47,6 +47,14 @@ data "aws_iam_policy_document" "control" {
     actions   = ["sts:AssumeRole", "sts:TagSession"]
     resources = [aws_iam_role.vending.arn]
   }
+  dynamic "statement" {
+    for_each = var.kms_key_arn != "" ? [1] : []
+    content {
+      sid       = "Key"
+      actions   = ["kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
+      resources = [var.kms_key_arn]
+    }
+  }
 }
 
 resource "aws_iam_role" "control" {
@@ -92,6 +100,13 @@ data "aws_iam_policy_document" "vending" {
   statement {
     actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
     resources = [aws_s3_bucket.this["warehouse"].arn, aws_s3_bucket.this["staging"].arn]
+  }
+  dynamic "statement" {
+    for_each = var.kms_key_arn != "" ? [1] : []
+    content {
+      actions   = ["kms:Decrypt"]
+      resources = [var.kms_key_arn]
+    }
   }
 }
 

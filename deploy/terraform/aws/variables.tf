@@ -94,3 +94,9 @@ variable "browser_origins" {
   type        = list(string)
   description = "Web origins of the cell's UIs (for direct browser uploads), e.g. [\"https://data.cell-1.example.com\"]."
 }
+
+variable "kms_key_arn" {
+  type        = string
+  default     = ""
+  description = "Customer-managed KMS key (ARN) for the buckets and the database. Empty uses AWS-managed keys. The key policy must let this account's IAM use it."
+}

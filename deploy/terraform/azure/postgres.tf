@@ -27,7 +27,23 @@ resource "azurerm_postgresql_flexible_server" "this" {
     }
   }
 
-  depends_on = [azurerm_private_dns_zone_virtual_network_link.db]
+  dynamic "identity" {
+    for_each = var.key_vault_key_id != "" ? [1] : []
+    content {
+      type         = "UserAssigned"
+      identity_ids = [azurerm_user_assigned_identity.cmk[0].id]
+    }
+  }
+
+  dynamic "customer_managed_key" {
+    for_each = var.key_vault_key_id != "" ? [1] : []
+    content {
+      key_vault_key_id                  = var.key_vault_key_id
+      primary_user_assigned_identity_id = azurerm_user_assigned_identity.cmk[0].id
+    }
+  }
+
+  depends_on = [azurerm_private_dns_zone_virtual_network_link.db, azurerm_role_assignment.cmk]
 
   lifecycle {
     ignore_changes = [zone, high_availability[0].standby_availability_zone]
@@ -48,7 +64,7 @@ resource "azurerm_postgresql_flexible_server_configuration" "extensions" {
 }
 
 resource "azurerm_postgresql_flexible_server_database" "this" {
-  for_each  = toset(["agentdb", "keycloak", "loamz_data", "loamz_ui"])
+  for_each  = toset(["agentdb", "keycloak", "loamz_data", "data_retrieval", "loamz_compute", "loamz_ui"])
   name      = each.value
   server_id = azurerm_postgresql_flexible_server.this.id
 }

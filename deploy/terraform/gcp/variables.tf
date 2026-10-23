@@ -90,3 +90,9 @@ variable "labels" {
   type    = map(string)
   default = {}
 }
+
+variable "kms_key_name" {
+  type        = string
+  default     = ""
+  description = "Customer-managed Cloud KMS key (projects/…/cryptoKeys/…, in the cell's region) for the buckets and the database. Empty uses Google-managed keys."
+}

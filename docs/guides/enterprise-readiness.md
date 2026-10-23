@@ -12,7 +12,7 @@ nothing here is a certification.
 | Multi-tenancy | Built | Tenant from the token, one naming module, 404 for foreign resources, per-tenant catalogs and volumes |
 | Fine-grained access control | Built | Owners, inherited grants, row filters, column masks, definer-rights views |
 | Audit log | Built | Hash-chained, verifiable, NDJSON and CEF export for SIEMs |
-| Encryption in transit and at rest | Built | TLS, mutual TLS inside the cell, provider-managed keys in Terraform |
+| Encryption in transit and at rest | Built | TLS, mutual TLS inside the cell; provider-managed keys by default, customer-managed keys on AWS, Google Cloud and Azure (`encryption.md`) |
 | Data residency | Built by design | A cell runs in the customer's own cloud account and region |
 | Privacy requests | Built | Erasure and export per person or tenant |
 | High availability | Built | Stateless tiers: replicas, disruption budgets, spreading. Data controller: PostgreSQL-backed election with automatic takeover (`data.controller.ha`); managed PostgreSQL multi-AZ |
@@ -22,7 +22,6 @@ nothing here is a certification.
 | API stability | Built | `/api/v1`, RFC 9457 errors, cursor pagination; SDKs follow one naming standard |
 
 ## Gaps, in the order to close them
-1. **Customer-managed keys** surfaced in the product and documented per cloud.
-2. **Automated restore drills** and a published recovery-time objective.
-3. **Compliance**: SOC 2 Type II and ISO 27001 programs; a third-party penetration test; a published trust page.
-4. **Support**: a status page, severity definitions and response targets.
+1. **Automated restore drills** and a published recovery-time objective.
+2. **Compliance**: SOC 2 Type II and ISO 27001 programs; a third-party penetration test; a published trust page.
+3. **Support**: a status page, severity definitions and response targets.

@@ -247,6 +247,9 @@ class Settings(BaseSettings):
     storage_sts_role_arn: str = ""
     storage_sts_endpoint: str = ""  # default: the S3 endpoint
     storage_sts_session_seconds: int = Field(default=900, ge=900, le=3600)
+    # The customer-managed KMS key the warehouse bucket is encrypted with (an ARN). Vended credentials then also
+    # carry `kms:Decrypt` on that key, so a statement can read the encrypted files. Empty: provider-managed keys.
+    storage_kms_key_arn: str = ""
 
     # Names the warehouse independent of how each process reaches it (a container sees the same
     # storage at a different address). Set the same value on the control plane, controller and

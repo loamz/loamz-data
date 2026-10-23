@@ -22,8 +22,8 @@ What the platform enforces, where, and how to check it.
   (Helm generates it; `tls_cert_file`, `tls_key_file` and `tls_client_ca_file` configure it, TLS 1.3 by default). Plain HTTP between internal hosts is an explicit
   opt-in.
 - **At rest.** The Terraform modules create encrypted databases (`storage_encrypted`), encrypted buckets with
-  versioning, and deletion protection (`db_deletion_protection`). Keys are the cloud provider's; bring-your-own-key is
-  configured in those modules' variables, not in the application.
+  versioning, and deletion protection (`db_deletion_protection`). Keys are the cloud provider's by default; customer-managed keys are a
+  variable in each module (see [encryption.md](encryption.md)).
 - **Secrets.** Never in images or the repository. Helm reads them from one Kubernetes secret (or `existingSecret`);
   Compose generates them with `gen-env.sh`.
 - **Privacy.** Erasure requests and exports per person or per tenant (`/api/v1/erasure-requests`, exports), and

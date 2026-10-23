@@ -9,6 +9,7 @@ resource "google_sql_database_instance" "this" {
   region              = var.region
   database_version    = "POSTGRES_16"
   deletion_protection = var.db_deletion_protection
+  encryption_key_name = var.kms_key_name != "" ? var.kms_key_name : null
 
   settings {
     tier              = var.db_tier
@@ -29,7 +30,7 @@ resource "google_sql_database_instance" "this" {
     }
   }
 
-  depends_on = [google_service_networking_connection.private_services]
+  depends_on = [google_service_networking_connection.private_services, google_kms_crypto_key_iam_member.sql]
 }
 
 resource "google_sql_user" "loamz" {
@@ -40,7 +41,7 @@ resource "google_sql_user" "loamz" {
 }
 
 resource "google_sql_database" "this" {
-  for_each = toset(["agentdb", "keycloak", "loamz_data", "loamz_ui"])
+  for_each = toset(["agentdb", "keycloak", "loamz_data", "data_retrieval", "loamz_compute", "loamz_ui"])
   name     = each.value
   project  = var.project_id
   instance = google_sql_database_instance.this.name

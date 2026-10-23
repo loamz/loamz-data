@@ -111,6 +111,14 @@ class CredentialVendor:
                 }
             ],
         }
+        if self.settings.storage_kms_key_arn:
+            policy["Statement"].append(
+                {
+                    "Effect": "Allow",
+                    "Action": ["kms:Decrypt"],
+                    "Resource": [self.settings.storage_kms_key_arn],
+                }
+            )
         try:
             response = self.client.assume_role(
                 RoleArn=self.role,

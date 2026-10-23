@@ -18,6 +18,24 @@ resource "azurerm_storage_account" "this" {
   shared_access_key_enabled       = false
   tags                            = local.tags
 
+  dynamic "identity" {
+    for_each = var.key_vault_key_id != "" ? [1] : []
+    content {
+      type         = "UserAssigned"
+      identity_ids = [azurerm_user_assigned_identity.cmk[0].id]
+    }
+  }
+
+  dynamic "customer_managed_key" {
+    for_each = var.key_vault_key_id != "" ? [1] : []
+    content {
+      key_vault_key_id          = var.key_vault_key_id
+      user_assigned_identity_id = azurerm_user_assigned_identity.cmk[0].id
+    }
+  }
+
+  depends_on = [azurerm_role_assignment.cmk]
+
   blob_properties {
     versioning_enabled = true
     dynamic "cors_rule" {
@@ -65,4 +83,20 @@ resource "azurerm_storage_management_policy" "staging" {
       }
     }
   }
+}
+
+# With a customer-managed key, one identity reaches the vault for both the storage account and the database.
+resource "azurerm_user_assigned_identity" "cmk" {
+  count               = var.key_vault_key_id != "" ? 1 : 0
+  name                = "${var.name}-cmk"
+  location            = azurerm_resource_group.this.location
+  resource_group_name = azurerm_resource_group.this.name
+  tags                = local.tags
+}
+
+resource "azurerm_role_assignment" "cmk" {
+  count                = var.key_vault_key_id != "" ? 1 : 0
+  scope                = var.key_vault_id
+  role_definition_name = "Key Vault Crypto Service Encryption User"
+  principal_id         = azurerm_user_assigned_identity.cmk[0].principal_id
 }

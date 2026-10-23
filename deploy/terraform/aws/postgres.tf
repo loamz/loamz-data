@@ -47,6 +47,7 @@ resource "aws_db_instance" "this" {
   max_allocated_storage  = var.db_allocated_storage_gb * 4
   storage_type           = "gp3"
   storage_encrypted      = true
+  kms_key_id             = var.kms_key_arn != "" ? var.kms_key_arn : null
   db_name                = "agentdb"
   username               = "loamz"
   parameter_group_name   = aws_db_parameter_group.this.name
@@ -56,7 +57,8 @@ resource "aws_db_instance" "this" {
   publicly_accessible    = false
 
   # The master password lives in Secrets Manager (rotated by RDS), never in Terraform state.
-  manage_master_user_password = true
+  manage_master_user_password   = true
+  master_user_secret_kms_key_id = var.kms_key_arn != "" ? var.kms_key_arn : null
 
   backup_retention_period    = 14
   deletion_protection        = var.db_deletion_protection

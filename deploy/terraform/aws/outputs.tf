@@ -44,6 +44,7 @@ output "helm_values" {
       buckets    = { for k, v in local.buckets : k => v }
       stsRoleArn = aws_iam_role.vending.arn
     }
+    data           = { storageKmsKeyArn = var.kms_key_arn }
     serviceAccount = { annotations = { "eks.amazonaws.com/role-arn" = aws_iam_role.control.arn } }
   })
 }

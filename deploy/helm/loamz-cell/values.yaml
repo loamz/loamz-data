@@ -157,6 +157,9 @@ agents:
 
 # ── loamz-data ────────────────────────────────────────────────────────────
 data:
+  # The customer-managed KMS key (ARN) the warehouse bucket is encrypted with; storage credentials vended to workers
+  # then carry `kms:Decrypt` on it. Set it from the Terraform output `helm_values`. Empty: provider-managed keys.
+  storageKmsKeyArn: ""
   image: { repository: "", tag: "" }
   # The services sit on the cluster network behind the ingress that terminates TLS. Plain HTTP between them is an
   # explicit opt-in in loamz-data; NetworkPolicy keeps other namespaces out. production: terminate TLS in a mesh.

@@ -75,3 +75,15 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "key_vault_key_id" {
+  type        = string
+  default     = ""
+  description = "Customer-managed key (Key Vault key id, versionless) for the storage account and the database. Empty uses Microsoft-managed keys. The vault needs purge protection and soft delete."
+}
+
+variable "key_vault_id" {
+  type        = string
+  default     = ""
+  description = "Resource id of the Key Vault holding key_vault_key_id; the cell's identity is granted the Crypto Service Encryption User role on it."
+}
