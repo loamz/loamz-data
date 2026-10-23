@@ -7,12 +7,16 @@ loamz-server agents serve|chat                     agent hosting
 from __future__ import annotations
 
 import sys
+from importlib.metadata import version
 
 GROUPS = ("data", "agents")
 
 
 def main(argv: list[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args[:1] in (["--version"], ["-V"]):
+        print(f"loamz-server {version('loamz-server')}")
+        raise SystemExit(0)
     if not args or args[0] in ("-h", "--help") or args[0] not in GROUPS:
         print(__doc__.strip())
         raise SystemExit(0 if args and args[0] in ("-h", "--help") else 2)
