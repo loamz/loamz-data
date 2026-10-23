@@ -43,6 +43,7 @@ FEATURES: tuple[Feature, ...] = (
     Feature("memory", "memory", "memory.api"),
     Feature("privacy", "privacy", "privacy.api"),
     Feature("tenants", "tenants", "tenants.api"),
+    Feature("legalholds", "privacy", "legalholds.api"),
 )
 
 ROLES: frozenset[str] = frozenset(f.role for f in FEATURES)

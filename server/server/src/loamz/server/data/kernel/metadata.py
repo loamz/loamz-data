@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from loamz.core import tenancy
 from loamz.engine.errors import (
     ConflictError,
     InvalidRequestError,
@@ -149,6 +150,11 @@ CREATE INDEX IF NOT EXISTS volume_file_versions_object ON volume_file_versions(o
 CREATE TABLE IF NOT EXISTS volume_quotas (
     volume_id TEXT PRIMARY KEY, max_bytes INTEGER NOT NULL, updated_by TEXT NOT NULL,
     updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS legal_holds (
+    id TEXT PRIMARY KEY, scope TEXT NOT NULL, tenant_id TEXT, subject TEXT, table_id TEXT,
+    reason TEXT NOT NULL, case_ref TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+    released_by TEXT, released_at TEXT);
+CREATE INDEX IF NOT EXISTS legal_holds_active ON legal_holds(released_at, tenant_id);
 CREATE TABLE IF NOT EXISTS volume_uploads (
     id TEXT PRIMARY KEY, volume_id TEXT, path TEXT, object_key TEXT NOT NULL, upload_id TEXT,
     size INTEGER NOT NULL, content_type TEXT NOT NULL, sha256 TEXT NOT NULL,
@@ -747,9 +753,77 @@ class CatalogStore:
             ).fetchall()
         return [decode(r, ("detail",)) for r in rows]
 
+    # ------------------------------------------------------------------ legal holds
+    def create_hold(self, values: dict[str, Any]) -> dict[str, Any]:
+        return self.record("legal_holds", values)
+
+    def release_hold(self, hold_id: str, released_by: str) -> dict[str, Any]:
+        hold = self.get("legal_holds", hold_id)
+        if hold["released_at"]:
+            return hold
+        self.update("legal_holds", hold_id, {"released_by": released_by, "released_at": now()})
+        return self.get("legal_holds", hold_id)
+
+    def list_holds(
+        self, tenant_id: str | None, active_only: bool, before: str | None, limit: int
+    ) -> list[dict[str, Any]]:
+        clauses, params = ["1=1"], []
+        if tenant_id:
+            clauses.append("tenant_id=?")
+            params.append(tenant_id)
+        if active_only:
+            clauses.append("released_at IS NULL")
+        return self.page("legal_holds", " AND ".join(clauses), params, before, limit)
+
+    def hold_blocking(
+        self,
+        *,
+        tenant_id: str | None = None,
+        subject: str | None = None,
+        table_id: str | None = None,
+        whole_tenant: bool = False,
+    ) -> dict[str, Any] | None:
+        """The active hold that forbids removing this data, if any.
+
+        A tenant hold covers everything of the tenant; a user hold covers that user (and blocks erasing the whole
+        tenant); a table hold covers the table. `whole_tenant` asks about removing all of a tenant's data."""
+        with self.connection() as db:
+            rows = db.execute(
+                "SELECT * FROM legal_holds WHERE released_at IS NULL ORDER BY created_at"
+            ).fetchall()
+        for hold in map(dict, rows):
+            if table_id and hold["scope"] == "table" and hold["table_id"] == table_id:
+                return hold
+            if tenant_id and hold["tenant_id"] == tenant_id:
+                if hold["scope"] == "tenant" or whole_tenant:
+                    return hold
+                if hold["scope"] == "user" and subject and hold["subject"] == subject:
+                    return hold
+        return None
+
+    def hold_blocking_table(self, catalog_name: str, table_id: str) -> dict[str, Any] | None:
+        """The active hold on this table, or on the tenant whose catalog it is in."""
+        with self.connection() as db:
+            rows = db.execute("SELECT * FROM legal_holds WHERE released_at IS NULL").fetchall()
+        for hold in map(dict, rows):
+            if hold["scope"] == "table" and hold["table_id"] == table_id:
+                return hold
+            if hold["tenant_id"] and tenancy.catalog_name(hold["tenant_id"]) == catalog_name:
+                return hold
+        return None
+
+    def any_hold(self) -> dict[str, Any] | None:
+        with self.connection() as db:
+            row = db.execute(
+                "SELECT * FROM legal_holds WHERE released_at IS NULL LIMIT 1"
+            ).fetchone()
+        return dict(row) if row else None
+
     def purge_history(self, older_than_days: int) -> dict[str, int]:
-        """Delete audit events and finished statements older than the retention period."""
-        if older_than_days <= 0:
+        """Delete audit events and finished statements older than the retention period.
+
+        Nothing is deleted while any legal hold is active: the log is the evidence."""
+        if older_than_days <= 0 or self.any_hold():
             return {"audit_events": 0, "statements": 0}
         cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
         with self.connection() as db:

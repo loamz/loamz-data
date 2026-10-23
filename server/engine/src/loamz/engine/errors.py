@@ -168,6 +168,10 @@ class SchemaVersionError(PermanentError):
     pass
 
 
+class LegalHoldError(PermanentError):
+    """The data is under a legal hold: erasure and retention may not remove it until the hold is released."""
+
+
 HTTP_STATUS: dict[type[LoamzError], int] = {
     InvalidRequestError: 400,
     UnauthenticatedError: 401,
@@ -176,6 +180,7 @@ HTTP_STATUS: dict[type[LoamzError], int] = {
     ConflictError: 409,
     PreconditionFailedError: 412,
     ScopeViolationError: 409,
+    LegalHoldError: 423,
     QuotaExceededError: 413,
     VectorSpaceError: 422,
     RateLimitedError: 429,
@@ -197,6 +202,7 @@ __all__ = [
     "ContextLengthError",
     "ForbiddenError",
     "InvalidRequestError",
+    "LegalHoldError",
     "LoamzError",
     "NotFoundError",
     "PermanentError",

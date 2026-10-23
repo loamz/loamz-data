@@ -21,7 +21,12 @@ from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.concurrency import run_in_threadpool
 
-from loamz.engine.errors import InvalidRequestError, NotFoundError, QuotaExceededError
+from loamz.engine.errors import (
+    InvalidRequestError,
+    LegalHoldError,
+    NotFoundError,
+    QuotaExceededError,
+)
 from loamz.server.data.features.catalog.api import Caller, Svc, audit, visible_table
 from loamz.server.data.features.tables.iceberg import table_service
 from loamz.server.data.features.tables.publications import job_publisher
@@ -207,6 +212,11 @@ async def expire(
     """Forget old snapshots (ending time travel to them) and delete the files only they used."""
     record = visible_table(svc, caller, catalog, schema, table)
     svc.store.require(caller, "table", record, "MODIFY")
+    held = await run_in_threadpool(svc.store.hold_blocking_table, catalog, record["id"])
+    if held:
+        raise LegalHoldError(
+            f"This table is under legal hold {held['id']}; snapshots cannot be expired"
+        )
     if running(svc, record["id"]):
         raise conflict("Another maintenance operation is already running on this table")
     now_ = utcnow()

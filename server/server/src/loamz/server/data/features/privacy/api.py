@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from loamz.core import tenancy
 from loamz.core.tenancy import TENANT_ADMIN_GROUP
-from loamz.engine.errors import InvalidRequestError
+from loamz.engine.errors import InvalidRequestError, LegalHoldError
 from loamz.engine.memory import MemoryNamespace, MemoryQuery, MemoryStatus, TenantWide
 from loamz.server.data.features.documents.api import Documents, Domain, wire
 from loamz.server.data.features.documents.volume import tenant_volume
@@ -84,6 +84,24 @@ async def provisioned_volume(domain: Documents, tenant: str) -> dict[str, Any] |
 @router.post("/erasure-requests", status_code=201)
 async def erase(body: Target, svc: Svc, caller: Caller, domain: Domain, request: Request):
     tenant, subject = authorize(caller, body)
+    held = await asyncio.to_thread(
+        svc.store.hold_blocking, tenant_id=tenant, subject=subject, whole_tenant=subject is None
+    )
+    if held:
+        await asyncio.to_thread(
+            svc.store.audit,
+            caller,
+            "erasure.refused",
+            tenant,
+            "denied",
+            request.state.request_id,
+            hold=held["id"],
+        )
+        raise LegalHoldError(
+            f"This data is under legal hold {held['id']}"
+            + (f" ({held['case_ref']})" if held["case_ref"] else "")
+            + "; release the hold before erasing"
+        )
     files = domain.files
     engine = domain.engine
     path_prefix, name_prefix = prefixes(tenant, subject)
