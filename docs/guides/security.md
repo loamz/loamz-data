@@ -19,7 +19,7 @@ What the platform enforces, where, and how to check it.
 
 ## Data protection
 - **In transit.** TLS to the edge. Between the data controller and workers the cell uses mutual TLS with a private CA
-  (Helm generates it; `LOAMZ_DATA_TRUSTED_*` settings pin peers). Plain HTTP between internal hosts is an explicit
+  (Helm generates it; `tls_cert_file`, `tls_key_file` and `tls_client_ca_file` configure it, TLS 1.3 by default). Plain HTTP between internal hosts is an explicit
   opt-in.
 - **At rest.** The Terraform modules create encrypted databases (`storage_encrypted`), encrypted buckets with
   versioning, and deletion protection (`db_deletion_protection`). Keys are the cloud provider's; bring-your-own-key is
