@@ -71,6 +71,8 @@ x-agent-env: &agent-env
   LOAMZ_AGENTS_LLM__OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
   # Files live in Loamz Data: this server holds no object-store credentials and signs short-lived tokens per request.
   LOAMZ_AGENTS_DATA__URL: http://data-api:8020
+  # Tool servers (MCP over SSE) agents may use; see docs/guides/tool-servers.md. A JSON list, empty by default.
+  LOAMZ_AGENTS_TOOLS__SERVERS: ${TOOL_SERVERS:-[]}
   OTEL_SDK_DISABLED: "true"
 
 # Capabilities the nsjail code-interpreter runtime needs. Remove them (and set SANDBOX_RUNTIME) if you provide
