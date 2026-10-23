@@ -10,8 +10,11 @@
 - Stateless workloads (agent server, data API, workers, consoles) run several replicas; the chart adds a
   PodDisruptionBudget (`maxUnavailable: 1`) and a soft node-spread constraint to any component with two or more
   replicas, and an optional HorizontalPodAutoscaler.
-- The data controller runs one active replica. Its state is on a persistent volume; it restarts in place. Standby
-  controllers need PostgreSQL controller state, which is not wired yet.
+- The data controller schedules jobs and compute from one active replica. By default its queue is on a persistent
+  volume and it restarts in place. With `data.controller.ha.enabled=true` the queue lives in PostgreSQL (database
+  `loamz_compute`), two or more replicas run, one is elected, and a standby takes over within seconds if the active one
+  fails: it fails the jobs that were running (they retry within their attempt limits) and resumes scheduling. A standby
+  answers `/readyz` with 503, so the Service routes only to the active one.
 - PostgreSQL: use the Terraform `db_multi_az` option for a managed standby.
 
 ## Health and observability

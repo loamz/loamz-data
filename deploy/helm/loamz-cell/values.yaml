@@ -58,8 +58,8 @@ postgres:
     # sslmode require | verify-ca | verify-full. loamz-data refuses anything weaker off-machine.
     sslmode: require
     # The databases must exist: agentdb (with pgvector and uuid-ossp), keycloak, loamz_data, data_retrieval (pgvector: the
-    # documents and memory index, ADR 0008), loamz_ui.
-  databases: { agent: agentdb, keycloak: keycloak, data: loamz_data, retrieval: data_retrieval, ui: loamz_ui }
+    # documents and memory index, ADR 0008), loamz_ui, and loamz_compute when data.controller.ha is on.
+  databases: { agent: agentdb, keycloak: keycloak, data: loamz_data, retrieval: data_retrieval, ui: loamz_ui, controller: loamz_compute }
 
 redis:
   enabled: true
@@ -170,7 +170,10 @@ data:
     resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { memory: 2Gi } }
     autoscaling: { enabled: false, minReplicas: 2, maxReplicas: 8, targetCPUUtilizationPercentage: 70 }
   controller:
-    # One active controller; more replicas are standbys only with a PostgreSQL controller state (not wired here).
+    # One active controller. With `ha.enabled` its job queue lives in PostgreSQL (database `postgres.databases.controller`)
+    # instead of a volume, two or more replicas run, one is elected and the others stand by; a standby answers
+    # `/readyz` with 503, so the Service only routes to the active one, and takes over within seconds if it fails.
+    ha: { enabled: false }
     replicas: 1
     storage: 1Gi
     storageClassName: ""

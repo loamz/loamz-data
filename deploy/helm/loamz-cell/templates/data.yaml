@@ -30,12 +30,23 @@
 {{- end }}
 {{- include "cell.workload" (dict "root" . "component" "data-api" "repo" "loamz-data" "override" $img "port" 8020 "probePath" "/readyz" "args" (list "serve" "--host" "0.0.0.0" "--port" "8020") "cfg" .Values.data.api "env" $apiEnv "writable" (list (dict "name" "state" "path" "/var/lib/loamz-data") (dict "name" "home" "path" "/opt/loamz/home-rw")) "scheme" "HTTP" "volumes" (list (dict "name" "ticket" "secret" (dict "secretName" $tkName "items" (list (dict "key" "ticket.pem" "path" "ticket.pem")))) (dict "name" "tls" "secret" (dict "secretName" (printf "%s-internal-tls" $kc)))) "volumeMounts" (list (dict "name" "ticket" "mountPath" "/keys" "readOnly" true) (dict "name" "tls" "mountPath" "/tls" "readOnly" true))) }}
 
-{{- /* controller: one active, its queue in a PVC */}}
+{{- /* controller: one active, its queue in a PVC (or, with ha.enabled, in PostgreSQL with standbys) */}}
+{{- $ha := .Values.data.controller.ha.enabled }}
+{{- $ctrlCfg := deepCopy .Values.data.controller }}
+{{- if and $ha (lt (int ($ctrlCfg.replicas | default 1)) 2) }}{{- $_ := set $ctrlCfg "replicas" 2 }}{{- end }}
 {{- $ctrlEnv := printf `%s
 - name: LOAMZ_DATA_CONTROLLER_TOKEN
   valueFrom: { %s }
 - { name: LOAMZ_DATA_TLS_CERT_FILE, value: /tls/tls.crt }
 - { name: LOAMZ_DATA_TLS_KEY_FILE, value: /tls/tls.key }` $dataEnv (include "cell.secretRef" (dict "root" . "key" "controller-token")) }}
+{{- if $ha }}
+{{- $ctrlEnv = printf `%s
+- name: LOAMZ_DATA_CONTROLLER_STATE_URL
+  value: "postgresql://%s:$(POSTGRES_PASSWORD)@%s:%s/%s?sslmode=%s"` $ctrlEnv (include "cell.pgUser" .) (include "cell.pgHost" .) (include "cell.pgPort" .) .Values.postgres.databases.controller (include "cell.pgSslmode" .) }}
+{{- end }}
+{{- $stateVolume := dict "name" "state" "emptyDir" (dict) }}
+{{- if not $ha }}{{- $stateVolume = dict "name" "state" "persistentVolumeClaim" (dict "claimName" (printf "%s-data-controller" $kc)) }}{{- end }}
+{{- if not $ha }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -48,7 +59,8 @@ spec:
   storageClassName: {{ . }}
   {{- end }}
   resources: { requests: { storage: {{ .Values.data.controller.storage }} } }
-{{ "\n" }}{{- include "cell.workload" (dict "root" . "component" "data-controller" "repo" "loamz-data" "override" $img "port" 8040 "probePath" "/readyz" "args" (list "controller" "--host" "0.0.0.0" "--port" "8040") "cfg" .Values.data.controller "env" $ctrlEnv "scheme" "HTTPS" "volumes" (list (dict "name" "state" "persistentVolumeClaim" (dict "claimName" (printf "%s-data-controller" $kc))) (dict "name" "tls" "secret" (dict "secretName" (printf "%s-internal-tls" $kc)))) "volumeMounts" (list (dict "name" "state" "mountPath" "/var/lib/loamz-data") (dict "name" "tls" "mountPath" "/tls" "readOnly" true))) }}
+{{- end }}
+{{ "\n" }}{{- include "cell.workload" (dict "root" . "component" "data-controller" "repo" "loamz-data" "override" $img "port" 8040 "probePath" "/readyz" "args" (list "controller" "--host" "0.0.0.0" "--port" "8040") "cfg" $ctrlCfg "env" $ctrlEnv "scheme" "HTTPS" "volumes" (list $stateVolume (dict "name" "tls" "secret" (dict "secretName" (printf "%s-internal-tls" $kc)))) "volumeMounts" (list (dict "name" "state" "mountPath" "/var/lib/loamz-data") (dict "name" "tls" "mountPath" "/tls" "readOnly" true))) }}
 
 {{- /* workers: SQL, jobs, RAG */}}
 {{- $ports := dict "sql" 8041 "jobs" 8042 "rag" 8043 }}
