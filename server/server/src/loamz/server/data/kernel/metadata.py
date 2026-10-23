@@ -155,6 +155,12 @@ CREATE TABLE IF NOT EXISTS legal_holds (
     reason TEXT NOT NULL, case_ref TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
     released_by TEXT, released_at TEXT);
 CREATE INDEX IF NOT EXISTS legal_holds_active ON legal_holds(released_at, tenant_id);
+CREATE TABLE IF NOT EXISTS access_tokens (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, secret_hash TEXT NOT NULL, subject TEXT NOT NULL,
+    username TEXT NOT NULL, email TEXT, tenant_id TEXT, groups TEXT NOT NULL, read_only INTEGER NOT NULL,
+    created_by TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, last_used_at TEXT,
+    revoked_at TEXT, rotated_from TEXT);
+CREATE INDEX IF NOT EXISTS access_tokens_owner ON access_tokens(subject, revoked_at);
 CREATE TABLE IF NOT EXISTS volume_uploads (
     id TEXT PRIMARY KEY, volume_id TEXT, path TEXT, object_key TEXT NOT NULL, upload_id TEXT,
     size INTEGER NOT NULL, content_type TEXT NOT NULL, sha256 TEXT NOT NULL,

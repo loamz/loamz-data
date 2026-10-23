@@ -9,6 +9,7 @@ from typing import Annotated, Any
 from fastapi import Depends, Request
 
 from loamz.engine.errors import ForbiddenError, InvalidRequestError
+from loamz.server.data.kernel import tokens
 from loamz.server.data.kernel.container import Container, Provider
 from loamz.server.data.kernel.errors import InsufficientScopeError
 from loamz.server.data.kernel.principal import Principal
@@ -27,7 +28,11 @@ def principal(request: Request) -> Principal:
     if cached is not None:
         return cached
     services: Container = request.app.state.container
-    value = services.verifier.verify(request.headers.get("authorization"))
+    authorization = request.headers.get("authorization")
+    if tokens.is_token(authorization):
+        value = tokens.authenticate(services.store, authorization)
+    else:
+        value = services.verifier.verify(authorization)
     if value.read_only and not read_only_allowed(request):
         raise ForbiddenError("This token may read data but not change anything")
     if (
