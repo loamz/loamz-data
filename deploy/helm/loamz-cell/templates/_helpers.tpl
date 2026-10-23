@@ -106,6 +106,8 @@ cfg (replicas, resources, autoscaling), probePath, volumes, volumeMounts, publis
 {{- define "cell.workload" -}}
 {{- $root := .root -}}
 {{- $full := printf "%s-%s" (include "cell.fullname" $root) .component -}}
+{{- $minReplicas := int (.cfg.replicas | default 1) -}}
+{{- if (.cfg.autoscaling).enabled }}{{- $minReplicas = int ((.cfg.autoscaling).minReplicas | default 1) -}}{{- end -}}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -131,6 +133,16 @@ spec:
     spec:
       serviceAccountName: {{ include "cell.fullname" $root }}
       automountServiceAccountToken: {{ .automountToken | default false }}
+      {{- if gt $minReplicas 1 }}
+      # Replicas of one component prefer different nodes, so a node loss does not take the component down.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "cell.selector" (dict "root" $root "component" .component) | nindent 14 }}
+      {{- end }}
       {{- with $root.Values.global.hostAliases }}
       hostAliases: {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -211,6 +223,21 @@ spec:
     {{- include "cell.selector" (dict "root" $root "component" .component) | nindent 4 }}
   ports:
     - { name: http, port: {{ .port }}, targetPort: http }
+{{- if gt $minReplicas 1 }}
+---
+# Voluntary disruptions (node drains, upgrades) take down at most one replica at a time.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "cell.labels" $root | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "cell.selector" (dict "root" $root "component" .component) | nindent 6 }}
+{{- end }}
 {{- if (.cfg.autoscaling).enabled }}
 ---
 apiVersion: autoscaling/v2

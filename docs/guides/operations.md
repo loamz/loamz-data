@@ -1,0 +1,45 @@
+# Operations
+
+## Topologies
+- **Laptop or evaluation:** `deploy/compose` (`./gen-env.sh`, `docker compose --profile agents up -d`).
+- **Production:** the `loamz-cell` Helm chart on Kubernetes, with managed PostgreSQL and object storage from the
+  Terraform modules (`deploy/terraform/{aws,gcp,azure}`). Modes: `monolith` (one agent server) or `microservices`.
+- A *cell* is one customer's complete installation, in the customer's own cloud account.
+
+## Availability
+- Stateless workloads (agent server, data API, workers, consoles) run several replicas; the chart adds a
+  PodDisruptionBudget (`maxUnavailable: 1`) and a soft node-spread constraint to any component with two or more
+  replicas, and an optional HorizontalPodAutoscaler.
+- The data controller runs one active replica. Its state is on a persistent volume; it restarts in place. Standby
+  controllers need PostgreSQL controller state, which is not wired yet.
+- PostgreSQL: use the Terraform `db_multi_az` option for a managed standby.
+
+## Health and observability
+- Probes: `/health` and `/health/ready` (agent server), `/readyz` (data API, controller, workers).
+- Every request carries a W3C `traceparent`; the servers emit OpenTelemetry traces when `OTEL_*` is enabled, and
+  structured logs. `deploy/observability` has Grafana, Loki, Promtail and Tempo configuration.
+- Audit events stream to a SIEM through `audit-events:export`.
+
+## Backup and restore
+What to back up, and the order to restore.
+
+| State | Where | Back up with |
+| --- | --- | --- |
+| Catalog, grants, audit chain, agent state | PostgreSQL (`agentdb`, the data metadata and retrieval databases, `keycloak`) | Managed snapshots and point-in-time recovery (14 days by default in the Terraform modules) |
+| Table and file data | Object storage (warehouse and volumes buckets) | Bucket versioning (enabled by the modules) plus cross-region replication if you need it |
+| Keys | The Kubernetes secret (ticket keys, client secrets) and the identity provider's database | Your secret manager |
+
+Restore order: object storage, then PostgreSQL, then the secrets, then deploy the chart at the version that wrote the
+data. After a restore, run `GET /api/v1/audit-events:verify` to confirm the audit chain is intact.
+
+Restore drills are the operator's to schedule; none is automated yet.
+
+## Upgrades
+- Versions are tags: `cell-vX.Y.Z` images, and `loamz-*` packages released together by release-please.
+- `helm upgrade` is rolling for stateless components. Run the cell's end-to-end script (`deploy/compose/e2e.py`
+  adapted to your endpoint) after an upgrade as a smoke test.
+- APIs are versioned under `/api/v1`; a breaking change ships as `/api/v2` beside v1.
+
+## Capacity and limits
+Per-tenant storage quotas, request rate limits and statement limits are enforced by the data service; compute is
+sized per worker role (`sql`, `jobs`, `documents`) in the chart's `data.workers`.
