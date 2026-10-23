@@ -45,12 +45,15 @@ Any MCP server works. With the Python SDK:
 
 ```python
 from mcp.server.fastmcp import FastMCP
+
 mcp = FastMCP("desk", host="0.0.0.0", port=8765)
+
 
 @mcp.tool()
 def status() -> str:
     """Where things stand."""
     return "all good"
+
 
 mcp.run(transport="sse")
 ```

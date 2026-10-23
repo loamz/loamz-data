@@ -361,6 +361,8 @@ services:
   agent-server:
     <<: [*agent-image, *nsjail]
     profiles: [agents, monolith]
+    # Lets agents reach a tool server running on this machine (docs/guides/tool-servers.md).
+    extra_hosts: ["host.docker.internal:host-gateway"]
     environment:
       <<: *agent-env
       LOAMZ_MODE: monolith
