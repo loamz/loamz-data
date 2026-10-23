@@ -16,12 +16,11 @@ nothing here is a certification.
 | Data residency | Built by design | A cell runs in the customer's own cloud account and region |
 | Privacy requests | Built | Erasure and export per person or tenant |
 | High availability | Built | Stateless tiers: replicas, disruption budgets, spreading. Data controller: PostgreSQL-backed election with automatic takeover (`data.controller.ha`); managed PostgreSQL multi-AZ |
-| Backup and restore | Documented | Managed snapshots and versioning; restore order in `operations.md`; no automated drill |
+| Backup and restore | Built | Managed snapshots, PITR and versioning; restore order and objectives in `disaster-recovery.md`; weekly automated restore drill verifies row counts and the audit chain |
 | Observability | Built | Prometheus `/metrics` with alert rules, OpenTelemetry traces, structured logs, probes; queue-depth and storage metrics to follow |
 | Supply chain | Built | Signed images with SBOM and provenance, trusted publishing, CodeQL, dependency review, vulnerability audit |
 | API stability | Built | `/api/v1`, RFC 9457 errors, cursor pagination; SDKs follow one naming standard |
 
 ## Gaps, in the order to close them
-1. **Automated restore drills** and a published recovery-time objective.
-2. **Compliance**: SOC 2 Type II and ISO 27001 programs; a third-party penetration test; a published trust page.
-3. **Support**: a status page, severity definitions and response targets.
+1. **Compliance**: SOC 2 Type II and ISO 27001 programs; a third-party penetration test; a published trust page.
+2. **Support**: a status page, severity definitions and response targets.

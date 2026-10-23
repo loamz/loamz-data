@@ -1,0 +1,56 @@
+name: Restore drill
+
+# Weekly proof that a backup of the catalog database restores into an intact catalog (row counts equal, audit hash chain
+# verifies, tampering is detected) and how long it takes. See docs/guides/disaster-recovery.md.
+on:
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - deploy/scripts/restore_drill.py
+      - server/server/src/loamz/server/data/kernel/metadata*.py
+      - .github/workflows/restore-drill.yml
+
+permissions:
+  contents: read
+
+jobs:
+  drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: drill
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: PostgreSQL 16 client tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-16
+          /usr/lib/postgresql/16/bin/pg_dump --version
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+      - run: uv sync --frozen --all-packages --all-extras
+      - run: psql postgresql://postgres:drill@localhost:5432/postgres -c "CREATE DATABASE catalog"
+      - name: Back up, restore, verify
+        run: |
+          uv run --frozen --package loamz-server python deploy/scripts/restore_drill.py \
+            --source postgresql://postgres:drill@localhost:5432/catalog \
+            --admin postgresql://postgres:drill@localhost:5432/postgres \
+            --seed --prove-detection | tee drill.txt
+      - name: Summary
+        if: always()
+        run: |
+          { echo '### Restore drill'; echo '```'; cat drill.txt 2>/dev/null; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

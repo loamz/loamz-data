@@ -31,18 +31,8 @@
 - Audit events stream to a SIEM through `audit-events:export`.
 
 ## Backup and restore
-What to back up, and the order to restore.
-
-| State | Where | Back up with |
-| --- | --- | --- |
-| Catalog, grants, audit chain, agent state | PostgreSQL (`agentdb`, the data metadata and retrieval databases, `keycloak`) | Managed snapshots and point-in-time recovery (14 days by default in the Terraform modules) |
-| Table and file data | Object storage (warehouse and volumes buckets) | Bucket versioning (enabled by the modules) plus cross-region replication if you need it |
-| Keys | The Kubernetes secret (ticket keys, client secrets) and the identity provider's database | Your secret manager |
-
-Restore order: object storage, then PostgreSQL, then the secrets, then deploy the chart at the version that wrote the
-data. After a restore, run `GET /api/v1/audit-events:verify` to confirm the audit chain is intact.
-
-Restore drills are the operator's to schedule; none is automated yet.
+See [disaster-recovery.md](disaster-recovery.md): what to back up, the restore order, the recovery objectives and the
+weekly restore drill.
 
 ## Upgrades
 - Versions are tags: `cell-vX.Y.Z` images, and `loamz-*` packages released together by release-please.
