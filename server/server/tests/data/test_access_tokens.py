@@ -116,3 +116,14 @@ def test_the_secret_is_stored_only_as_a_hash_and_events_are_audited(docs):
             "access-token.revoke",
         ]
         assert secret not in str(events)
+
+
+def test_the_client_manages_tokens(docs):
+    with person(docs, "pat-client") as me:
+        created = me.access_tokens.create("sdk", expires_in_days=7)
+        with as_token(docs, created["token"]) as script:
+            assert script.catalogs()
+        rotated = me.access_tokens.rotate(created["id"])
+        assert [t["id"] for t in me.access_tokens.list()] == [rotated["id"]]
+        me.access_tokens.revoke(rotated["id"])
+        assert list(me.access_tokens.list()) == []

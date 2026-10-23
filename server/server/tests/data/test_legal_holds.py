@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from loamz.core.exceptions import HttpResponseError
+from loamz.core.exceptions import HttpResponseError, LegalHoldError
 
 A = "acme"
 
@@ -18,9 +18,9 @@ def test_a_tenant_hold_blocks_erasing_anyone_in_the_tenant_until_released(docs):
         placed = hold(admin, scope="tenant", tenant_id=A, case_ref="CASE-42")
         assert placed["active"] and placed["scope"] == "tenant" and placed["tenant_id"] == A
         for target in ({"scope": "tenant"}, {"scope": "user", "subject": "gina"}):
-            with pytest.raises(HttpResponseError) as refused:
+            with pytest.raises(LegalHoldError) as refused:
                 admin.request("POST", "/erasure-requests", json={"tenant_id": A, **target})
-            assert refused.value.status == 423 and refused.value.code == "legal-hold"
+            assert refused.value.status == 423
             assert "CASE-42" in str(refused.value.detail)
         listed = admin.request("GET", "/legal-holds", params={"tenant_id": A})["items"]
         assert [h["id"] for h in listed] == [placed["id"]]
@@ -71,3 +71,15 @@ def test_history_is_not_purged_while_a_hold_is_active(docs):
         assert store.purge_history(1) == {"audit_events": 0, "statements": 0}
         admin.request("POST", f"/legal-holds/{placed['id']}:release")
         assert store.any_hold() is None
+
+
+def test_the_client_places_and_releases_holds(docs):
+    with docs.admin("pied") as admin:
+        placed = admin.legal_holds.place(
+            "tenant", "audit request", tenant_id="pied", case_ref="A-9"
+        )
+        assert [h["id"] for h in admin.legal_holds.list(tenant_id="pied")] == [placed["id"]]
+        with pytest.raises(LegalHoldError):
+            admin.erasure.request(tenant_id="pied", everything=True)
+        admin.legal_holds.release(placed["id"])
+        assert list(admin.legal_holds.list(tenant_id="pied")) == []

@@ -21,6 +21,14 @@ nothing here is a certification.
 | Supply chain | Built | Signed images with SBOM and provenance, trusted publishing, CodeQL, dependency review, vulnerability audit |
 | API stability | Built | `/api/v1`, RFC 9457 errors, cursor pagination; SDKs follow one naming standard |
 
-## Gaps, in the order to close them
-1. **Compliance**: SOC 2 Type II and ISO 27001 programs; a third-party penetration test; a published trust page.
-2. **Support**: a status page, severity definitions and response targets.
+## What is left, and who does it
+Everything above is built and tested in this repository. The remaining items are organizational: they need a company,
+auditors and time rather than code, and the repository already holds the evidence and templates for them.
+
+1. **Audits.** A SOC 2 Type II and an ISO 27001 assessment by an accredited firm
+   ([control mappings](../compliance/soc2-controls.md), [ISO 27001 mapping](../compliance/iso27001-controls.md)).
+2. **Third-party penetration test**, yearly ([scope and rules](../compliance/penetration-testing.md)).
+3. **Public trust page** and a **status page** for an operator offering a managed service
+   ([content](../compliance/trust-center.md), [support policy](../../SUPPORT.md)).
+4. **Full-cell recovery exercise** twice a year, timed against the objectives in
+   [disaster-recovery.md](disaster-recovery.md).
