@@ -33,7 +33,7 @@ publicUrls:
 secrets:
   # production: name of a Secret you manage (External Secrets, Sealed Secrets, Vault CSI...). Required keys:
   #   postgres-password redis-password keycloak-admin-password
-  #   ui-client-secret data-web-client-secret cell-admin-client-secret
+  #   ui-client-secret data-web-client-secret cell-admin-client-secret membership-client-secret
   #   control-s3-access-key-id control-s3-secret-access-key worker-s3-access-key-id worker-s3-secret-access-key
   #   agents-s3-access-key-id agents-s3-secret-access-key
   #   controller-token worker-token web-session-secret ui-session-secret mask-salt
@@ -209,6 +209,12 @@ ingress:
   className: ""              # e.g. nginx
   annotations: {}            # e.g. cert-manager.io/cluster-issuer: letsencrypt
   tls: { enabled: false, secretName: "" }   # one secret covering all hosts; cert-manager can create it
+
+# ── SCIM provisioning ────────────────────────────────────────────────────────
+# `/scim/v2` on the data API lets an enterprise identity provider manage a tenant's users and groups (docs/guides/scim.md).
+# It talks to Keycloak's admin API as the `agent-membership` service account.
+scim:
+  enabled: true
 
 # ── Metrics ──────────────────────────────────────────────────────────────────
 # Both API servers expose Prometheus metrics at /metrics. Scraping needs the monitoring stack to reach the pods

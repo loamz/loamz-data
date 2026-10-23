@@ -269,6 +269,9 @@ services:
       # The documents and memory index (ADR 0008): its own database, with pgvector. The folder holds only scratch (no bundles).
       LOAMZ_DATA_RETRIEVAL_URL: postgresql://${POSTGRES_USER:-loamz}:${POSTGRES_PASSWORD}@postgres:5432/data_retrieval?sslmode=require
       LOAMZ_DATA_RETRIEVAL_DIR: /var/lib/loamz-data/retrieval
+      # SCIM provisioning (/scim/v2) manages users and groups through Keycloak's admin API.
+      LOAMZ_DATA_DIRECTORY_URL: http://keycloak.localhost:${PORT_KEYCLOAK:-8081}
+      LOAMZ_DATA_DIRECTORY_CLIENT_SECRET: ${AGENT_MEMBERSHIP_CLIENT_SECRET:?run ./gen-env.sh}
       LOAMZ_DATA_DOCUMENT_READER_URL: ${DOCUMENT_READER_URL:-}
       LOAMZ_DATA_DOCUMENT_EMBEDDING_URL: ${DOCUMENT_EMBEDDING_URL:-}
       # The agent server signs per-run tokens for its users; the data service fetches its public keys. One name may only

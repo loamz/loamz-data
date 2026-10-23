@@ -50,6 +50,20 @@ def problem(
         headers["Retry-After"] = str(max(1, round(float(extensions["retry_after"]))))
     if status == 401:
         headers["WWW-Authenticate"] = 'Bearer realm="loamz"'
+    if request.url.path.startswith("/scim/"):
+        # SCIM clients expect the SCIM error message (RFC 7644 section 3.12), not a problem document.
+        scim: dict[str, Any] = {
+            "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
+            "status": str(status),
+            "detail": detail,
+        }
+        if code == "conflict":
+            scim["scimType"] = "uniqueness"
+        elif code == "invalid-request":
+            scim["scimType"] = "invalidValue"
+        return JSONResponse(
+            scim, status_code=status, media_type="application/scim+json", headers=headers
+        )
     body = {
         "type": PROBLEM_BASE + code,
         "title": code.replace("-", " ").capitalize(),

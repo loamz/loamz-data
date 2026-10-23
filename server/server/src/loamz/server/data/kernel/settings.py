@@ -154,6 +154,13 @@ class Settings(BaseSettings):
     files_version_retention_days: int = Field(default=30, ge=0, le=3650)
     files_sweep_interval_seconds: float = Field(default=900, gt=0)
 
+    # SCIM provisioning (`/scim/v2`): the identity provider's admin API, used as a service account that may manage
+    # organizations, users and groups. Empty `directory_url` turns SCIM off.
+    directory_url: str = ""
+    directory_realm: str = "loamz"
+    directory_client_id: str = "agent-membership"
+    directory_client_secret: SecretStr = SecretStr("")
+
     # Identity
     oidc_issuer: str = "http://127.0.0.1:18080/realms/loamz"
     oidc_audience: str = "loamz-data"
