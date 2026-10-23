@@ -25,8 +25,9 @@
 {{- $apiEnv = printf `%s
 - { name: LOAMZ_DATA_DIRECTORY_URL, value: "http://%s-keycloak:8080" }
 - { name: LOAMZ_DATA_DIRECTORY_REALM, value: %s }
+- { name: LOAMZ_DATA_DIRECTORY_CLIENT_ID, value: loamz-directory }
 - name: LOAMZ_DATA_DIRECTORY_CLIENT_SECRET
-  valueFrom: { %s }` $apiEnv (include "cell.fullname" .) (.Values.keycloak.realm.name | quote) (include "cell.secretRef" (dict "root" . "key" "membership-client-secret")) }}
+  valueFrom: { %s }` $apiEnv (include "cell.fullname" .) (.Values.keycloak.realm.name | quote) (include "cell.secretRef" (dict "root" . "key" "directory-client-secret")) }}
 {{- end }}
 {{- include "cell.workload" (dict "root" . "component" "data-api" "repo" "loamz-data" "override" $img "port" 8020 "probePath" "/readyz" "args" (list "serve" "--host" "0.0.0.0" "--port" "8020") "cfg" .Values.data.api "env" $apiEnv "writable" (list (dict "name" "state" "path" "/var/lib/loamz-data") (dict "name" "home" "path" "/opt/loamz/home-rw")) "scheme" "HTTP" "volumes" (list (dict "name" "ticket" "secret" (dict "secretName" $tkName "items" (list (dict "key" "ticket.pem" "path" "ticket.pem")))) (dict "name" "tls" "secret" (dict "secretName" (printf "%s-internal-tls" $kc)))) "volumeMounts" (list (dict "name" "ticket" "mountPath" "/keys" "readOnly" true) (dict "name" "tls" "mountPath" "/tls" "readOnly" true))) }}
 

@@ -141,6 +141,18 @@ r = http.post(
 )
 step("provision tenant", r.status_code in (200, 201), str(r.status_code) + r.text[:300])
 
+# the tenant's administrator group (the platform creates it per cell); Alice administers her tenant
+r = http.post(f"{api}/groups", headers=admin, json={"name": "tenant-admins"})
+if r.status_code == 409:
+    found = http.get(
+        f"{api}/groups", headers=admin, params={"search": "tenant-admins", "exact": "true"}
+    ).json()
+    group_id = found[0]["id"]
+else:
+    group_id = r.headers["Location"].rsplit("/", 1)[1]
+r = http.put(f"{api}/users/{user_id}/groups/{group_id}", headers=admin)
+step("make Alice the tenant administrator", r.status_code in (200, 204), str(r.status_code))
+
 # 3. agent API as the user
 user = user_token(f"openid organization:{alias}")
 r = http.get(f"{AGENT}/threads", headers=user)
@@ -214,6 +226,65 @@ step(
     r.status_code in (401, 403, 404),
     str(r.status_code),
 )
+
+# 5b. SCIM: the tenant administrator provisions people and groups with a personal access token
+r = http.post(f"{DATA}/access-tokens", headers=user, json={"name": "e2e-scim"})
+step(
+    "create a personal access token",
+    r.status_code == 201 and r.json()["token"].startswith("lpat_"),
+    str(r.status_code),
+)
+pat = {"Authorization": "Bearer " + r.json()["token"]}
+SCIM = DATA.removesuffix("/api/v1") + "/scim/v2"
+r = http.get(f"{DATA}/catalogs", headers=pat)
+step("the token acts as its owner", r.status_code == 200, str(r.status_code))
+r = http.post(
+    f"{SCIM}/Users",
+    headers=pat,
+    json={
+        "userName": f"scim-{alias}",
+        "name": {"givenName": "Sam", "familyName": "Scim"},
+        "emails": [{"value": f"sam@{alias}.example.com", "primary": True}],
+    },
+)
+step("SCIM: create a user", r.status_code == 201, str(r.status_code) + r.text[:300])
+scim_user = r.json()["id"]
+r = http.get(f"{SCIM}/Users", headers=pat, params={"filter": f'userName eq "scim-{alias}"'})
+step("SCIM: find the user by filter", r.json().get("totalResults") == 1, r.text[:200])
+r = http.get(f"{SCIM}/Users", headers=pat)
+step("SCIM: list shows the tenant's people", r.json()["totalResults"] >= 2, r.text[:200])
+r = http.patch(
+    f"{SCIM}/Users/{scim_user}",
+    headers=pat,
+    json={"Operations": [{"op": "replace", "value": {"active": False}}]},
+)
+step(
+    "SCIM: deactivate the user", r.status_code == 200 and r.json()["active"] is False, r.text[:200]
+)
+r = http.post(
+    f"{SCIM}/Groups",
+    headers=pat,
+    json={"displayName": "analysts", "members": [{"value": scim_user}]},
+)
+step(
+    "SCIM: create a group with a member",
+    r.status_code == 201 and len(r.json()["members"]) == 1,
+    r.text[:300],
+)
+scim_group = r.json()["id"]
+r = http.get(f"{SCIM}/Groups", headers=pat, params={"filter": 'displayName eq "analysts"'})
+step("SCIM: find the group", r.json().get("totalResults") == 1, r.text[:200])
+r = http.delete(f"{SCIM}/Groups/{scim_group}", headers=pat)
+step("SCIM: delete the group", r.status_code == 204, str(r.status_code))
+r = http.delete(f"{SCIM}/Users/{scim_user}", headers=pat)
+step("SCIM: remove the user from the tenant", r.status_code == 204, str(r.status_code))
+r = http.get(f"{SCIM}/Users/{scim_user}", headers=pat)
+step("SCIM: the removed user is gone", r.status_code == 404, str(r.status_code))
+tokens = http.get(f"{DATA}/access-tokens", headers=user).json()["items"]
+r = http.delete(f"{DATA}/access-tokens/{tokens[0]['id']}", headers=user)
+step("revoke the token", r.status_code == 204, str(r.status_code))
+r = http.get(f"{DATA}/catalogs", headers=pat)
+step("a revoked token is refused", r.status_code == 401, str(r.status_code))
 
 # 6. chat: the agent answers a question about the uploaded file (needs an LLM key in .env)
 if (

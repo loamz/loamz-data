@@ -75,6 +75,8 @@ spec:
               valueFrom: { {{ include "cell.secretRef" (dict "root" . "key" "data-web-client-secret") }} }
             - name: AGENT_MEMBERSHIP_CLIENT_SECRET
               valueFrom: { {{ include "cell.secretRef" (dict "root" . "key" "membership-client-secret") }} }
+            - name: DIRECTORY_CLIENT_SECRET
+              valueFrom: { {{ include "cell.secretRef" (dict "root" . "key" "directory-client-secret") }} }
             - name: CELL_ADMIN_CLIENT_SECRET
               valueFrom: { {{ include "cell.secretRef" (dict "root" . "key" "cell-admin-client-secret") }} }
             - name: ACCOUNTS_BROKER_CLIENT_SECRET

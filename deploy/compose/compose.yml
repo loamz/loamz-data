@@ -235,6 +235,7 @@ services:
       DATA_WORKSPACE_CLIENT_SECRET: ${DATA_WORKSPACE_CLIENT_SECRET:?}
       CELL_ADMIN_CLIENT_SECRET: ${CELL_ADMIN_CLIENT_SECRET:?}
       AGENT_MEMBERSHIP_CLIENT_SECRET: ${AGENT_MEMBERSHIP_CLIENT_SECRET:?}
+      DIRECTORY_CLIENT_SECRET: ${DIRECTORY_CLIENT_SECRET:?run ./gen-env.sh}
       AGENTS_CONSOLE_URL: ${AGENTS_CONSOLE_URL:-http://localhost:3000}
       DATA_WORKSPACE_URL: ${DATA_WORKSPACE_URL:-http://localhost:3011}
     volumes:
@@ -271,7 +272,8 @@ services:
       LOAMZ_DATA_RETRIEVAL_DIR: /var/lib/loamz-data/retrieval
       # SCIM provisioning (/scim/v2) manages users and groups through Keycloak's admin API.
       LOAMZ_DATA_DIRECTORY_URL: http://keycloak.localhost:${PORT_KEYCLOAK:-8081}
-      LOAMZ_DATA_DIRECTORY_CLIENT_SECRET: ${AGENT_MEMBERSHIP_CLIENT_SECRET:?run ./gen-env.sh}
+      LOAMZ_DATA_DIRECTORY_CLIENT_SECRET: ${DIRECTORY_CLIENT_SECRET:?run ./gen-env.sh}
+      LOAMZ_DATA_DIRECTORY_CLIENT_ID: loamz-directory
       LOAMZ_DATA_DOCUMENT_READER_URL: ${DOCUMENT_READER_URL:-}
       LOAMZ_DATA_DOCUMENT_EMBEDDING_URL: ${DOCUMENT_EMBEDDING_URL:-}
       # The agent server signs per-run tokens for its users; the data service fetches its public keys. One name may only

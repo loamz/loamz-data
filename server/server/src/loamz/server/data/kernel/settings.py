@@ -158,7 +158,7 @@ class Settings(BaseSettings):
     # organizations, users and groups. Empty `directory_url` turns SCIM off.
     directory_url: str = ""
     directory_realm: str = "loamz"
-    directory_client_id: str = "agent-membership"
+    directory_client_id: str = "loamz-directory"
     directory_client_secret: SecretStr = SecretStr("")
 
     # Identity

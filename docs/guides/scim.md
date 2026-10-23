@@ -9,7 +9,7 @@ JumpCloud and others) can create, update and remove a tenant's people and groups
 2. In the identity provider, add a SCIM application with base URL `https://<data host>/scim/v2`, authentication "HTTP
    bearer token", and that token. Rotate it with `POST /api/v1/access-tokens/{id}:rotate`; rotation revokes the old one.
 3. The server needs the identity provider's admin API: `LOAMZ_DATA_DIRECTORY_URL`, `LOAMZ_DATA_DIRECTORY_REALM`,
-   `LOAMZ_DATA_DIRECTORY_CLIENT_ID` (default `agent-membership`) and `LOAMZ_DATA_DIRECTORY_CLIENT_SECRET`. The Compose
+   `LOAMZ_DATA_DIRECTORY_CLIENT_ID` (default `loamz-directory`, a service account that may manage users, groups and organizations of the realm and nothing else) and `LOAMZ_DATA_DIRECTORY_CLIENT_SECRET`. The Compose
    file and the Helm chart (`scim.enabled`) set these for the bundled Keycloak. Without a directory URL, SCIM answers
    `503`.
 

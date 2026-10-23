@@ -605,6 +605,23 @@
         "roles"
       ],
       "optionalClientScopes": []
+    },
+    {
+      "clientId": "loamz-directory",
+      "name": "Directory provisioning (SCIM)",
+      "description": "Service account the data service uses to manage a tenant's people and groups when an identity provider provisions them over SCIM.",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "${DIRECTORY_CLIENT_SECRET}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "basic",
+        "roles"
+      ],
+      "optionalClientScopes": []
     }
   ],
   "users": [
@@ -630,6 +647,22 @@
       "clientRoles": {
         "realm-management": [
           "manage-realm"
+        ]
+      }
+    },
+    {
+      "username": "service-account-loamz-directory",
+      "enabled": true,
+      "serviceAccountClientId": "loamz-directory",
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users",
+          "query-users",
+          "query-groups",
+          "manage-organizations",
+          "view-organizations",
+          "query-organizations"
         ]
       }
     }
