@@ -58,4 +58,5 @@ def status() -> str:
 mcp.run(transport="sse")
 ```
 
-`loamz-solutions` ships ready-made servers for mail triage and paper trading.
+`loamz-solutions` ships a ready-made server (`loamz-solutions serve`) for mail triage, paper trading and a data concierge, and a
+guide to building your own solution on the same kit.
