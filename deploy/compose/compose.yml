@@ -69,6 +69,8 @@ x-agent-env: &agent-env
   LOAMZ_AGENTS_LLM__ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   LOAMZ_AGENTS_LLM__GEMINI_API_KEY: ${GEMINI_API_KEY:-}
   LOAMZ_AGENTS_LLM__OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  # Email for the agent server's own notifications (optional)
+  LOAMZ_AGENTS_NOTIFICATIONS__RESEND_API_KEY: ${RESEND_API_KEY:-}
   # Files live in Loamz Data: this server holds no object-store credentials and signs short-lived tokens per request.
   LOAMZ_AGENTS_DATA__URL: http://data-api:8020
   # Tool servers (MCP over SSE) agents may use; see docs/guides/tool-servers.md. A JSON list, empty by default.
