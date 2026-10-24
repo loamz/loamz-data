@@ -428,6 +428,7 @@ services:
       OIDC_CLIENT_SECRET: ${AGENTS_CONSOLE_CLIENT_SECRET:?}
       SESSION_SECRET: ${UI_SESSION_SECRET:?}
       PUBLIC_URL: ${AGENTS_CONSOLE_URL:-http://localhost:3000}
+      DATA_WORKSPACE_URL: ${DATA_WORKSPACE_URL:-http://localhost:3011}
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${PORT_UI:-3000}:3000"
     depends_on:
