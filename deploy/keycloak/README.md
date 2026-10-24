@@ -108,3 +108,21 @@ for administrator rights (the template carries no users and no passwords).
 
 [`terraform/`](terraform/) is a skeleton with the same clients, scopes and roles for reconciling a live cell (provider
 `keycloak/keycloak`). It has not been applied or validated with `terraform validate`.
+
+## Sign-in page
+
+The realm uses the `loamz` login theme (`themes/loamz/login`). It extends Keycloak's own `keycloak.v2` theme, so every flow
+(passwords, resets, one-time codes, passkeys, social sign-in) keeps working; the theme only changes the layout, colours and
+text. Light and dark follow the browser. `compose.yml` mounts it into Keycloak, and the Helm chart ships a copy
+(`deploy/helm/loamz-cell/files/theme/loamz`; CI fails if the two differ).
+
+To change it, set `KEYCLOAK_THEME_CACHE=false` and `KEYCLOAK_THEME_STATIC_MAX_AGE=-1` when starting the cell (so a reload shows
+each edit), edit `themes/loamz/login`, and copy the folder into the chart.
+
+## Sign in with Google
+
+Create an OAuth client (type "Web application") in Google Cloud Console, add `<KEYCLOAK_PUBLIC_URL>/realms/loamz/broker/google/endpoint`
+as an authorized redirect URI, put `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `deploy/compose/.env`, then run
+`deploy/compose/enable-google-login.py` against a laptop cell. For a Helm cell, add the provider under
+`keycloak.brokering.identityProviders`. A person who signs in with Google must still belong to an organization (tenant) to use
+the apps.

@@ -1,0 +1,488 @@
+/* Loamz sign-in. Keycloak's own flows and markup, with Loamz's layout, colour and type.
+   Tokens follow the console's design system (apps/agents-console/src/design): violet brand, 8px controls, 40px control height,
+   16px floating surfaces. Light and dark follow the browser. */
+
+:root {
+  --lz-accent: #7c3aed;
+  --lz-accent-hover: #6d28d9;
+  --lz-accent-soft: rgb(124 58 237 / 0.12);
+  --lz-bg: #f4f5f8;
+  --lz-card: #ffffff;
+  --lz-input: #ffffff;
+  --lz-fg: #090a0f;
+  --lz-muted: #5b6070;
+  --lz-border: #e2e4ea;
+  --lz-border-strong: #cbcfd9;
+  --lz-danger: #c7253e;
+  --lz-shadow: 0 1px 2px rgb(9 10 15 / 0.04), 0 12px 40px rgb(9 10 15 / 0.08);
+  --lz-font: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+.pf-v5-theme-dark {
+  --lz-bg: #101014;
+  --lz-card: #18181d;
+  --lz-input: #121216;
+  --lz-fg: #f5f5f7;
+  --lz-muted: #9b9fb0;
+  --lz-border: #2a2a32;
+  --lz-border-strong: #3a3a45;
+  --lz-danger: #ff6b81;
+  --lz-accent-soft: rgb(124 58 237 / 0.2);
+  --lz-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 16px 48px rgb(0 0 0 / 0.45);
+}
+
+/* ── Page ─────────────────────────────────────────────────────────────────── */
+body#keycloak-bg {
+  background: var(--lz-bg) !important;
+  background-image: none !important;
+  color: var(--lz-fg);
+  font-family: var(--lz-font);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100dvh;
+  margin: 0;
+}
+
+.loamz-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+  min-height: 100dvh;
+}
+
+.loamz-shell > .pf-v5-c-login {
+  background: transparent !important;
+  background-image: none !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  min-height: 100dvh;
+}
+
+.pf-v5-c-login__container {
+  display: block;
+  width: 100%;
+  max-width: 420px;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── Brand panel (wide screens) ───────────────────────────────────────────── */
+.loamz-brand {
+  position: relative;
+  overflow: hidden;
+  color: #f5f5f7;
+  background:
+    radial-gradient(900px 520px at 12% -8%, rgb(124 58 237 / 0.55), transparent 62%),
+    radial-gradient(700px 520px at 105% 108%, rgb(249 87 22 / 0.22), transparent 60%),
+    linear-gradient(160deg, #15101f 0%, #0b0b12 60%, #09090d 100%);
+}
+
+.loamz-brand::before {
+  /* a fine grid that fades toward the edges */
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgb(255 255 255 / 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.05) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at 40% 35%, #000 20%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse at 40% 35%, #000 20%, transparent 75%);
+  pointer-events: none;
+}
+
+.loamz-brand-inner {
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 48px 56px 36px;
+}
+
+.loamz-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.loamz-mark {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  filter: drop-shadow(0 6px 16px rgb(124 58 237 / 0.45));
+}
+
+.loamz-word {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.loamz-copy {
+  margin-top: clamp(40px, 9vh, 96px);
+}
+
+.loamz-headline {
+  margin: 0;
+  font-size: clamp(26px, 2.5vw, 36px);
+  line-height: 1.1;
+  text-wrap: balance;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  background: linear-gradient(180deg, #ffffff 0%, #c9b8ff 130%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.loamz-lead {
+  margin: 20px 0 0;
+  max-width: 460px;
+  font-size: 16px;
+  line-height: 1.6;
+  color: rgb(245 245 247 / 0.72);
+}
+
+.loamz-points {
+  list-style: none;
+  margin: 28px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.loamz-points li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgb(245 245 247 / 0.86);
+}
+
+.loamz-tick {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: -1px;
+  border-radius: 999px;
+  color: #d9ccff;
+  background: rgb(124 58 237 / 0.28);
+  box-shadow: inset 0 0 0 1px rgb(167 139 250 / 0.35);
+}
+
+.loamz-tick svg {
+  width: 14px;
+  height: 14px;
+}
+
+.loamz-art {
+  display: block;
+  width: min(100%, 380px);
+  margin: auto 0 0 auto;
+  padding-top: 24px;
+  opacity: 0.96;
+}
+
+.loamz-foot {
+  margin: 20px 0 0;
+  font-size: 12px;
+  color: rgb(245 245 247 / 0.6);
+}
+
+/* ── Sign-in card ─────────────────────────────────────────────────────────── */
+#kc-header {
+  display: flex;
+  justify-content: flex-start;
+  padding: 0 0 24px;
+  background: none;
+}
+
+#kc-header-wrapper.pf-v5-c-brand {
+  display: none; /* the brand panel carries the logo; narrow screens turn this back on below */
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--lz-fg);
+  text-transform: none;
+  white-space: normal;
+}
+
+#kc-header-wrapper .loamz-mark {
+  width: 32px;
+  height: 32px;
+}
+
+.pf-v5-c-login__main {
+  width: 100%;
+  margin: 0;
+  background: var(--lz-card);
+  color: var(--lz-fg);
+  border: 1px solid var(--lz-border);
+  border-radius: 16px;
+  box-shadow: var(--lz-shadow);
+  overflow: hidden;
+}
+
+.pf-v5-c-login__main::before,
+.pf-v5-c-login__main::after {
+  display: none; /* the stock theme's coloured top bar */
+}
+
+.pf-v5-c-login__main-header {
+  padding: 36px 36px 0;
+  border: 0;
+}
+
+.pf-v5-c-login__main-header .pf-v5-c-title,
+#kc-page-title {
+  margin: 0;
+  font-family: var(--lz-font);
+  font-size: 26px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--lz-fg);
+}
+
+.pf-v5-c-login__main-body {
+  padding: 24px 36px 32px;
+}
+
+.pf-v5-c-login__main-footer {
+  padding: 0;
+}
+
+.pf-v5-c-login__main > .pf-v5-c-login__main-footer:last-child:empty {
+  display: none;
+}
+
+/* ── Form ─────────────────────────────────────────────────────────────────── */
+.pf-v5-c-form {
+  --pf-v5-c-form--GridGap: 16px;
+}
+
+/* the stock form leaves an empty group where "remember me" would be */
+.pf-v5-c-form__group:not(:has(*)) {
+  display: none;
+}
+
+.pf-v5-c-form__label,
+.pf-v5-c-form__label-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--lz-fg);
+}
+
+.pf-v5-c-form-control {
+  --pf-v5-c-form-control--BackgroundColor: var(--lz-input);
+  --pf-v5-c-form-control--Color: var(--lz-fg);
+  --pf-v5-c-form-control--BorderRadius: 8px;
+  --pf-v5-c-form-control--BorderColor: var(--lz-border-strong);
+  --pf-v5-c-form-control--before--BorderColor: var(--lz-border-strong);
+  --pf-v5-c-form-control--after--BorderColor: transparent;
+  --pf-v5-c-form-control--hover--after--BorderBottomWidth: 0;
+  --pf-v5-c-form-control--focus--after--BorderBottomWidth: 0;
+  --pf-v5-c-form-control--after--BorderBottomWidth: 0;
+  border-radius: 8px;
+  background: var(--lz-input);
+  box-shadow: inset 0 0 0 1px var(--lz-border-strong);
+  transition: box-shadow 0.15s ease;
+}
+
+.pf-v5-c-form-control::before,
+.pf-v5-c-form-control::after {
+  display: none;
+}
+
+.pf-v5-c-form-control:focus-within {
+  box-shadow: inset 0 0 0 1px var(--lz-accent), 0 0 0 4px var(--lz-accent-soft);
+}
+
+.pf-v5-c-form-control input {
+  height: 40px;
+  padding: 0 12px;
+  font-size: 15px;
+  color: var(--lz-fg);
+  background: transparent;
+  border: 0;
+  outline: 0;
+}
+
+.pf-v5-c-form-control input::placeholder {
+  color: var(--lz-muted);
+}
+
+.pf-v5-c-form-control:has(input[aria-invalid="true"]) {
+  box-shadow: inset 0 0 0 1px var(--lz-danger);
+}
+
+.pf-v5-c-form-control.pf-m-readonly {
+  background: transparent;
+}
+
+.pf-v5-c-form__helper-text,
+.pf-v5-c-helper-text__item-text {
+  font-size: 12px;
+}
+
+.pf-v5-c-helper-text__item-text.pf-m-error,
+.kc-feedback-text {
+  color: var(--lz-danger);
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
+.pf-v5-c-button {
+  --pf-v5-c-button--BorderRadius: 8px;
+  min-height: 40px;
+  border-radius: 8px;
+  font-family: var(--lz-font);
+  font-size: 15px;
+  font-weight: 500;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.05s ease;
+}
+
+.pf-v5-c-button::before,
+.pf-v5-c-button::after {
+  border-radius: 8px;
+}
+
+.pf-v5-c-button.pf-m-primary {
+  background: var(--lz-accent);
+  color: #fff;
+  border: 0;
+}
+
+.pf-v5-c-button.pf-m-primary:hover,
+.pf-v5-c-button.pf-m-primary:focus {
+  background: var(--lz-accent-hover);
+  color: #fff;
+}
+
+.pf-v5-c-button.pf-m-primary:active {
+  transform: translateY(1px);
+}
+
+.pf-v5-c-button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--lz-card), 0 0 0 5px var(--lz-accent);
+}
+
+.pf-v5-c-button.pf-m-secondary,
+.pf-v5-c-button.pf-m-tertiary,
+.pf-v5-c-button.pf-m-control {
+  background: var(--lz-card);
+  color: var(--lz-fg);
+  border: 0;
+  box-shadow: inset 0 0 0 1px var(--lz-border-strong);
+}
+
+.pf-v5-c-button.pf-m-secondary::after,
+.pf-v5-c-button.pf-m-tertiary::after,
+.pf-v5-c-button.pf-m-control::after {
+  display: none;
+}
+
+.pf-v5-c-button.pf-m-secondary:hover,
+.pf-v5-c-button.pf-m-tertiary:hover,
+.pf-v5-c-button.pf-m-control:hover {
+  background: var(--lz-accent-soft);
+  color: var(--lz-fg);
+  box-shadow: inset 0 0 0 1px var(--lz-accent);
+}
+
+.pf-v5-c-button.pf-m-link,
+a {
+  color: var(--lz-accent);
+}
+
+.pf-theme-dark a,
+.pf-v5-theme-dark a {
+  color: #b79cff;
+}
+
+a:hover {
+  color: var(--lz-accent-hover);
+}
+
+/* ── Other sign-in methods ────────────────────────────────────────────────── */
+#kc-social-providers ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#kc-social-providers .pf-v5-c-button {
+  justify-content: center !important; /* the stock button spreads icon and label to opposite ends */
+  gap: 12px;
+  min-height: 42px;
+}
+
+#kc-social-providers .pf-v5-c-button img {
+  width: 18px;
+  height: 18px;
+}
+
+#kc-social-providers .pf-v5-u-m-auto {
+  margin: 0 !important;
+}
+
+.kc-login-divider,
+.pf-v5-c-divider {
+  color: var(--lz-muted);
+  font-size: 12px;
+}
+
+.pf-v5-c-login__main-footer-band {
+  background: transparent;
+  border-top: 1px solid var(--lz-border);
+  padding: 16px 36px 24px;
+  color: var(--lz-muted);
+}
+
+.pf-v5-c-alert {
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+/* ── Narrow screens: one column, the logo moves onto the card ─────────────── */
+@media (max-width: 960px) {
+  .loamz-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .loamz-brand {
+    display: none;
+  }
+
+  #kc-header-wrapper.pf-v5-c-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .loamz-shell > .pf-v5-c-login {
+    align-items: flex-start;
+    padding: 40px 16px;
+  }
+
+  .pf-v5-c-login__main-header {
+    padding: 28px 24px 0;
+  }
+
+  .pf-v5-c-login__main-body {
+    padding: 20px 24px 28px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}

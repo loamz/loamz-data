@@ -20,6 +20,17 @@ data:
 ---
 {{- end }}
 apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $full }}-theme
+  labels: {{- include "cell.labels" . | nindent 4 }}
+data:
+  {{- range $path, $bytes := .Files.Glob "files/theme/loamz/**" }}
+  {{ $path | replace "/" "__" | quote }}: |-
+    {{- $bytes | toString | nindent 4 }}
+  {{- end }}
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: {{ $full }}
@@ -94,12 +105,20 @@ spec:
           startupProbe: { httpGet: { path: /health/started, port: management }, periodSeconds: 5, failureThreshold: 60 }
           resources: {{- toYaml .Values.keycloak.resources | nindent 12 }}
           securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
-          {{- if .Values.keycloak.realm.import }}
           volumeMounts:
+            {{- if .Values.keycloak.realm.import }}
             - { name: realm, mountPath: /opt/keycloak/data/import, readOnly: true }
-          {{- end }}
-      {{- if .Values.keycloak.realm.import }}
+            {{- end }}
+            - { name: theme, mountPath: /opt/keycloak/themes/loamz, readOnly: true }
       volumes:
+        {{- if .Values.keycloak.realm.import }}
         - { name: realm, configMap: { name: {{ $full }}-realm } }
-      {{- end }}
+        {{- end }}
+        - name: theme
+          configMap:
+            name: {{ $full }}-theme
+            items:
+              {{- range $path, $_ := .Files.Glob "files/theme/loamz/**" }}
+              - { key: {{ $path | replace "/" "__" | quote }}, path: {{ $path | trimPrefix "files/theme/loamz/" | quote }} }
+              {{- end }}
 {{- end }}

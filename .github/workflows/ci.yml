@@ -299,9 +299,11 @@ jobs:
             terraform -chdir=$d init -backend=false -input=false
             terraform -chdir=$d validate
           done
-      - name: the chart's realm copy equals deploy/keycloak
+      - name: the chart's realm and theme copies equal deploy/keycloak
         if: matrix.check == 'realm-drift'
-        run: diff deploy/keycloak/realm-loamz.json deploy/helm/loamz-cell/files/realm-loamz.json
+        run: |
+          diff deploy/keycloak/realm-loamz.json deploy/helm/loamz-cell/files/realm-loamz.json
+          diff -r deploy/keycloak/themes/loamz deploy/helm/loamz-cell/files/theme/loamz
 
   # ── The only required status check ─────────────────────────────────────────
   ci-ok:

@@ -230,6 +230,10 @@ services:
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?run ./gen-env.sh}
+      # Set KEYCLOAK_THEME_CACHE=false while editing the sign-in theme, so a change shows on reload.
+      KC_SPI_THEME__CACHE_THEMES: ${KEYCLOAK_THEME_CACHE:-true}
+      KC_SPI_THEME__CACHE_TEMPLATES: ${KEYCLOAK_THEME_CACHE:-true}
+      KC_SPI_THEME__STATIC_MAX_AGE: ${KEYCLOAK_THEME_STATIC_MAX_AGE:-2592000}
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak?sslmode=require
       KC_DB_USERNAME: ${POSTGRES_USER:-loamz}
@@ -244,6 +248,7 @@ services:
       DATA_WORKSPACE_URL: ${DATA_WORKSPACE_URL:-http://localhost:3011}
     volumes:
       - ../keycloak/realm-loamz.json:/opt/keycloak/data/import/realm-loamz.json:ro
+      - ../keycloak/themes/loamz:/opt/keycloak/themes/loamz:ro
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${PORT_KEYCLOAK:-8081}:${PORT_KEYCLOAK:-8081}"
     healthcheck:

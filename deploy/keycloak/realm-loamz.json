@@ -1,6 +1,7 @@
 {
   "realm": "loamz",
   "displayName": "Loamz",
+  "loginTheme": "loamz",
   "enabled": true,
   "organizationsEnabled": true,
   "sslRequired": "external",
