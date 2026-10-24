@@ -3,6 +3,7 @@
    16px floating surfaces. Light and dark follow the browser. */
 
 :root {
+  --lz-mark-a: #7c3aed;
   --lz-accent: #7c3aed;
   --lz-accent-hover: #6d28d9;
   --lz-accent-soft: rgb(124 58 237 / 0.12);
@@ -19,6 +20,7 @@
 }
 
 .pf-v5-theme-dark {
+  --lz-mark-a: #a177f5;
   --lz-bg: #101014;
   --lz-card: #18181d;
   --lz-input: #121216;
@@ -113,7 +115,7 @@ body#keycloak-bg {
   width: 36px;
   height: 36px;
   flex: none;
-  filter: drop-shadow(0 6px 16px rgb(124 58 237 / 0.45));
+  filter: drop-shadow(0 6px 16px rgb(124 58 237 / 0.4));
 }
 
 .loamz-word {

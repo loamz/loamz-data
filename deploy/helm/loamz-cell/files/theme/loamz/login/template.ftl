@@ -152,7 +152,7 @@
 <div class="loamz-shell">
   <aside class="loamz-brand">
     <div class="loamz-brand-inner">
-      <div class="loamz-lockup"><svg class="loamz-mark" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lz-g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#8b5cf6"/><stop offset="1" stop-color="#6d28d9"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#lz-g)"/><g fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M7 12.5c3-2.4 5.6-2.4 9 0s6 2.4 9 0" opacity=".95"/><path d="M7 18c3-2.4 5.6-2.4 9 0s6 2.4 9 0" opacity=".65"/><path d="M7 23.5c3-2.4 5.6-2.4 9 0s6 2.4 9 0" opacity=".35"/></g></svg><span class="loamz-word">Loamz</span></div>
+      <div class="loamz-lockup"><svg class="loamz-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="2" width="13" height="13" rx="2.5" fill="#a177f5" transform="rotate(8 8 8)"/><rect x="9" y="9" width="13" height="13" rx="2.5" fill="#f95716" transform="rotate(8 15 15)"/></svg><span class="loamz-word">Loamz</span></div>
       <div class="loamz-copy">
         <h2 class="loamz-headline">${kcSanitize(msg("loamzHeadline"))?no_esc}</h2>
         <p class="loamz-lead">${msg("loamzLead")}</p>
@@ -187,7 +187,7 @@
   <div class="${properties.kcLogin!}">
   <div class="${properties.kcLoginContainer!}">
     <header id="kc-header" class="pf-v5-c-login__header">
-      <div id="kc-header-wrapper" class="pf-v5-c-brand loamz-lockup"><svg class="loamz-mark" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lz-h" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#8b5cf6"/><stop offset="1" stop-color="#6d28d9"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#lz-h)"/><g fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M7 12.5c3-2.4 5.6-2.4 9 0s6 2.4 9 0" opacity=".95"/><path d="M7 18c3-2.4 5.6-2.4 9 0s6 2.4 9 0" opacity=".65"/><path d="M7 23.5c3-2.4 5.6-2.4 9 0s6 2.4 9 0" opacity=".35"/></g></svg><span class="loamz-word">${realm.displayName!"Loamz"}</span></div>
+      <div id="kc-header-wrapper" class="pf-v5-c-brand loamz-lockup"><svg class="loamz-mark" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="2" width="13" height="13" rx="2.5" fill="var(--lz-mark-a, #7c3aed)" transform="rotate(8 8 8)"/><rect x="9" y="9" width="13" height="13" rx="2.5" fill="#f95716" transform="rotate(8 15 15)"/></svg><span class="loamz-word">${realm.displayName!"Loamz"}</span></div>
     </header>
     <main class="${properties.kcLoginMain!}">
       <div class="${properties.kcLoginMainHeader!}">
