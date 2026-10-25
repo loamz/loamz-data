@@ -27,5 +27,6 @@ sed \
   -e "s|^WEB_SESSION_SECRET=.*|WEB_SESSION_SECRET=$(rand 48 48)|" \
   -e "s|^UI_SESSION_SECRET=.*|UI_SESSION_SECRET=$(rand 48 48)|" \
   -e "s|^MASK_SALT=.*|MASK_SALT=$(rand 24 24)|" \
+  -e "s|^CHAT_SEALING_KEY=.*|CHAT_SEALING_KEY=$(rand 43 43)|" \
   .env.example > .env
 echo "wrote $(pwd)/.env (mode 600). Add an LLM key, then: docker compose --profile agents up -d"

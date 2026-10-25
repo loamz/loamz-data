@@ -14,6 +14,9 @@
 - { name: LOAMZ_AGENTS_DIRECTORY__CLIENT_ID, value: loamz-directory }
 - name: LOAMZ_AGENTS_DIRECTORY__CLIENT_SECRET
   valueFrom: { {{ include "cell.secretRef" (dict "root" . "key" "directory-client-secret") }} }
+- name: LOAMZ_AGENTS_SEALING__KEYS__K1
+  valueFrom: { secretKeyRef: { name: {{ include "cell.secretName" . }}, key: chat-sealing-key, optional: true } }
+- { name: LOAMZ_AGENTS_SEALING__PRIMARY, value: k1 }
 - name: LOAMZ_AGENTS_PUSH__VAPID_PUBLIC_KEY
   valueFrom: { secretKeyRef: { name: {{ include "cell.secretName" . }}, key: vapid-public-key, optional: true } }
 - name: LOAMZ_AGENTS_PUSH__VAPID_PRIVATE_KEY

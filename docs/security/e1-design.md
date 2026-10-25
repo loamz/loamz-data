@@ -43,3 +43,18 @@ Decrypt previews and search on the device. Server export must omit encrypted con
 Required before merging E1: reviewed byte-level credential encoding, concrete library/version/license, official vector source and CI invocation, fence race tests, random roster transitions, sender retry after uncertain acknowledgement, crash/rollback tests, multi-tab/service-worker tests, no-plaintext scans, and completed Phase S browser verification. Cross-device recovery and user cross-signing remain E3 features and must not be advertised in E1.
 
 Owner review is required before writing E1 code. In particular, agree on the issuer trust in E1, the consent UI for roster changes, the atomic outbox/ratchet rules, offline send behavior, and the explicit absence of recovery until E3.
+
+## Review notes (owner review pass)
+
+Accepted, with these additions:
+
+- **Retention is a cryptographic roster change.** An org that retains some people adds a visible `archive` member (its own MLS leaf,
+  credential kind `archive`) to exactly the chats that include a retained person. It is never a server-side switch or a silent copy,
+  and every member sees the notice before they can send to the new epoch. A chat of people who are not retained never gets one.
+- **Wrong recovery key** fails with no partial output and no oracle about how close the key was (E3 test).
+- **First-party delivery is the weakest link** and stays in the product's privacy text: the operator serves the JavaScript. A
+  published build manifest and Subresource Integrity are the mitigations until independent distribution exists.
+- **Library choice is open until the vectors run.** `ts-mls` is the candidate; pin an exact version and make the official interop
+  vectors a CI gate before any E1 code depends on it. Fall back to OpenMLS (Rust) if it fails them.
+- **The credential's golden bytes come first.** Write the canonical encoding and its test vectors (including negative cases: unknown
+  version, expired, wrong issuer, extra fields) before the registration endpoint.

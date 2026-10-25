@@ -24,3 +24,23 @@ the encrypted files and nothing else.
   databases are rewritten by the provider according to its rules. Plan the change for a new cell where you can.
 - Keys for in-transit encryption (TLS certificates, the internal CA) are separate and are described in the security
   guide.
+
+## Chat content and stored tokens (application-level sealing)
+
+Beyond the provider's disk encryption above, the agent server seals what people write in shared chats (text, edits, cards) and
+the OAuth tokens it caches, before they reach the database. A database dump, a backup or a replica holds only
+`sealed:v1:<key id>:...` values. Each chat and each person's token has its own key, derived from a master key with HKDF, and the
+field's name is authenticated, so a sealed value copied to another row does not open.
+
+- **Configure:** `LOAMZ_AGENTS_SEALING__KEYS__K1` (32+ random bytes, base64url; compose and Helm generate one as
+  `CHAT_SEALING_KEY` / `chat-sealing-key`) and `LOAMZ_AGENTS_SEALING__PRIMARY`. With no key, content stays readable in the
+  database: development only.
+- **Back the key up.** Without it sealed content cannot be read, by anyone.
+- **Rotate:** add `K2`, set it primary, redeploy. New writes use `K2`; old values still open with `K1`, which stays in the ring
+  until nothing sealed with it remains.
+- **Existing content** written before keys were set stays readable, and is sealed the next time it is written.
+
+What this is not: the server process holds the keys and reads the content, and 1:1 agent conversations (the run log) are not
+sealed at the application level because the server searches and summarises them; the run log relies on the disk encryption
+above. This is protection at rest, not end-to-end encryption (see `docs/security/e2ee-threat-model.md`). Wrapping the master
+key with your KMS is the next step.
