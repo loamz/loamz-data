@@ -4,6 +4,7 @@ packages:
   - sdk/js/oidc-bff
 
 allowBuilds:
+  '@openuidev/lang-core': false
   '@prisma/client': true
   '@prisma/engines': true
   '@sentry/cli': false
