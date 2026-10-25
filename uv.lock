@@ -1884,9 +1884,6 @@ anthropic = [
     { name = "anthropic" },
     { name = "pillow" },
 ]
-charts = [
-    { name = "matplotlib" },
-]
 code = [
     { name = "fastapi" },
     { name = "httpx" },
@@ -2009,7 +2006,6 @@ requires-dist = [
     { name = "k8s-agent-sandbox", marker = "extra == 'code'", specifier = ">=0.4.6" },
     { name = "kokoro", marker = "extra == 'tts'", specifier = ">=0.9.4" },
     { name = "loamz-data", marker = "extra == 'data'", git = "https://github.com/loamz/loamz-python?subdirectory=sdk%2Fpython%2Fdata" },
-    { name = "matplotlib", marker = "extra == 'charts'", specifier = ">=3.9.0" },
     { name = "matplotlib", marker = "extra == 'sandbox'", specifier = ">=3.9.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.30.0,<2" },
     { name = "onnxruntime", marker = "extra == 'ocr'", specifier = ">=1.23.0" },
@@ -2046,7 +2042,7 @@ requires-dist = [
     { name = "tiktoken", marker = "extra == 'openai'", specifier = ">=0.12.0" },
     { name = "tokenizers", marker = "extra == 'safety'", specifier = ">=0.20.0" },
 ]
-provides-extras = ["postgres", "pdf", "ocr", "openai", "anthropic", "gemini", "sentence-transformers", "redis", "mcp", "tts", "tools", "web", "communication", "charts", "code", "sandbox", "safety", "logging", "data", "testing"]
+provides-extras = ["postgres", "pdf", "ocr", "openai", "anthropic", "gemini", "sentence-transformers", "redis", "mcp", "tts", "tools", "web", "communication", "code", "sandbox", "safety", "logging", "data", "testing"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2099,7 +2095,7 @@ dependencies = [
 
 [package.optional-dependencies]
 agents = [
-    { name = "loamz-engine", extra = ["anthropic", "charts", "data", "gemini", "mcp", "openai", "redis", "tools"] },
+    { name = "loamz-engine", extra = ["anthropic", "code", "data", "gemini", "mcp", "openai", "redis", "sandbox", "tools"] },
 ]
 console = [
     { name = "prompt-toolkit" },
@@ -2134,7 +2130,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "loamz-core", git = "https://github.com/loamz/loamz-python?subdirectory=sdk%2Fpython%2Fcore" },
     { name = "loamz-engine", extras = ["logging"], editable = "server/engine" },
-    { name = "loamz-engine", extras = ["openai", "anthropic", "gemini", "redis", "mcp", "tools", "data", "charts"], marker = "extra == 'agents'", editable = "server/engine" },
+    { name = "loamz-engine", extras = ["openai", "anthropic", "gemini", "redis", "mcp", "tools", "data", "sandbox", "code"], marker = "extra == 'agents'", editable = "server/engine" },
     { name = "loamz-engine", extras = ["postgres", "pdf"], editable = "server/engine" },
     { name = "nvidia-ml-py", marker = "extra == 'gpu'", specifier = ">=12.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
