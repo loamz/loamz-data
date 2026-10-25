@@ -1,0 +1,39 @@
+# Development: run your checkout instead of rebuilt images. A Python change reloads the agent server in seconds; the console
+# runs `next dev` with hot reload. Only the agent server and the console change; everything else is the normal cell.
+#
+#   make cell-dev          # start (or switch) the cell into development mode
+#   make cell              # back to the built images
+#
+# The agent server's Python code and the client libraries come from your folders:
+#   server/engine, server/server            this repo
+#   ../loamz-python (LOAMZ_PYTHON_DIR)      loamz-core, loamz-identity, loamz-data, so an unreleased client change is live too
+# Dependencies still come from the image: rebuild only when pyproject.toml or uv.lock changes.
+
+x-site: &site /app/.venv/lib/python3.14/site-packages/loamz
+
+services:
+  agent-server:
+    # The image's own start, plus --reload (no rebuild needed to switch).
+    entrypoint:
+      - sh
+      - -c
+      - mount -o remount,rw /sys/fs/cgroup 2>/dev/null || true; exec loamz-server agents serve --reload --host 0.0.0.0 --port 8000
+    volumes:
+      - ../../server/engine/src/loamz/engine:/app/.venv/lib/python3.14/site-packages/loamz/engine:ro
+      - ../../server/server/src/loamz/server:/app/.venv/lib/python3.14/site-packages/loamz/server:ro
+      - ${LOAMZ_PYTHON_DIR:-../../../loamz-python}/sdk/python/core/src/loamz/core:/app/.venv/lib/python3.14/site-packages/loamz/core:ro
+      - ${LOAMZ_PYTHON_DIR:-../../../loamz-python}/sdk/python/identity/src/loamz/identity:/app/.venv/lib/python3.14/site-packages/loamz/identity:ro
+      - ${LOAMZ_PYTHON_DIR:-../../../loamz-python}/sdk/python/data/src/loamz/data:/app/.venv/lib/python3.14/site-packages/loamz/data:ro
+
+  agents-console:
+    # `next dev` against the checkout; uses the node_modules installed on the host (`pnpm install` at the repo root).
+    image: node:22-bookworm-slim
+    working_dir: /repo/apps/agents-console
+    command: ["./node_modules/.bin/next", "dev", "-H", "0.0.0.0", "-p", "3000"]
+    environment:
+      NEXT_TELEMETRY_DISABLED: "1"
+      WATCHPACK_POLLING: "true"
+    volumes:
+      - ../..:/repo
+    healthcheck:
+      disable: true

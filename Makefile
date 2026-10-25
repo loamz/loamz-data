@@ -1,7 +1,7 @@
 # Root entry points. Python: one uv workspace (uv.lock); JavaScript: one pnpm workspace.
 # The fast tier (`make test`) needs no infrastructure and finishes in a few minutes. PostgreSQL and Redis tests run when
 # LOAMZ_TEST_POSTGRES_URL / LOAMZ_TEST_REDIS_URL point at a server, and skip otherwise.
-.PHONY: sync lint format imports test test-sdk test-engine test-server test-reader test-slow js-check check e2e help
+.PHONY: cell cell-dev sync lint format imports test test-sdk test-engine test-server test-reader test-slow js-check check e2e help
 
 PY_DIRS := server/engine server/server server/reader
 PYTEST := -q -n 4 --timeout=120
@@ -14,6 +14,16 @@ help:
 	@echo "make test-slow    the Docker/model-backed tests"
 	@echo "make e2e          the cell end-to-end test (needs the compose cell up: deploy/compose)"
 	@echo "make check        lint + imports + test"
+	@echo "make cell-dev     run the cell's agent server and console from this checkout, reloading on save"
+	@echo "make cell         run the cell from built images (rebuilds what changed)"
+
+COMPOSE := docker compose --project-directory deploy/compose -f deploy/compose/compose.yml --profile agents
+
+cell:
+	$(COMPOSE) up -d --build
+
+cell-dev:
+	$(COMPOSE) -f deploy/compose/compose.dev.yml up -d agent-server agents-console
 
 sync:
 	uv sync --all-packages --all-extras --all-groups
