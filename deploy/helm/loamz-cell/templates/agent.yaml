@@ -9,6 +9,15 @@
 {{- end }}
 - { name: LOAMZ_AGENTS_OIDC__ISSUER, value: {{ include "cell.issuer" . | quote }} }
 - { name: LOAMZ_AGENTS_OIDC__AUDIENCE, value: loamz-agents }
+- { name: LOAMZ_AGENTS_DIRECTORY__URL, value: "http://{{ include "cell.fullname" . }}-keycloak:8080" }
+- { name: LOAMZ_AGENTS_DIRECTORY__REALM, value: {{ .Values.keycloak.realm.name | quote }} }
+- { name: LOAMZ_AGENTS_DIRECTORY__CLIENT_ID, value: loamz-directory }
+- name: LOAMZ_AGENTS_DIRECTORY__CLIENT_SECRET
+  valueFrom: { {{ include "cell.secretRef" (dict "root" . "key" "directory-client-secret") }} }
+- name: LOAMZ_AGENTS_PUSH__VAPID_PUBLIC_KEY
+  valueFrom: { secretKeyRef: { name: {{ include "cell.secretName" . }}, key: vapid-public-key, optional: true } }
+- name: LOAMZ_AGENTS_PUSH__VAPID_PRIVATE_KEY
+  valueFrom: { secretKeyRef: { name: {{ include "cell.secretName" . }}, key: vapid-private-key, optional: true } }
 - { name: LOAMZ_AGENTS_HTTP__FRONTEND_URL, value: {{ .Values.publicUrls.ui | quote }} }
 - { name: LOAMZ_AGENTS_LLM__MODEL, value: {{ .Values.agents.model | default "google/gemini-3.1-flash-lite" | quote }} }
 - { name: LOAMZ_AGENTS_SANDBOX__RUNTIME, value: {{ .Values.agents.sandbox.runtime | default "k8s" | quote }} }
