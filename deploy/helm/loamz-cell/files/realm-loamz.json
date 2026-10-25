@@ -423,6 +423,29 @@
         "include.in.token.scope": "true",
         "display.on.consent.screen": "true"
       }
+    },
+    {
+      "name": "chat-api",
+      "description": "Adds the loamz-chat audience to the access token.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "loamz-chat audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "loamz-chat",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "clients": [
@@ -621,6 +644,41 @@
       "defaultClientScopes": [
         "basic",
         "roles"
+      ],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "loamz-chat",
+      "name": "Loamz Chat",
+      "description": "The chat web app: public client, authorization code + PKCE (S256). Work accounts sign in here with the same realm session as the console.",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "rootUrl": "${CHAT_URL:http://localhost:5173}",
+      "redirectUris": [
+        "${CHAT_URL:http://localhost:5173}/auth/callback"
+      ],
+      "webOrigins": [
+        "${CHAT_URL:http://localhost:5173}"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "${CHAT_URL:http://localhost:5173}/*"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email",
+        "chat-api",
+        "groups",
+        "organization"
       ],
       "optionalClientScopes": []
     }
