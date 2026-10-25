@@ -38,5 +38,8 @@ export const bff = createBff(() => {
     publicUrl: c.publicUrl,
     sessionCookie: SESSION_COOKIE,
     loginCookie: LOGIN_COOKIE,
+    // The token names the user's organization (tenant), as the console's does: grants made to the organization (its catalogs,
+    // the compute it may use) then apply here too. WEB_ORGANIZATION pins one; unset lets Keycloak pick the user's only one.
+    scope: `openid profile email ${process.env.WEB_ORGANIZATION ? `organization:${process.env.WEB_ORGANIZATION}` : "organization"}`,
   };
 });
