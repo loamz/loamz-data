@@ -43,7 +43,7 @@ RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp .
 # with -DLLAMA_BUILD_BORINGSSL/-DLLAMA_OPENSSL"). LLAMA_OPENSSL needs
 # libssl-dev (OpenSSL dev headers), not libcurl4-openssl-dev — this build
 # no longer links against curl for the HF downloader.
-RUN cmake -B build -DGGML_NATIVE=ON -DCMAKE_BUILD_TYPE=Release -DLLAMA_OPENSSL=ON \
+RUN cmake -B build -DGGML_NATIVE=OFF -DCMAKE_BUILD_TYPE=Release -DLLAMA_OPENSSL=ON \
     && cmake --build build -j"$(nproc)" --target llama-server
 
 FROM debian:trixie-slim AS runtime

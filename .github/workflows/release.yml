@@ -4,7 +4,7 @@ name: Release
 # (`<component>-v<version>`) and creates GitHub releases; this workflow then publishes the released Python
 # distributions to PyPI (trusted publishing, no tokens) in dependency order:
 #   tier 1  loamz-engine
-#   tier 2  loamz-server (needs engine and the loamz-python clients)
+#   tier 2  loamz-data-server (needs engine and the loamz-python clients)
 # loamz-reader and the container images are published by release-images.yml.
 on:
   push:
@@ -45,5 +45,5 @@ jobs:
     needs: [release-please, engine]
     if: always() && needs.release-please.outputs.tags == 'true' && needs.engine.result != 'failure'
     uses: ./.github/workflows/_publish.yml
-    with: { name: loamz-server, dir: server/server, released: "${{ needs.release-please.outputs.released }}" }
+    with: { name: loamz-data-server, dir: server/server, released: "${{ needs.release-please.outputs.released }}" }
     permissions: { contents: read, id-token: write }

@@ -48,7 +48,7 @@ resource "aws_db_instance" "this" {
   storage_type           = "gp3"
   storage_encrypted      = true
   kms_key_id             = var.kms_key_arn != "" ? var.kms_key_arn : null
-  db_name                = "agentdb"
+  db_name                = "loamz_data"
   username               = "loamz"
   parameter_group_name   = aws_db_parameter_group.this.name
   db_subnet_group_name   = aws_db_subnet_group.this.name

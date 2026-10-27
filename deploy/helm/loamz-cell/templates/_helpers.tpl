@@ -35,7 +35,6 @@ app.kubernetes.io/component: {{ .component }}
 {{- define "cell.pgPort" -}}{{ if .Values.postgres.bundled.enabled }}5432{{ else }}{{ .Values.postgres.external.port }}{{ end }}{{- end -}}
 {{- define "cell.pgUser" -}}{{ if .Values.postgres.bundled.enabled }}loamz{{ else }}{{ .Values.postgres.external.user }}{{ end }}{{- end -}}
 {{- define "cell.pgSslmode" -}}{{ if .Values.postgres.bundled.enabled }}require{{ else }}{{ .Values.postgres.external.sslmode }}{{ end }}{{- end -}}
-{{- define "cell.redisHost" -}}{{ if .Values.redis.bundled.enabled }}{{ include "cell.fullname" . }}-redis{{ else }}{{ required "redis.external.host is required when redis.bundled.enabled=false" .Values.redis.external.host }}{{ end }}{{- end -}}
 {{- define "cell.s3Endpoint" -}}{{ if .Values.s3.bundled.enabled }}http://{{ include "cell.fullname" . }}-seaweedfs:8333{{ else }}{{ required "s3.external.endpoint is required when s3.bundled.enabled=false" .Values.s3.external.endpoint }}{{ end }}{{- end -}}
 {{- define "cell.icebergUrl" -}}{{ if .Values.s3.bundled.enabled }}http://{{ include "cell.fullname" . }}-seaweedfs:8181{{ else }}{{ required "s3.external.icebergCatalogUrl is required when s3.bundled.enabled=false" .Values.s3.external.icebergCatalogUrl }}{{ end }}{{- end -}}
 {{- define "cell.keycloakInternal" -}}http://{{ include "cell.fullname" . }}-keycloak:8080{{- end -}}

@@ -81,17 +81,6 @@ def s3_identities() -> None:
                     *(f"{a}:{staging}" for a in ("Read", "List")),
                 ],
             },
-            {
-                # The agent server's own file store bucket (FILE_STORE_*), separate from governed data.
-                "name": "loamz-agents",
-                "credentials": [
-                    {
-                        "accessKey": need("AGENTS_S3_ACCESS_KEY_ID"),
-                        "secretKey": need("AGENTS_S3_SECRET_ACCESS_KEY"),
-                    }
-                ],
-                "actions": [f"{a}:{need('AGENTS_BUCKET')}" for a in rwl],
-            },
         ]
     }
     # Always rewritten: it is derived from .env, which is the source of truth.

@@ -41,7 +41,7 @@ resource "google_sql_user" "loamz" {
 }
 
 resource "google_sql_database" "this" {
-  for_each = toset(["agentdb", "keycloak", "loamz_data", "data_retrieval", "loamz_compute", "loamz_ui"])
+  for_each = toset(["keycloak", "loamz_data", "data_retrieval", "loamz_compute"])
   name     = each.value
   project  = var.project_id
   instance = google_sql_database_instance.this.name

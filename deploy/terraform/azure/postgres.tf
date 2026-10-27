@@ -64,7 +64,7 @@ resource "azurerm_postgresql_flexible_server_configuration" "extensions" {
 }
 
 resource "azurerm_postgresql_flexible_server_database" "this" {
-  for_each  = toset(["agentdb", "keycloak", "loamz_data", "data_retrieval", "loamz_compute", "loamz_ui"])
+  for_each  = toset(["keycloak", "loamz_data", "data_retrieval", "loamz_compute"])
   name      = each.value
   server_id = azurerm_postgresql_flexible_server.this.id
 }

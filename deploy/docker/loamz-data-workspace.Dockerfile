@@ -6,8 +6,6 @@ WORKDIR /app
 
 FROM base AS build
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/agents-console/package.json ./apps/agents-console/
-COPY apps/agents-console/prisma ./apps/agents-console/prisma/
 COPY apps/data-workspace/package.json ./apps/data-workspace/
 COPY apps/data-workspace/scripts ./apps/data-workspace/scripts/
 COPY sdk/js/oidc-bff/package.json ./sdk/js/oidc-bff/

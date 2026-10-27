@@ -58,7 +58,7 @@ resource "azurerm_storage_account" "this" {
 }
 
 locals {
-  containers = ["warehouse", "staging", "volumes", "agent-files"]
+  containers = ["warehouse", "staging", "volumes"]
 }
 
 resource "azurerm_storage_container" "this" {

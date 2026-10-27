@@ -1,16 +1,9 @@
 {{- if .Values.ingress.enabled }}
 {{- $f := include "cell.fullname" . }}
 {{- $hostOf := dict }}
-{{- $agentSvc := ternary (dict "name" (printf "%s-agent-server" $f) "port" 8000) (dict "name" (printf "%s-agent-gateway" $f) "port" 8001) (eq .Values.mode "monolith") }}
 {{- $routes := list }}
-{{- if and .Values.console.enabled .Values.publicUrls.ui }}
-{{- $routes = append $routes (dict "url" .Values.publicUrls.ui "svc" (printf "%s-ui" $f) "port" 3000) }}
-{{- end }}
 {{- if and .Values.dataWorkspace.enabled .Values.publicUrls.dataWeb }}
 {{- $routes = append $routes (dict "url" .Values.publicUrls.dataWeb "svc" (printf "%s-data-web" $f) "port" 3011) }}
-{{- end }}
-{{- if and .Values.agents.enabled .Values.publicUrls.agentApi }}
-{{- $routes = append $routes (dict "url" .Values.publicUrls.agentApi "svc" $agentSvc.name "port" $agentSvc.port) }}
 {{- end }}
 {{- if .Values.publicUrls.dataApi }}
 {{- $routes = append $routes (dict "url" .Values.publicUrls.dataApi "svc" (printf "%s-data-api" $f) "port" 8020) }}

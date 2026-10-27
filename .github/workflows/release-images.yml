@@ -48,9 +48,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { image: loamz-agents, file: deploy/docker/loamz-agents.Dockerfile }
           - { image: loamz-data, file: deploy/docker/loamz-data.Dockerfile }
-          - { image: loamz-agents-console, file: deploy/docker/loamz-agents-console.Dockerfile }
           - { image: loamz-data-workspace, file: deploy/docker/loamz-data-workspace.Dockerfile }
           - { image: llama-server, file: deploy/docker/llama-server.Dockerfile }
     permissions:

@@ -17,7 +17,6 @@ spec:
           import urllib.request as u
           for url in [
               "http://{{ include "cell.fullname" . }}-data-api:8020/readyz",
-              "http://{{ include "cell.fullname" . }}-{{ ternary "agent-server:8000" "agent-gateway:8001" (eq .Values.mode "monolith") }}/health",
               {{- if .Values.keycloak.enabled }}
               "{{ include "cell.keycloakInternal" . }}/realms/{{ .Values.keycloak.realm.name }}/.well-known/openid-configuration",
               {{- end }}

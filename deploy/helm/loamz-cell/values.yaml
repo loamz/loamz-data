@@ -16,15 +16,11 @@ global:
   # map them to the ingress controller's ClusterIP). Applies to the workloads this chart creates.
   hostAliases: []
 
-# monolith | microservices - how the agent server runs (ADR 0009). The cell is otherwise identical.
-mode: monolith
 
 # Where the cell is reachable. Browsers and services must see the same Keycloak address: it is the token issuer.
 publicUrls:
   keycloak: "http://keycloak.localtest.me"
-  ui: "http://ui.localtest.me"
   dataWeb: "http://data.localtest.me"
-  agentApi: "http://api.localtest.me"
   dataApi: "http://data-api.localtest.me"
   # Where browsers reach object storage (presigned URLs).
   s3: "http://s3.localtest.me"
@@ -35,7 +31,6 @@ secrets:
   #   postgres-password redis-password keycloak-admin-password
   #   ui-client-secret data-web-client-secret cell-admin-client-secret membership-client-secret directory-client-secret
   #   control-s3-access-key-id control-s3-secret-access-key worker-s3-access-key-id worker-s3-secret-access-key
-  #   agents-s3-access-key-id agents-s3-secret-access-key
   #   controller-token worker-token web-session-secret ui-session-secret mask-salt
   # Optional: openai-api-key anthropic-api-key gemini-api-key openrouter-api-key accounts-broker-client-secret
   existingSecret: ""
@@ -57,22 +52,10 @@ postgres:
     user: loamz
     # sslmode require | verify-ca | verify-full. loamz-data refuses anything weaker off-machine.
     sslmode: require
-    # The databases must exist: agentdb (with pgvector and uuid-ossp), keycloak, loamz_data, data_retrieval (pgvector: the
-    # documents and memory index, ADR 0008), loamz_ui, and loamz_compute when data.controller.ha is on.
-  databases: { agent: agentdb, keycloak: keycloak, data: loamz_data, retrieval: data_retrieval, ui: loamz_ui, controller: loamz_compute }
+    # The databases must exist: keycloak, loamz_data, data_retrieval (pgvector: the
+    # documents and memory index, ADR 0008), and loamz_compute when data.controller.ha is on.
+  databases: { keycloak: keycloak, data: loamz_data, retrieval: data_retrieval, controller: loamz_compute }
 
-redis:
-  enabled: true
-  bundled:
-    enabled: true
-    image: redis:7-alpine
-    storage: 2Gi
-    resources: { requests: { cpu: 50m, memory: 64Mi } }
-  external:
-    host: ""
-    port: 6379
-
-# ── Object storage ────────────────────────────────────────────────────────────
 s3:
   bundled:
     enabled: true            # SeaweedFS: S3 API and the Iceberg REST catalog. production: use your cloud's, see external
@@ -91,7 +74,6 @@ s3:
     warehouse: warehouse
     staging: loamz-staging
     volumes: loamz-volumes
-    agents: agent-files
   # Names the warehouse independently of how each process reaches it. Same on every component.
   storageId: ""
   # STS role the control plane assumes per statement (credential vending). With it, SQL workers hold no storage key.
@@ -125,37 +107,6 @@ keycloak:
     identityProviderMappers: []
   extraEnv: []
 
-# ── Loamz Agents ──────────────────────────────────────────────────────────────
-agents:
-  enabled: true
-  roles: "all"
-  image: { repository: "ghcr.io/ravikumarchavva/loamz-agents", tag: "" }
-  # Monolith deployment (mode=monolith)
-  replicas: 1
-  resources: { requests: { cpu: 500m, memory: 1Gi }, limits: { memory: 4Gi } }
-  autoscaling: { enabled: false, minReplicas: 1, maxReplicas: 5, targetCPUUtilizationPercentage: 70 }
-  model: google/gemini-3.1-flash-lite
-  # Code interpreter. "k8s" runs sandboxes as isolated pods (add a gVisor runtimeClassName for stronger isolation);
-  # "nsjail" needs privileged containers and is for single-box installs only.
-  sandbox:
-    runtime: k8s
-    runtimeClassName: ""
-    rbac: true
-  extraEnv: []
-  # Microservices (mode=microservices): name -> port. Each is its own Deployment from the same image.
-  # Only the gateway is exposed; ports match deploy/PORTS.md.
-  microservices:
-    gateway: { port: 8001, replicas: 2, resources: { requests: { cpu: 250m, memory: 256Mi } }, autoscaling: { enabled: false, minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 70 } }
-    policy: { port: 8011, replicas: 1, resources: { requests: { cpu: 100m, memory: 256Mi } } }
-    conversation: { port: 8012, replicas: 2, resources: { requests: { cpu: 250m, memory: 512Mi } }, autoscaling: { enabled: false, minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 70 } }
-    job_controller: { port: 8013, replicas: 1, resources: { requests: { cpu: 100m, memory: 256Mi } } }
-    agent_runtime: { port: 8014, replicas: 2, resources: { requests: { cpu: 500m, memory: 1Gi } }, autoscaling: { enabled: false, minReplicas: 2, maxReplicas: 20, targetCPUUtilizationPercentage: 70 } }
-    tool_executor: { port: 8015, replicas: 2, resources: { requests: { cpu: 250m, memory: 512Mi } }, autoscaling: { enabled: false, minReplicas: 2, maxReplicas: 20, targetCPUUtilizationPercentage: 70 } }
-    human_gate: { port: 8016, replicas: 1, resources: { requests: { cpu: 100m, memory: 256Mi } } }
-    live_stream: { port: 8017, replicas: 1, resources: { requests: { cpu: 100m, memory: 256Mi } } }
-    admin: { port: 8019, replicas: 1, resources: { requests: { cpu: 100m, memory: 256Mi } } }
-
-# ── loamz-data ────────────────────────────────────────────────────────────
 data:
   # The customer-managed KMS key (ARN) the warehouse bucket is encrypted with; storage credentials vended to workers
   # then carry `kms:Decrypt` on it. Set it from the Terraform output `helm_values`. Empty: provider-managed keys.
@@ -198,11 +149,6 @@ data:
       autoscaling: { enabled: false, minReplicas: 1, maxReplicas: 4, targetCPUUtilizationPercentage: 70 }
 
 # ── Web UIs ───────────────────────────────────────────────────────────────────
-console:
-  enabled: true
-  image: { repository: "ghcr.io/ravikumarchavva/loamz-agents-console", tag: "" }
-  replicas: 1
-  resources: { requests: { cpu: 100m, memory: 256Mi } }
 dataWorkspace:
   enabled: true
   image: { repository: "ghcr.io/ravikumarchavva/loamz-data-workspace", tag: "" }

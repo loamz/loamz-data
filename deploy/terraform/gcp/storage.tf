@@ -3,7 +3,6 @@ locals {
     warehouse = "${var.project_id}-${var.name}-warehouse"
     staging   = "${var.project_id}-${var.name}-staging"
     volumes   = "${var.project_id}-${var.name}-volumes"
-    agents    = "${var.project_id}-${var.name}-agent-files"
   }
 }
 
