@@ -180,7 +180,7 @@ spec:
             - |
               for role in sql jobs rag; do
                 case $role in sql) port=8041;; jobs) port=8042;; rag) port=8043;; esac
-                loamz-server data attach --name "$role" --role "$role" --url "https://{{ $kc }}-data-worker-$role:$port" --token-env LOAMZ_DATA_WORKER_TOKEN
+                loamz-data-server attach --name "$role" --role "$role" --url "https://{{ $kc }}-data-worker-$role:$port" --token-env LOAMZ_DATA_WORKER_TOKEN
               done
           env:
             {{- $dataEnv | nindent 12 }}

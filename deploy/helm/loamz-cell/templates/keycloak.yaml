@@ -92,7 +92,7 @@ spec:
               valueFrom: { {{ include "cell.secretRef" (dict "root" . "key" "cell-admin-client-secret") }} }
             - name: ACCOUNTS_BROKER_CLIENT_SECRET
               valueFrom: { secretKeyRef: { name: {{ include "cell.secretName" . }}, key: accounts-broker-client-secret, optional: true } }
-            - { name: AGENTS_CONSOLE_URL, value: {{ .Values.publicUrls.ui | quote }} }
+            - { name: AGENTS_CONSOLE_URL, value: {{ .Values.publicUrls.dataWeb | quote }} }
             - { name: DATA_WORKSPACE_URL, value: {{ .Values.publicUrls.dataWeb | quote }} }
             {{- with .Values.keycloak.extraEnv }}
             {{- toYaml . | nindent 12 }}

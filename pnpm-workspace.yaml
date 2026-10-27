@@ -1,5 +1,4 @@
 packages:
-  - apps/agents-console
   - apps/data-workspace
   - sdk/js/oidc-bff
 

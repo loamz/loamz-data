@@ -14,8 +14,8 @@
     },
     "server/server": {
       "release-type": "python",
-      "package-name": "loamz-server",
-      "component": "loamz-server"
+      "package-name": "loamz-data-server",
+      "component": "loamz-data-server"
     },
     "server/reader": {
       "release-type": "python",

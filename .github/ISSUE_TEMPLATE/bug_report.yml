@@ -8,7 +8,7 @@ body:
       label: Package
       options:
         - loamz-engine
-        - loamz-server
+        - loamz-data-server
         - loamz-reader
         - agents-console
         - data-workspace
