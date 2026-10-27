@@ -46,7 +46,7 @@ jobs:
       - run: psql postgresql://postgres:drill@localhost:5432/postgres -c "CREATE DATABASE catalog"
       - name: Back up, restore, verify
         run: |
-          uv run --frozen --package loamz-server python deploy/scripts/restore_drill.py \
+          uv run --frozen --package loamz-data-server python deploy/scripts/restore_drill.py \
             --source postgresql://postgres:drill@localhost:5432/catalog \
             --admin postgresql://postgres:drill@localhost:5432/postgres \
             --seed --prove-detection | tee drill.txt

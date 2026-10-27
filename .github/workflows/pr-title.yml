@@ -31,9 +31,8 @@ jobs:
           scopes: |
             loamz
             loamz-engine
-            loamz-server
+            loamz-data-server
             loamz-reader
-            agents-console
             data-workspace
             oidc-bff
             specs

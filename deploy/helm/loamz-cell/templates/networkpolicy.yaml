@@ -34,7 +34,7 @@ spec:
         values: [{{ .Release.Name }}]
       - key: app.kubernetes.io/component
         operator: In
-        values: [ui, data-web, data-api, keycloak, seaweedfs, {{ ternary "agent-server" "agent-gateway" (eq .Values.mode "monolith") }}]
+        values: [data-web, data-api, keycloak, seaweedfs]
   policyTypes: [Ingress]
   ingress:
     - from:

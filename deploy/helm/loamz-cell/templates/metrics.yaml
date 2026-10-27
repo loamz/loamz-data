@@ -14,7 +14,7 @@ spec:
     matchExpressions:
       - key: app.kubernetes.io/component
         operator: In
-        values: [data-api, {{ ternary "agent-server" "agent-gateway" (eq .Values.mode "monolith") }}]
+        values: [data-api]
   endpoints:
     - port: http
       path: /metrics

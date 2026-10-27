@@ -27,7 +27,7 @@ data:
   10-databases.sh: |
     #!/bin/bash
     set -euo pipefail
-    for db in {{ .Values.postgres.databases.keycloak }} {{ .Values.postgres.databases.data }} {{ .Values.postgres.databases.retrieval }} {{ .Values.postgres.databases.ui }} {{ .Values.postgres.databases.controller }}; do
+    for db in {{ .Values.postgres.databases.keycloak }} {{ .Values.postgres.databases.retrieval }} {{ .Values.postgres.databases.controller }}; do
       psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "CREATE DATABASE $db"
     done
     for db in "$POSTGRES_DB" {{ .Values.postgres.databases.data }} {{ .Values.postgres.databases.retrieval }}; do
@@ -68,7 +68,7 @@ spec:
           args: [postgres, -c, ssl=on, -c, ssl_cert_file=/tls/tls.crt, -c, ssl_key_file=/tls/tls.key]
           env:
             - { name: POSTGRES_USER, value: loamz }
-            - { name: POSTGRES_DB, value: {{ .Values.postgres.databases.agent }} }
+            - { name: POSTGRES_DB, value: {{ .Values.postgres.databases.data }} }
             - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
             - name: POSTGRES_PASSWORD
               valueFrom: { {{ include "cell.secretRef" (dict "root" . "key" "postgres-password") }} }

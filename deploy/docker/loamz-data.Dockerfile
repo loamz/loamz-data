@@ -22,13 +22,13 @@ COPY server/engine/pyproject.toml server/engine/
 COPY server/server/pyproject.toml server/server/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-workspace --package loamz-server
+    uv sync --frozen --no-dev --no-install-workspace --package loamz-data-server
 
 COPY server/engine server/engine
 COPY server/server server/server
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-editable --package loamz-server
+    uv sync --frozen --no-dev --no-editable --package loamz-data-server
 
 ENV HOME=/opt/loamz/home
 RUN mkdir -p $HOME && /app/.venv/bin/python -c "import duckdb; duckdb.connect().execute('INSTALL httpfs')"
@@ -50,6 +50,6 @@ EXPOSE 8020 8014 8011
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
     CMD ["python", "-c", "import os, urllib.request as u; u.urlopen('http://127.0.0.1:%s/readyz' % os.environ.get('PORT', '8020'), timeout=4)"]
 
-ENTRYPOINT ["loamz-server", "data"]
+ENTRYPOINT ["loamz-data-server"]
 CMD ["serve", "--host", "0.0.0.0"]
 

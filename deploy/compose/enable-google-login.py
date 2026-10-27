@@ -6,7 +6,7 @@ Create the OAuth client (type "Web application") in Google Cloud Console and add
 
 Then:
 
-    uv run --package loamz-server python deploy/compose/enable-google-login.py deploy/compose/.env
+    uv run --package loamz-data-server python deploy/compose/enable-google-login.py deploy/compose/.env
 
 Safe to run again. The provider is shown to everyone on the sign-in page. A person who signs in with Google still needs to
 belong to an organization (tenant) to use the apps: add them with add-demo-member.py after their first sign-in. For a laptop cell only.
@@ -65,4 +65,6 @@ r = (
 r.raise_for_status()
 print("Google provider", "updated" if exists else "created")
 
-print(f"Add this redirect URI to the Google OAuth client:\n  {PUBLIC}/realms/loamz/broker/google/endpoint")
+print(
+    f"Add this redirect URI to the Google OAuth client:\n  {PUBLIC}/realms/loamz/broker/google/endpoint"
+)

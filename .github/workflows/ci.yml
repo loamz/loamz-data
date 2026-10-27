@@ -133,18 +133,8 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-      redis:
-        image: redis:7-alpine
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 6379:6379
     env:
       LOAMZ_TEST_POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/postgres
-      LOAMZ_TEST_REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -228,9 +218,6 @@ jobs:
         run: pnpm --filter "./${{ matrix.dir }}" --if-present lint
       - name: Typecheck
         run: pnpm --filter "./${{ matrix.dir }}" --if-present typecheck
-      - name: Design-system ratchet
-        if: matrix.dir == 'apps/agents-console'
-        run: pnpm --filter "./${{ matrix.dir }}" check:design
       - name: Unit tests (vitest)
         run: pnpm --filter "./${{ matrix.dir }}" --if-present test
       - name: Build
@@ -265,19 +252,14 @@ jobs:
         run: |
           ./gen-env.sh
           docker compose config -q
-          docker compose --profile agents config -q
-          docker compose --profile microservices config -q
-          docker compose --profile agents --profile ml config -q
+          docker compose --profile ml config -q
       - uses: azure/setup-helm@v4
         if: matrix.check == 'helm'
       - name: helm lint and template
         if: matrix.check == 'helm'
         run: |
-          for mode in monolith microservices; do
-            helm lint deploy/helm/loamz-cell --set mode=$mode
-            helm template cell deploy/helm/loamz-cell --set mode=$mode > /tmp/$mode.yaml
-          done
-          helm template cell deploy/helm/loamz-cell --set agents.enabled=false > /tmp/data-only.yaml
+          helm lint deploy/helm/loamz-cell
+          helm template cell deploy/helm/loamz-cell > /tmp/data-only.yaml
           helm template cell deploy/helm/loamz-cell \
             --set postgres.bundled.enabled=false,postgres.external.host=db.example.com \
             --set s3.bundled.enabled=false,s3.external.endpoint=https://s3.example.com,s3.external.icebergCatalogUrl=https://iceberg.example.com \
@@ -286,7 +268,7 @@ jobs:
         if: matrix.check == 'helm'
         run: |
           curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
-          ./kubeconform -strict -summary /tmp/monolith.yaml /tmp/microservices.yaml /tmp/data-only.yaml /tmp/external.yaml
+          ./kubeconform -strict -summary /tmp/data-only.yaml /tmp/external.yaml
       - uses: hashicorp/setup-terraform@v3
         if: matrix.check == 'terraform'
         with:

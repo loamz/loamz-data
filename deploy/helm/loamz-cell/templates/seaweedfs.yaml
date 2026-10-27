@@ -68,7 +68,7 @@ spec:
         {{- end }}
         resources: { requests: { storage: {{ .Values.s3.bundled.storage }} } }
 ---
-# Creates the staging, volumes, agent-file and warehouse (S3 Tables) buckets once SeaweedFS is up.
+# Creates the staging, volumes, warehouse (S3 Tables) buckets once SeaweedFS is up.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -90,7 +90,7 @@ spec:
           command: [sh, -ec]
           args:
             - |
-              out=$(printf 's3.bucket.create -name {{ $b.staging }}\ns3.bucket.create -name {{ $b.volumes }}\ns3.bucket.create -name {{ $b.agents }}\ns3tables.bucket -create -name {{ $b.warehouse }} -account 000000000000\nexit\n' | weed shell -master={{ $full }}:9333 2>&1)
+              out=$(printf 's3.bucket.create -name {{ $b.staging }}\ns3.bucket.create -name {{ $b.volumes }}\ns3tables.bucket -create -name {{ $b.warehouse }} -account 000000000000\nexit\n' | weed shell -master={{ $full }}:9333 2>&1)
               echo "$out" | tail -5
               if echo "$out" | grep -qi error && ! echo "$out" | grep -qi exist; then exit 1; fi
           securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }

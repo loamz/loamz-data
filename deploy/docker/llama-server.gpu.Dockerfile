@@ -76,7 +76,7 @@ RUN git clone --depth 1 https://github.com/ggml-org/llama.cpp .
 # guaranteed). Symlinking into the default system library path + ldconfig
 # sidesteps both problems entirely — `ld` finds it via the normal system
 # search path, no per-target flag ordering to get right.
-RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/lib/x86_64-linux-gnu/libcuda.so.1 \
+RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/lib/$(gcc -print-multiarch)/libcuda.so.1 \
     && ldconfig
 # GGML_NATIVE=ON only auto-detects CPU features here, not the CUDA
 # architecture — confirmed real: without a GPU visible at build time (no
@@ -92,7 +92,7 @@ RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/lib/x86_64-linux-gnu/libcu
 # `--build-arg BUILD_JOBS=N` for local builds on hot/thermally-limited
 # hardware.
 ARG BUILD_JOBS=""
-RUN cmake -B build -DGGML_NATIVE=ON -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release -DLLAMA_OPENSSL=ON \
+RUN cmake -B build -DGGML_NATIVE=OFF -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release -DLLAMA_OPENSSL=ON \
     -DCMAKE_CUDA_ARCHITECTURES=86 \
     && cmake --build build -j"${BUILD_JOBS:-$(nproc)}" --target llama-server
 

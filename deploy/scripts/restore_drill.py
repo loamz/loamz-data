@@ -1,6 +1,6 @@
 """Restore drill: prove a backup of the catalog database restores into a working, intact catalog, and time it.
 
-    uv run --package loamz-server python deploy/scripts/restore_drill.py \\
+    uv run --package loamz-data-server python deploy/scripts/restore_drill.py \\
         --source postgresql://loamz:…@db:5432/loamz_data --admin postgresql://loamz:…@db:5432/postgres
 
 It dumps the source database (`pg_dump -Fc`), creates a scratch database next to it, restores into that (`pg_restore`),
