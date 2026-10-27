@@ -8,8 +8,8 @@ import pytest
 from loamz.core import tenancy
 from loamz.core.tenancy import TENANT_ADMIN_GROUP
 from loamz.data import DataClient
-from loamz.server.data.features.scim.api import directory
 from loamz.identity.server.directory import Directory
+from loamz.server.data.features.scim.api import directory
 from tests.data.fake_keycloak import FakeKeycloak
 
 A, B = "acme", "globex"

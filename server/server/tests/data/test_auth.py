@@ -7,10 +7,10 @@ import pytest
 from pydantic import SecretStr
 
 from loamz.engine.errors import LoamzError
+from loamz.identity.server import IdentityError
 from loamz.server.data.kernel.auth import TokenVerifier
 from loamz.server.data.kernel.settings import Settings
 from loamz.server.data.kernel.tickets import TicketSigner, TicketVerifier
-from loamz.identity.server import IdentityError
 from tests.data.conftest import ISSUER
 
 

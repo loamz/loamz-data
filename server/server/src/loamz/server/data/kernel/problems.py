@@ -17,9 +17,9 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from loamz.engine.errors import LoamzError, http_status
+from loamz.identity.server import IdentityError
 from loamz.server.data.kernel.errors import public_error
 from loamz.server.data.kernel.settings import Settings
-from loamz.identity.server import IdentityError
 
 logger = logging.getLogger(__name__)
 PROBLEM = "application/problem+json"

@@ -25,9 +25,9 @@ from loamz.engine.errors import (
     InvalidRequestError,
     ServiceUnavailableError,
 )
+from loamz.identity.server.directory import Directory
 from loamz.server.data.kernel.container import Container
 from loamz.server.data.kernel.http import Caller, container
-from loamz.identity.server.directory import Directory
 
 MEDIA = "application/scim+json"
 USER = "urn:ietf:params:scim:schemas:core:2.0:User"

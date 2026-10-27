@@ -13,13 +13,13 @@ import jwt
 
 from loamz.core import tenancy
 from loamz.engine.errors import UnauthenticatedError
-from loamz.server.data.kernel.principal import Principal
-from loamz.server.data.kernel.settings import Settings, TrustedIssuer
 from loamz.identity.server import PrimaryIssuer
 from loamz.identity.server import (
     TokenVerifier as IdentityVerifier,
 )
 from loamz.identity.server import TrustedIssuer as LibraryTrustedIssuer
+from loamz.server.data.kernel.principal import Principal
+from loamz.server.data.kernel.settings import Settings, TrustedIssuer
 
 
 def _with_tenant(who) -> frozenset[str]:
