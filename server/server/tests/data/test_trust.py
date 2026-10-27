@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from loamz.server.data.cli import listener_config
 from loamz.server.data.kernel.settings import Settings, TrustedIssuer
-from loamz.server.identity import IdentityProviderUnavailable, InvalidToken, JwksSource
+from loamz.identity.server import IdentityProviderUnavailable, InvalidToken, JwksSource
 from tests.data.conftest import IssuerKeys
 from tests.data.pki import issue, make_ca
 

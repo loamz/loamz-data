@@ -3,7 +3,7 @@
 Point the identity provider (Okta, Entra ID, OneLogin, JumpCloud ...) at `https://<data host>/scim/v2` with a bearer
 token: a personal access token (`/api/v1/access-tokens`) created by the tenant's administrator. Everything is scoped to
 that administrator's tenant. Users are the tenant's Keycloak organization members and groups are realm groups
-prefixed with the tenant alias (see `loamz.server.identity.directory`).
+prefixed with the tenant alias (see `loamz.identity.server.directory`).
 
 Behaviour worth knowing: `active=false` disables the user's sign-in; `DELETE /Users/{id}` removes the person from this
 tenant but keeps their identity (they may belong to other tenants). Responses and errors use the SCIM media type and
@@ -27,7 +27,7 @@ from loamz.engine.errors import (
 )
 from loamz.server.data.kernel.container import Container
 from loamz.server.data.kernel.http import Caller, container
-from loamz.server.identity.directory import Directory
+from loamz.identity.server.directory import Directory
 
 MEDIA = "application/scim+json"
 USER = "urn:ietf:params:scim:schemas:core:2.0:User"

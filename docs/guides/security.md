@@ -3,7 +3,7 @@
 What the platform enforces, where, and how to check it.
 
 ## Identity and access
-- **Authentication.** OIDC. Both servers verify RS256 JWTs against the issuer's JWKS (`loamz.server.identity`):
+- **Authentication.** OIDC. Both servers verify RS256 JWTs against the issuer's JWKS (`loamz.identity.server`):
   signature, issuer, audience, expiry. Keycloak is the reference identity provider (realm `loamz`, shipped in
   `deploy/keycloak`); any OIDC provider that issues the same claims works. Enterprise SSO (SAML, LDAP, social) is
   brokered by the identity provider, not by Loamz.

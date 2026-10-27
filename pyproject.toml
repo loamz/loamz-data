@@ -20,7 +20,7 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
 loamz-engine = { workspace = true }
-loamz-server = { workspace = true }
+loamz-data-server = { workspace = true }
 # The client libraries live in loamz-python; until they are on PyPI the server builds against its main branch.
 loamz-core = { git = "https://github.com/loamz/loamz-python", subdirectory = "sdk/python/core" }
 loamz-identity = { git = "https://github.com/loamz/loamz-python", subdirectory = "sdk/python/identity" }
@@ -33,7 +33,6 @@ dev = [
     "import-linter>=2.11",
     "pytest>=9.0",
     "pytest-asyncio>=1.4",
-    "loamz-agents",  # the end-to-end script drives the agents API through it
 ]
 
 # One style for every loamz package (packages without their own [tool.ruff] inherit this).

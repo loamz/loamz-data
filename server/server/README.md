@@ -14,7 +14,7 @@ Configuration is one typed tree, `LOAMZ_DATA_*` (`kernel/settings.py`; nested se
 `LOAMZ_DATA_INFERENCE__MODE=local`). The API is `/api/v1`, errors are RFC 9457 problem documents
 (`docs/guides/api.md`), and the contract is `specs/data/v1/openapi.json` (drift-tested).
 
-Layout: `kernel/` (settings, container, typed errors and problems, auth on `loamz.server.identity`, scopes, tickets, the
+Layout: `kernel/` (settings, container, typed errors and problems, auth on `loamz.identity.server`, scopes, tickets, the
 metadata store) and `features/<name>/` (catalog, sql, tables, compute, files, documents, memory, privacy, tenants,
 inference). Documents and memory run on `loamz-engine`.
 

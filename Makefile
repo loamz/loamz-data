@@ -43,7 +43,7 @@ test-engine:
 	cd server/engine && uv run --package loamz-engine pytest $(PYTEST)
 
 test-server:
-	cd server/server && uv run --package loamz-server pytest $(PYTEST)
+	cd server/server && uv run --package loamz-data-server pytest $(PYTEST)
 
 # loamz-reader runs on Python 3.13 with its own lock, outside the workspace.
 test-reader:
@@ -52,7 +52,7 @@ test-reader:
 test: test-sdk test-engine test-server test-reader
 
 test-slow:
-	cd server/server && uv run --package loamz-server pytest -q -m "slow or integration" --timeout=300
+	cd server/server && uv run --package loamz-data-server pytest -q -m "slow or integration" --timeout=300
 	cd server/engine && uv run --package loamz-engine pytest -q -m "slow" --timeout=300
 
 js-check:
@@ -60,6 +60,6 @@ js-check:
 	pnpm -r test
 
 e2e:
-	uv run --package loamz-server python deploy/compose/e2e.py deploy/compose/.env
+	uv run --package loamz-data-server python deploy/compose/e2e.py deploy/compose/.env
 
 check: lint imports test js-check

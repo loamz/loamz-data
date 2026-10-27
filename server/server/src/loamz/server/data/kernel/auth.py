@@ -1,4 +1,4 @@
-"""Validate access tokens: a thin adapter from `loamz.server.identity` to this service's `Principal`.
+"""Validate access tokens: a thin adapter from `loamz.identity.server` to this service's `Principal`.
 
 The primary OIDC provider's tokens and explicitly trusted issuers' tokens are verified by the shared
 library (JWKS cache, rotation, stale-if-error, audience and `typ` checks). This module only decides what a
@@ -15,11 +15,11 @@ from loamz.core import tenancy
 from loamz.engine.errors import UnauthenticatedError
 from loamz.server.data.kernel.principal import Principal
 from loamz.server.data.kernel.settings import Settings, TrustedIssuer
-from loamz.server.identity import PrimaryIssuer
-from loamz.server.identity import (
+from loamz.identity.server import PrimaryIssuer
+from loamz.identity.server import (
     TokenVerifier as IdentityVerifier,
 )
-from loamz.server.identity import TrustedIssuer as LibraryTrustedIssuer
+from loamz.identity.server import TrustedIssuer as LibraryTrustedIssuer
 
 
 def _with_tenant(who) -> frozenset[str]:

@@ -10,7 +10,7 @@ from loamz.engine.errors import LoamzError
 from loamz.server.data.kernel.auth import TokenVerifier
 from loamz.server.data.kernel.settings import Settings
 from loamz.server.data.kernel.tickets import TicketSigner, TicketVerifier
-from loamz.server.identity import IdentityError
+from loamz.identity.server import IdentityError
 from tests.data.conftest import ISSUER
 
 
