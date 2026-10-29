@@ -1,0 +1,201 @@
+openapi: 3.1.0
+info:
+  title: Loamz Data
+  version: 1.0.0
+  description: >
+    The governed data API. Every call is authenticated with a Keycloak bearer token and checked by IAM; every refusal
+    and every change is recorded in the audit trail. Errors are RFC 9457 problem documents. A caller who may not see a
+    thing is told it does not exist (404), never that it is forbidden.
+servers:
+  - url: /
+security:
+  - bearer: []
+paths:
+  /healthz:
+    get:
+      summary: The process is up.
+      security: []
+      responses:
+        "200": { description: ok }
+  /readyz:
+    get:
+      summary: The database answers.
+      security: []
+      responses:
+        "200": { description: ready }
+        "500": { $ref: "#/components/responses/Problem" }
+  /api/v1/me:
+    get:
+      summary: Who the token says the caller is.
+      responses:
+        "200": { description: The caller }
+        "401": { $ref: "#/components/responses/Problem" }
+  /api/v1/securables:
+    post:
+      summary: Create a catalog, schema, table, volume or view.
+      description: Needs `create` on the parent (or on the tenant for a catalog). The creator becomes its owner.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSecurable" }
+      responses:
+        "201": { description: Created }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    get:
+      summary: List what is directly inside a parent (the tenant when `parent_id` is empty) that the caller may see.
+      parameters:
+        - { name: parent_id, in: query, required: false, schema: { type: string } }
+      responses:
+        "200": { description: The entries }
+  /api/v1/securables/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      summary: One entry. Needs `use`.
+      responses:
+        "200": { description: The entry }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Drop an entry and everything inside it. Needs `manage`.
+      description: The entry disappears at once. The bytes are removed by a durable task, and the answer carries its id.
+      responses:
+        "202": { description: A drop task was queued }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/securables/{id}/grants:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string }, description: An entry id, or `root` for the tenant. }
+    put:
+      summary: Give a principal a role (reader, contributor, owner) here. Needs `manage`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Assign" }
+      responses:
+        "204": { description: Granted }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+    get:
+      summary: Who holds what directly here. Needs `manage`.
+      responses:
+        "200": { description: The grants }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/securables/{id}/grants/{principal}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: principal, in: path, required: true, schema: { type: string } }
+    delete:
+      summary: Take away everything a principal holds directly here. Needs `manage`.
+      responses:
+        "204": { description: Revoked }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/volumes/{id}/files:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      summary: List the files of a volume. Needs `read`.
+      responses:
+        "200": { description: The files }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/volumes/{id}/files/{path}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: path, in: path, required: true, schema: { type: string }, allowReserved: true }
+    put:
+      summary: Upload a file (the request body is its bytes). Needs `write`.
+      responses:
+        "201": { description: Stored }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+    get:
+      summary: Download a file, always as an attachment. Needs `read`.
+      responses:
+        "200": { description: The bytes }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Delete one file. Needs `write`.
+      responses:
+        "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/erase:
+    post:
+      summary: Erase a person's data in this tenant. Needs `manage` on the tenant.
+      description: Queues a durable task that removes everything the person owns, their files and their grants, and checks it is gone. The audit trail is kept.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Erase" }
+      responses:
+        "202": { description: An erase task was queued }
+        "403": { $ref: "#/components/responses/Problem" }
+  /api/v1/tasks/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      summary: The state of a drop or erase task. Needs `manage` on the tenant.
+      responses:
+        "200": { description: The task }
+        "404": { $ref: "#/components/responses/Problem" }
+  /api/v1/audit:
+    get:
+      summary: The tenant's recent audit entries, newest first. Needs `manage` on the tenant.
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500 } }
+      responses:
+        "200": { description: The entries }
+  /api/v1/audit/verify:
+    get:
+      summary: Walk the whole hash chain. Needs `manage` on the tenant.
+      responses:
+        "200": { description: "`intact`, the entry count, and the first broken entry if any" }
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+  responses:
+    Problem:
+      description: An RFC 9457 problem document.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, detail]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+    CreateSecurable:
+      type: object
+      required: [kind, name]
+      properties:
+        kind: { enum: [catalog, schema, table, volume, view] }
+        parent_id: { type: string }
+        name: { type: string, description: "Lower case letters, digits and underscores, starting with a letter." }
+        classification: { enum: [normal, personal, sealed] }
+        placement: { enum: [local] }
+        consistency: { enum: [transaction, snapshot], description: A volume can only promise snapshot. }
+    Assign:
+      type: object
+      required: [principal, role]
+      properties:
+        principal: { type: string }
+        role: { enum: [reader, contributor, owner] }
+    Erase:
+      type: object
+      required: [subject]
+      properties:
+        subject: { type: string }
