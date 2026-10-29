@@ -14,7 +14,7 @@ cargo run -q --release --example dev_token -- "$WORK/keys" bob acme >"$WORK/bob.
 ANA=$(cat "$WORK/ana.tok"); BOB=$(cat "$WORK/bob.tok")
 
 export LOAMZ_DATA_LISTEN=127.0.0.1:$PORT LOAMZ_DATA_DATABASE_URL="${SMOKE_DB:-sqlite:$WORK/data.db?mode=rwc}"
-export LOAMZ_DATA_VOLUMES_DIR=$WORK/volumes LOAMZ_DATA_OIDC_ISSUER=http://dev.local/realm
+VOL=${SMOKE_VOLUMES:-$WORK/volumes}; export LOAMZ_DATA_VOLUMES_DIR=$VOL LOAMZ_DATA_OIDC_ISSUER=http://dev.local/realm
 export LOAMZ_DATA_JWKS_FILE=$WORK/keys/jwks.json LOAMZ_DATA_ADMINS=ana
 
 start=$(date +%s%N)
@@ -43,7 +43,7 @@ sleep 1.2
 step "bob is gone" "$(req "$BOB" "/api/v1/securables/$C")" 404
 step "drop catalog" "$(req "$ANA" "/api/v1/securables/$C" -X DELETE)" 202
 sleep 1.2
-[ ! -e "$WORK/volumes/$V" ] && echo "volume bytes are gone from disk"
+[ ! -e "$VOL/$V" ] && echo "volume bytes are gone from disk"
 step "audit verify" "$(req "$ANA" /api/v1/audit/verify)" 200
 cat "$WORK/out"; echo
 rss=$(awk '/VmRSS/ {print $2}' /proc/$PID/status)
