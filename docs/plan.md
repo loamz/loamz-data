@@ -17,10 +17,10 @@ easy to deploy and to run on an edge box.
   (domain, ports, adapters).
 - **Python stays where it is the guest or the glue:** the code an agent writes inside a sandbox (DuckDB, Polars, pandas),
   the Agents server (LLM libraries), and a Python SDK generated from the API spec.
-- **The existing Python engine and server are the executable reference,** not a base to extend. They are deleted once the Rust
-  server passes the same black-box contract suite. No backward compatibility is kept.
-- **Tests:** the goal is a small, language-neutral **contract suite** run against the HTTP API, not a large test count.
-  The same suite judges the Python reference and the Rust server.
+- **The Python server is deleted** (2026-10-29/30). The Python `loamz-engine` package stays in `server/engine` because Agents
+  still builds against it; it is retired when Agents moves to the Rust client. No backward compatibility is kept.
+- **Tests:** in-process HTTP tests that run on SQLite and on Postgres, a spec test that holds the router to the OpenAPI
+  document, and a layering test. The goal is not a large test count.
 - **Budgets, checked from the first week:** idle memory of the Data server under 30 MB, start in under 200 ms, one
   static binary. A budget that cannot be met is a design alarm.
 - **Costs we accept:** slower iteration and long builds (Chat's build folder is 43 GB). Mitigate with a shared target

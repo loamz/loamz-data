@@ -897,6 +897,11 @@ dependencies = [
 [[package]]
 name = "loamz-runner"
 version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
 
 [[package]]
 name = "lock_api"
