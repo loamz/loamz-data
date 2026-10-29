@@ -1,39 +1,31 @@
-# Workspace-wide. Each package also has its own .gitignore.
+# Rust
+target/
+**/*.rs.bk
+
+# Python (the kept engine package)
 .venv/
-node_modules/
-.pnpm-store/
-.next/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
 .import_linter_cache/
 .hypothesis/
+
+# Secrets and local state
 .env
 .env.*
 !.env.example
 *.pem
 !**/tests/**/*.pem
 .workspace/
-.DS_Store
-
-# Agent worktrees (local only)
 .claude/worktrees/
-node_modules
-.next
-next-env.d.ts
-*.tsbuildinfo
-data/workspace/public/monaco/
 
-# runtime artifacts
+# Runtime artifacts
 *.log
-.substrate/
-.loamz/
 *.db
+*.db-shm
+*.db-wal
+.loamz/
 
-# local Rust experiments
-loamz-rs/target/
-
-# Terraform
-.terraform/
-target/
+# Editors and OS
+.DS_Store
