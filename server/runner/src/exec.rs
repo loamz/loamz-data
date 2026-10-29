@@ -83,16 +83,40 @@ pub async fn run(
     })
 }
 
-/// The command line that runs a bundle under gVisor. `id` names the container so it can be removed after a kill.
-#[must_use]
-pub fn gvisor(runsc: &std::path::Path, bundle: &std::path::Path, id: &str) -> (Command, Command) {
-    let mut run = Command::new(runsc);
-    run.args(["--network=none", "--rootless", "run", "--bundle"])
-        .arg(bundle)
-        .arg(id);
-    let mut clean = Command::new(runsc);
-    clean.args(["delete", "--force"]).arg(id);
-    (run, clean)
+/// How to start gVisor. `state` is where `runsc` keeps its container records.
+#[derive(Clone, Debug)]
+pub struct Gvisor {
+    pub runsc: std::path::PathBuf,
+    pub state: std::path::PathBuf,
+    /// Without root (a laptop, CI): runsc cannot make its own cgroup, so memory and process limits are not enforced.
+    /// The runner reports that to the caller instead of pretending.
+    pub rootless: bool,
+    /// `systrap` (the default, fastest without KVM) or `ptrace`, for kernels where systrap cannot start (WSL2).
+    pub platform: String,
+}
+
+impl Gvisor {
+    fn base(&self) -> Command {
+        let mut c = Command::new(&self.runsc);
+        c.arg("--network=none")
+            .arg(format!("--platform={}", self.platform))
+            .arg("--root")
+            .arg(&self.state);
+        if self.rootless {
+            c.args(["--rootless", "--ignore-cgroups"]);
+        }
+        c
+    }
+
+    /// The command that runs a bundle, and the one that removes its container after a kill. `id` names the container.
+    #[must_use]
+    pub fn commands(&self, bundle: &std::path::Path, id: &str) -> (Command, Command) {
+        let mut run = self.base();
+        run.arg("run").arg("--bundle").arg(bundle).arg(id);
+        let mut clean = self.base();
+        clean.args(["delete", "--force"]).arg(id);
+        (run, clean)
+    }
 }
 
 #[cfg(test)]
@@ -154,7 +178,13 @@ mod tests {
 
     #[test]
     fn the_gvisor_command_has_no_network_and_a_named_container() {
-        let (run, clean) = gvisor("/usr/bin/runsc".as_ref(), "/b".as_ref(), "job-1");
+        let g = Gvisor {
+            runsc: "/usr/bin/runsc".into(),
+            state: "/st".into(),
+            rootless: false,
+            platform: "systrap".into(),
+        };
+        let (run, clean) = g.commands("/b".as_ref(), "job-1");
         let args: Vec<_> = run
             .as_std()
             .get_args()
@@ -164,7 +194,9 @@ mod tests {
             args,
             [
                 "--network=none",
-                "--rootless",
+                "--platform=systrap",
+                "--root",
+                "/st",
                 "run",
                 "--bundle",
                 "/b",
@@ -176,6 +208,9 @@ mod tests {
             .get_args()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
-        assert_eq!(cleanup, ["delete", "--force", "job-1"]);
+        assert_eq!(
+            &cleanup[cleanup.len() - 3..],
+            ["delete", "--force", "job-1"]
+        );
     }
 }
