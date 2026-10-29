@@ -36,3 +36,4 @@ loamz-rs/target/
 
 # Terraform
 .terraform/
+target/

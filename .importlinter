@@ -1,41 +1,17 @@
-# Loamz Data dependency rules. Run: uv run lint-imports --config .importlinter
-#
-#   loamz.core, loamz.identity               the client libraries (loamz-python repo; HTTP only)
-#   loamz.engine                             the embeddable storage engines (sql, files, vectors, documents, memory)
-#   loamz.server.data                        the data platform
-#
-# The engines import no server. Loamz Data knows nothing of Loamz Agents (agents are built on data, never the reverse).
+# Python here is only the embeddable engine. Run: uv run lint-imports --config .importlinter
+# The engine imports no server, no client and no agent runtime.
 [importlinter]
 root_packages =
     loamz
 include_external_packages = False
-# An import made only for type checking never runs, so it cannot drag a layer along.
 exclude_type_checking_imports = True
 
 [importlinter:contract:engine-is-self-contained]
-name = the engines import no server and no client
+name = the engine imports no server, client or agent runtime
 type = forbidden
 source_modules =
     loamz.engine
 forbidden_modules =
     loamz.server
     loamz.data
-
-[importlinter:contract:data-never-imports-the-agent-runtime]
-name = Loamz Data never imports the agent runtime or agent hosting
-type = forbidden
-source_modules =
-    loamz.server.data
-    loamz.engine
-forbidden_modules =
     loamz.runtime
-    loamz.server.agents
-
-[importlinter:contract:data-server-layers]
-name = loamz.server.data layers point downward (the kernel knows no feature)
-type = layers
-layers =
-    loamz.server.data.cli
-    loamz.server.data.app
-    loamz.server.data.features
-    loamz.server.data.kernel

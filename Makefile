@@ -1,65 +1,27 @@
-# Root entry points. Python: one uv workspace (uv.lock); JavaScript: one pnpm workspace.
-# The fast tier (`make test`) needs no infrastructure and finishes in a few minutes. PostgreSQL and Redis tests run when
-# LOAMZ_TEST_POSTGRES_URL / LOAMZ_TEST_REDIS_URL point at a server, and skip otherwise.
-.PHONY: cell cell-dev sync lint format imports test test-engine test-server test-reader test-slow js-check check e2e help
-
-PY_DIRS := server/engine server/server server/reader
-PYTEST := -q -n 4 --timeout=120
+# Root entry points. Rust: one Cargo workspace. Python: only the embeddable engine (server/engine).
+.PHONY: lint test test-engine imports budget check help
 
 help:
-	@echo "make sync         install every Python package (uv) and the JS workspace (pnpm)"
-	@echo "make lint         ruff check + format --check"
-	@echo "make imports      import-linter architecture contracts (.importlinter)"
-	@echo "make test         the fast tier: engine, server, reader"
-	@echo "make test-slow    the Docker/model-backed tests"
-	@echo "make e2e          the cell end-to-end test (needs the compose cell up: deploy/compose)"
-	@echo "make check        lint + imports + test"
-	@echo "make cell-dev     run the data server and workspace from this checkout, reloading on save"
-	@echo "make cell         run the cell from built images (rebuilds what changed)"
-
-COMPOSE := docker compose --project-directory deploy/compose -f deploy/compose/compose.yml
-
-cell:
-	$(COMPOSE) up -d --build
-
-cell-dev:
-	$(COMPOSE) -f deploy/compose/compose.dev.yml up -d data-api data-workspace
-
-sync:
-	uv sync --all-packages --all-extras --all-groups
-	pnpm install
+	@echo "make lint     cargo fmt --check + clippy"
+	@echo "make test     cargo test (SQLite; add LOAMZ_TEST_POSTGRES_URL and --include-ignored for Postgres)"
+	@echo "make budget   release build: idle memory, start time, one binary"
+	@echo "make imports  engine import contract"
+	@echo "make check    lint + test + imports"
 
 lint:
-	uv run ruff check .
-	uv run ruff format --check .
+	cargo fmt --check
+	cargo clippy --workspace --all-targets -- -D warnings
 
-format:
-	uv run ruff format .
+test:
+	cargo test --workspace
+
+test-engine:
+	cd server/engine && uv run --package loamz-engine pytest -q -n 4 --timeout=120
 
 imports:
 	uv run lint-imports --config .importlinter
 
-test-engine:
-	cd server/engine && uv run --package loamz-engine pytest $(PYTEST)
+budget:
+	scripts/budget.sh
 
-test-server:
-	cd server/server && uv run --package loamz-data-server pytest $(PYTEST)
-
-# loamz-reader runs on Python 3.13 with its own lock, outside the workspace.
-test-reader:
-	cd server/reader && uv run --python 3.13 --frozen --extra test python -m pytest -q
-
-test: test-engine test-server test-reader
-
-test-slow:
-	cd server/server && uv run --package loamz-data-server pytest -q -m "slow or integration" --timeout=300
-	cd server/engine && uv run --package loamz-engine pytest -q -m "slow" --timeout=300
-
-js-check:
-	pnpm -r typecheck
-	pnpm -r test
-
-e2e:
-	uv run --package loamz-data-server python deploy/compose/e2e.py deploy/compose/.env
-
-check: lint imports test js-check
+check: lint test imports
