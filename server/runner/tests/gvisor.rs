@@ -193,33 +193,55 @@ async fn the_memory_limit_stops_a_program_that_asks_for_too_much() {
     );
 }
 
-/// `pids.limit` counts the sandbox's own host threads as well as the code's processes, so a small value stops the
-/// sandbox from starting at all. This tries several, prints what each does, and requires that some value both starts the
-/// sandbox and stops a fork bomb short.
+/// gVisor makes one host thread for each thread of the code, so `pids.limit` is a limit on those. When it is reached the
+/// sandbox is killed whole (it cannot make another thread); `fork()` is not given a polite error. That still contains a
+/// fork bomb, fail-closed, and this test proves it: a small number of forks works under the limit (the control), the bomb
+/// does not get to the end, and nothing of it is left on the host afterwards.
 #[tokio::test]
 async fn the_process_limit_stops_a_fork_bomb() {
     let Some(lab) = lab() else { return };
     if lab.rootless {
         return println!("skipped: process limits need root");
     }
-    let code = "import os,time\nn=0\ntry:\n while n<2000:\n  if os.fork()==0:\n   time.sleep(3); os._exit(0)\n  n+=1\nexcept OSError as e: print('stopped by', type(e).__name__)\nprint('forks', n)";
-    let mut working = Vec::new();
-    for limit in [64, 128, 256, 512] {
-        let (o, _) = lab
-            .python(&format!("pids-{limit}"), code, 512 << 20, limit, 60)
-            .await;
-        println!("pids limit {limit}: {}", show(&o));
-        let text = String::from_utf8_lossy(&o.stdout).into_owned();
-        let forks = text
-            .split_whitespace()
-            .last()
-            .and_then(|n| n.parse::<u32>().ok());
-        if forks.is_some_and(|n| n < 2000) {
-            working.push(limit);
-        }
-    }
+    let program = |max: u32| {
+        format!(
+            "import os,time\nn=0\ntry:\n while n<{max}:\n  if os.fork()==0:\n   time.sleep(2); os._exit(0)\n  n+=1\nexcept OSError as e: print('refused')\nprint('forks', n)"
+        )
+    };
+    let limit = 256;
+    let (control, _) = lab
+        .python("pids-control", &program(20), 512 << 20, limit, 60)
+        .await;
+    println!("control: {}", show(&control));
     assert!(
-        !working.is_empty(),
-        "no tried limit both started the sandbox and stopped the fork bomb"
+        String::from_utf8_lossy(&control.stdout).contains("forks 20"),
+        "{}",
+        show(&control)
+    );
+
+    let (bomb, _) = lab
+        .python("pids-bomb", &program(100_000), 512 << 20, limit, 60)
+        .await;
+    println!("bomb: {}", show(&bomb));
+    assert!(
+        !String::from_utf8_lossy(&bomb.stdout).contains("forks 100000"),
+        "the bomb ran to the end: {}",
+        show(&bomb)
+    );
+    assert!(
+        !bomb.timed_out,
+        "it was stopped by the limit, not by the clock: {}",
+        show(&bomb)
+    );
+
+    let list = std::process::Command::new(&lab.gv.runsc)
+        .arg("--root")
+        .arg(&lab.gv.state)
+        .arg("list")
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&list.stdout).contains("pids-bomb"),
+        "no container left behind"
     );
 }
