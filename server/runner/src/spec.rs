@@ -20,6 +20,9 @@ pub struct Sandbox {
     pub cpu_millis: u64,
 }
 
+/// The user the code runs as inside the sandbox. Nobody: no files of its own, no privileges.
+pub const SANDBOX_UID: u32 = 65534;
+
 pub const MAX_MEMORY_BYTES: u64 = 8 << 30;
 pub const MAX_PIDS: u64 = 1024;
 
@@ -84,7 +87,7 @@ pub fn oci_config(s: &Sandbox) -> Result<Value, String> {
         "ociVersion": "1.0.2",
         "process": {
             "terminal": false,
-            "user": {"uid": 65534, "gid": 65534},
+            "user": {"uid": SANDBOX_UID, "gid": SANDBOX_UID},
             "args": s.args,
             "env": ["PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/workspace", "LANG=C.UTF-8"],
             "cwd": "/workspace",
