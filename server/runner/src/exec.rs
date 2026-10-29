@@ -119,6 +119,23 @@ impl Gvisor {
     }
 }
 
+/// Makes the workspace belong to the sandbox's user, so the code can write its output there and nothing else can.
+/// Needs the right to chown (root). Rootless, the sandbox runs as the caller's own user and nothing is needed.
+///
+/// # Errors
+/// The folder could not be created, or could not be handed over although the caller is root.
+pub fn prepare_workspace(path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(path)?;
+    match std::os::unix::fs::chown(
+        path,
+        Some(crate::spec::SANDBOX_UID),
+        Some(crate::spec::SANDBOX_UID),
+    ) {
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
+        other => other,
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {

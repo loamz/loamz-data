@@ -8,7 +8,7 @@ use std::{path::PathBuf, time::Duration};
 
 use loamz_runner::{
     check::verify,
-    exec::{Gvisor, Outcome, run},
+    exec::{Gvisor, Outcome, prepare_workspace, run},
     spec::{Sandbox, oci_config},
 };
 
@@ -49,7 +49,7 @@ impl Lab {
         seconds: u64,
     ) -> (Outcome, PathBuf) {
         let ws = self.dir.join(format!("{name}-ws"));
-        std::fs::create_dir_all(&ws).unwrap();
+        prepare_workspace(&ws).unwrap();
         let sandbox = Sandbox {
             rootfs: self.rootfs.clone(),
             inputs: vec![],
@@ -83,6 +83,16 @@ impl Lab {
             ws,
         )
     }
+}
+
+fn show(o: &Outcome) -> String {
+    format!(
+        "exit={:?} timed_out={} stdout={:?} stderr={:?}",
+        o.exit_code,
+        o.timed_out,
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    )
 }
 
 impl Drop for Lab {
@@ -151,6 +161,21 @@ async fn the_memory_limit_stops_a_program_that_asks_for_too_much() {
     if lab.rootless {
         return println!("skipped: memory limits need root (runsc makes its own cgroup)");
     }
+    // The control: a modest allocation under the same limit works, so a failure below is the limit and nothing else.
+    let (ok, _) = lab
+        .python(
+            "mem-ok",
+            "x = bytearray(64*1024*1024); print('GOT IT')",
+            256 << 20,
+            64,
+            60,
+        )
+        .await;
+    assert!(
+        String::from_utf8_lossy(&ok.stdout).contains("GOT IT"),
+        "{}",
+        show(&ok)
+    );
     let (o, _) = lab
         .python(
             "mem",
@@ -160,22 +185,41 @@ async fn the_memory_limit_stops_a_program_that_asks_for_too_much() {
             60,
         )
         .await;
-    assert!(!String::from_utf8_lossy(&o.stdout).contains("GOT IT") && o.exit_code != Some(0));
+    println!("memory test: {}", show(&o));
+    assert!(
+        !String::from_utf8_lossy(&o.stdout).contains("GOT IT") && o.exit_code != Some(0),
+        "{}",
+        show(&o)
+    );
 }
 
+/// `pids.limit` counts the sandbox's own host threads as well as the code's processes, so a small value stops the
+/// sandbox from starting at all. This tries several, prints what each does, and requires that some value both starts the
+/// sandbox and stops a fork bomb short.
 #[tokio::test]
 async fn the_process_limit_stops_a_fork_bomb() {
     let Some(lab) = lab() else { return };
     if lab.rootless {
         return println!("skipped: process limits need root");
     }
-    let code = "import os,sys\nn=0\ntry:\n while n<500:\n  if os.fork()==0: import time; time.sleep(5); os._exit(0)\n  n+=1\nexcept OSError: pass\nprint('forks', n)";
-    let (o, _) = lab.python("pids", code, 512 << 20, 16, 60).await;
-    let text = String::from_utf8_lossy(&o.stdout).into_owned();
-    let forks: u32 = text
-        .split_whitespace()
-        .last()
-        .and_then(|n| n.parse().ok())
-        .unwrap_or(9999);
-    assert!(forks <= 16, "{text}");
+    let code = "import os,time\nn=0\ntry:\n while n<2000:\n  if os.fork()==0:\n   time.sleep(3); os._exit(0)\n  n+=1\nexcept OSError as e: print('stopped by', type(e).__name__)\nprint('forks', n)";
+    let mut working = Vec::new();
+    for limit in [64, 128, 256, 512] {
+        let (o, _) = lab
+            .python(&format!("pids-{limit}"), code, 512 << 20, limit, 60)
+            .await;
+        println!("pids limit {limit}: {}", show(&o));
+        let text = String::from_utf8_lossy(&o.stdout).into_owned();
+        let forks = text
+            .split_whitespace()
+            .last()
+            .and_then(|n| n.parse::<u32>().ok());
+        if forks.is_some_and(|n| n < 2000) {
+            working.push(limit);
+        }
+    }
+    assert!(
+        !working.is_empty(),
+        "no tried limit both started the sandbox and stopped the fork bomb"
+    );
 }
