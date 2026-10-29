@@ -1,11 +1,18 @@
 [package]
 name = "loamz-runner"
+description = "Loamz Data sandbox runner: builds the sandbox's OCI config with its limits, checks them, runs with a hard kill."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["process", "io-util", "time", "rt", "macros"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [lints]
 workspace = true
