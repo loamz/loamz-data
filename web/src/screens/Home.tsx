@@ -21,9 +21,9 @@ export function Home({ me, reload }: { me: api.Me | undefined; reload: () => voi
                 <Layers className="shrink-0 text-muted" aria-hidden />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-foreground">{w.name}</span>
-                  <span className="block truncate text-xs text-muted">{w.org_alias}</span>
+                  <span className="block truncate text-xs text-muted">{w.org_alias === "Personal" ? "Your own space" : w.org_alias}</span>
                 </span>
-                {w.admin && <Badge tone="accent">admin</Badge>}
+                <Badge tone={w.admin ? "accent" : "neutral"}>{w.admin ? "Admin" : "User"}</Badge>
                 <ChevronRight className="shrink-0 text-muted" aria-hidden />
               </button>
             ))}
