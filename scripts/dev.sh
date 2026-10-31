@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 r2=$HOME/.config/loamz/r2
-export LOAMZ_DATA_LISTEN=127.0.0.1:8020 LOAMZ_DATA_DATABASE_URL="sqlite:$PWD/.dev/data.db?mode=rwc" LOAMZ_DATA_BUCKET=loamz-data LOAMZ_DATA_BUCKET_ENDPOINT="$(cat "$r2/endpoint")" LOAMZ_DATA_BUCKET_KEY_ID_FILE=$r2/key-id LOAMZ_DATA_BUCKET_SECRET_FILE=$r2/secret LOAMZ_DATA_BUCKET_ISSUER_TOKEN_FILE=$r2/api-token
+export LOAMZ_DATA_LISTEN=127.0.0.1:8020 LOAMZ_DATA_DATABASE_URL="sqlite:$PWD/.dev/data.db?mode=rwc" LOAMZ_DATA_BUCKET=loamz-data LOAMZ_DATA_BUCKET_ENDPOINT="$(cat "$r2/endpoint")" LOAMZ_DATA_BUCKET_KEY_ID_FILE=$r2/key-id LOAMZ_DATA_BUCKET_SECRET_FILE=$r2/secret LOAMZ_DATA_BUCKET_ISSUER_TOKEN_FILE=$r2/api-token LOAMZ_DATA_SERVERLESS_TOKEN_FILE=$HOME/.config/loamz/serverless-token
 export LOAMZ_DATA_OIDC_ISSUER=http://127.0.0.1:8082/realms/loamz
 trap 'kill 0' EXIT
 target/release/loamz-data serve &
