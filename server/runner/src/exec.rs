@@ -10,6 +10,8 @@ pub struct Outcome {
     /// `None` if it was killed.
     pub exit_code: Option<i32>,
     pub timed_out: bool,
+    /// Stopped because the caller asked (the person cancelled the run).
+    pub cancelled: bool,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
 }
@@ -17,14 +19,15 @@ pub struct Outcome {
 /// How much of each output stream is kept. A program that prints forever cannot fill the server's memory.
 pub const OUTPUT_LIMIT: u64 = 1 << 20;
 
-/// Runs `cmd`. After `timeout` it is killed (SIGKILL, no chance to ignore it). `cleanup` runs after a kill, for a
-/// runtime that must be told to remove its container (`runsc delete --force`).
+/// Runs `cmd`. It is killed (SIGKILL, no chance to ignore it) after `timeout`, or as soon as `stop` finishes. `cleanup` runs after a
+/// kill, for a runtime that must be told to remove its container (`runsc delete --force`).
 ///
 /// # Errors
 /// The process could not be started.
 pub async fn run(
     mut cmd: Command,
     timeout: Duration,
+    stop: impl std::future::Future<Output = ()>,
     cleanup: Option<Command>,
 ) -> std::io::Result<Outcome> {
     cmd.stdin(Stdio::null())
@@ -56,11 +59,17 @@ pub async fn run(
         let status = child.wait().await?;
         Ok::<_, std::io::Error>((status, a, b))
     };
-    if let Ok(done) = tokio::time::timeout(timeout, work).await {
+    let mut cancelled = false;
+    let finished = tokio::select! {
+        done = tokio::time::timeout(timeout, work) => done.ok(),
+        () = stop => { cancelled = true; None }
+    };
+    if let Some(done) = finished {
         let (status, stdout, stderr) = done?;
         return Ok(Outcome {
             exit_code: status.code(),
             timed_out: false,
+            cancelled: false,
             stdout,
             stderr,
         });
@@ -77,7 +86,8 @@ pub async fn run(
     }
     Ok(Outcome {
         exit_code: None,
-        timed_out: true,
+        timed_out: !cancelled,
+        cancelled,
         stdout: Vec::new(),
         stderr: Vec::new(),
     })
@@ -119,21 +129,34 @@ impl Gvisor {
     }
 }
 
-/// Makes the workspace belong to the sandbox's user, so the code can write its output there and nothing else can.
-/// Needs the right to chown (root). Rootless, the sandbox runs as the caller's own user and nothing is needed.
+/// Makes the workspace somewhere the sandbox's user can write its output, and nothing else can: owned by that user, and closed to
+/// everyone else. `Nobody` needs the agent to be root (to hand the folder over); `MappedRoot` is the agent's own user already.
 ///
 /// # Errors
-/// The folder could not be created, or could not be handed over although the caller is root.
-pub fn prepare_workspace(path: &std::path::Path) -> std::io::Result<()> {
+/// The folder could not be created or prepared.
+pub fn prepare_workspace(path: &std::path::Path, user: crate::spec::User) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(path)?;
-    match std::os::unix::fs::chown(
-        path,
-        Some(crate::spec::SANDBOX_UID),
-        Some(crate::spec::SANDBOX_UID),
-    ) {
-        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
-        other => other,
+    if user == crate::spec::User::Nobody {
+        std::os::unix::fs::chown(path, Some(user.uid()), Some(user.uid()))?;
     }
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+}
+
+/// A folder only the current user can enter.
+///
+/// # Errors
+/// The folder could not be created.
+pub fn private_dir(path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(path)?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+}
+
+/// Whether this process is root (the only way gVisor can hold a run to its memory and process limits).
+#[must_use]
+pub fn is_root() -> bool {
+    std::fs::metadata("/proc/self").is_ok_and(|m| std::os::unix::fs::MetadataExt::uid(&m) == 0)
 }
 
 #[cfg(test)]
@@ -145,7 +168,9 @@ mod tests {
     async fn a_finished_program_returns_its_code_and_output() {
         let mut c = Command::new("sh");
         c.args(["-c", "echo hello; echo oops >&2; exit 3"]);
-        let o = run(c, Duration::from_secs(5), None).await.unwrap();
+        let o = run(c, Duration::from_secs(5), std::future::pending(), None)
+            .await
+            .unwrap();
         assert_eq!((o.exit_code, o.timed_out), (Some(3), false));
         assert_eq!(o.stdout, b"hello\n");
         assert_eq!(o.stderr, b"oops\n");
@@ -157,7 +182,9 @@ mod tests {
         // Ignores the polite signal, and would run for a minute.
         c.args(["-c", "trap '' TERM INT HUP; sleep 60"]);
         let started = std::time::Instant::now();
-        let o = run(c, Duration::from_millis(300), None).await.unwrap();
+        let o = run(c, Duration::from_millis(300), std::future::pending(), None)
+            .await
+            .unwrap();
         assert!(o.timed_out && o.exit_code.is_none());
         assert!(
             started.elapsed() < Duration::from_secs(5),
@@ -174,9 +201,14 @@ mod tests {
         main.arg("60");
         let mut clean = Command::new("touch");
         clean.arg(&marker);
-        run(main, Duration::from_millis(200), Some(clean))
-            .await
-            .unwrap();
+        run(
+            main,
+            Duration::from_millis(200),
+            std::future::pending(),
+            Some(clean),
+        )
+        .await
+        .unwrap();
         assert!(marker.exists());
         let _ = std::fs::remove_file(&marker);
     }
@@ -185,7 +217,9 @@ mod tests {
     async fn a_program_that_prints_forever_is_cut_off_at_the_limit() {
         let mut c = Command::new("yes");
         c.arg("spam");
-        let o = run(c, Duration::from_millis(500), None).await.unwrap();
+        let o = run(c, Duration::from_millis(500), std::future::pending(), None)
+            .await
+            .unwrap();
         assert!(
             o.stdout.len() as u64 <= OUTPUT_LIMIT,
             "kept {} bytes",

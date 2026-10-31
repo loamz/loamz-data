@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""A real query and a real job, end to end: a person's real Keycloak token, a table of a few rows, a compute agent running in gVisor.
+Needs the dev stack (deploy/dev), `cargo build --release -p loamz-data-server -p loamz-runner`, ~/.cache/loamz/{runsc,rootfs}
+(scripts/fetch-runsc.sh, server/runner/rootfs/build.sh). Uses only the standard library, and a throwaway folder.
+
+  scripts/compute-smoke.py            (prints each step and what came back)
+"""
+import json, os, signal, subprocess, sys, tempfile, time, urllib.error, urllib.request
+
+ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+API = "http://127.0.0.1:18040"
+work = tempfile.mkdtemp(prefix="loamz-smoke-")
+procs = []
+
+
+def token(who):
+    return subprocess.check_output([sys.executable, os.path.join(ROOT, "deploy/dev/token.py"), who], text=True).strip()
+
+
+def call(method, path, tok, body=None, raw=None, ok=(200, 201, 202, 204)):
+    data = raw if raw is not None else (json.dumps(body).encode() if body is not None else None)
+    req = urllib.request.Request(API + path, data=data, method=method, headers={"Authorization": "Bearer " + tok, **({"Content-Type": "application/json"} if body is not None else {})})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            raw_out = r.read()
+            return r.status, (json.loads(raw_out) if raw_out and r.headers.get("Content-Type", "").startswith("application/json") else raw_out)
+    except urllib.error.HTTPError as e:
+        out = e.read()
+        if e.code in ok:
+            return e.code, out
+        sys.exit(f"{method} {path} -> {e.code}: {out[:300]!r}")
+
+
+def step(msg):
+    print(f"  {msg}", flush=True)
+
+
+def stop():
+    for p in procs:
+        p.send_signal(signal.SIGTERM)
+    for p in procs:
+        try:
+            p.wait(5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+
+
+try:
+    env = {**os.environ, "LOAMZ_DATA_LISTEN": "127.0.0.1:18040", "LOAMZ_DATA_DATABASE_URL": f"sqlite:{work}/d.db?mode=rwc",
+           "LOAMZ_DATA_STORES_DIR": f"{work}/stores", "LOAMZ_DATA_OIDC_ISSUER": "http://127.0.0.1:8082/realms/loamz"}
+    procs.append(subprocess.Popen([os.path.join(ROOT, "target/release/loamz-data"), "serve"], env=env, stdout=open(f"{work}/server.log", "w"), stderr=subprocess.STDOUT))
+    for _ in range(100):
+        try:
+            urllib.request.urlopen(API + "/readyz", timeout=1)
+            break
+        except Exception:  # noqa: BLE001
+            time.sleep(0.1)
+    ana = token("ana")
+    _, me = call("GET", "/api/v1/me", ana)
+    org = next(o["id"] for o in me["orgs"] if o["alias"] == "acme")
+    call("POST", f"/api/v1/orgs/{org}/account", ana, {}, ok=(201, 409))
+    _, w = call("POST", f"/api/v1/orgs/{org}/workspaces", ana, {"name": "Smoke"}, ok=(201, 409))
+    ws = next(x["id"] for x in call("GET", f"/api/v1/orgs/{org}/workspaces", ana)[1]["items"] if x["name"] == "Smoke")
+    S = f"/api/v1/workspaces/{ws}"
+    mk = lambda kind, parent, name: call("POST", f"{S}/securables", ana, {"kind": kind, "parent_id": parent, "name": name})[1]["id"]
+    cat = mk("catalog", "", "shop"); sch = mk("schema", cat, "main")
+    orders, out = mk("table", sch, "orders"), mk("volume", sch, "results")
+    call("PUT", f"{S}/tables/{orders}/files/orders.csv", ana, raw=b"order,region,amount\n1,north,120\n2,south,80\n3,north,200\n4,east,50\n5,south,300\n")
+    step("a table of 5 rows (a few hundred bytes) is uploaded")
+
+    _, t = call("POST", f"/api/v1/orgs/{org}/compute/targets", ana, {"name": "this-machine", "max_memory_mb": 2048, "max_cpu_millis": 1000})
+    secret = f"{work}/agent.secret"
+    open(secret, "w").write(t["secret"]); os.chmod(secret, 0o600)
+    cache = os.path.expanduser("~/.cache/loamz")
+    aenv = {**os.environ, "LOAMZ_DATA_URL": API, "LOAMZ_AGENT_SECRET_FILE": secret, "LOAMZ_RUNSC": f"{cache}/runsc", "LOAMZ_ROOTFS": f"{cache}/rootfs",
+            "LOAMZ_WORK": f"{work}/agent", "LOAMZ_PLATFORM": os.environ.get("LOAMZ_PLATFORM", "ptrace")}
+    procs.append(subprocess.Popen([os.path.join(ROOT, "target/release/loamz-runner"), "agent"], env=aenv, stdout=open(f"{work}/agent.log", "w"), stderr=subprocess.STDOUT))
+    for _ in range(100):
+        time.sleep(0.2)
+        if call("GET", f"{S}/compute/targets", ana)[1]["items"][0]["online"]:
+            break
+    step("the agent connected out and the compute shows as online")
+
+    t0 = time.time()
+    code, r = call("POST", f"{S}/sql/statements", ana, {"sql": "SELECT region, count(*) AS orders, sum(amount) AS total FROM shop.main.orders GROUP BY region ORDER BY total DESC", "wait_s": 60})
+    step(f"the query came back {code} {r['state']} in {time.time() - t0:.1f} s (a cold sandbox, one process, one query)")
+    if r["state"] != "succeeded":
+        print("   ", json.dumps({k: r[k] for k in ("state", "error", "stderr", "stdout")}))
+        print(open(f"{work}/agent.log").read()[-1500:])
+        sys.exit(1)
+    print("   columns:", [c["name"] for c in r["result"]["columns"]]); [print("   ", row) for row in r["result"]["rows"]]
+
+    code, r2 = call("POST", f"{S}/sql/statements", ana, {"sql": "SELECT * FROM read_csv('/etc/passwd')", "wait_s": 5}, ok=(400,))
+    step(f"a statement that reads a file is refused before it reaches compute ({code}): {json.loads(r2)['detail'][:70]}")
+    _, r3 = call("POST", f"{S}/sql/statements", ana, {"sql": "SELECT nope FROM shop.main.orders", "wait_s": 60})
+    step(f"a mistake in the SQL is an answer, not a crash: {r3['state']}: {r3['error'][:80]}")
+
+    job = "import csv, json\nrows=list(csv.DictReader(open('/inputs/orders/orders.csv')))\nopen('/workspace/summary.json','w').write(json.dumps({'rows':len(rows),'total':sum(int(r['amount']) for r in rows)}))\nprint('rows', len(rows))\ntry:\n    import socket; socket.create_connection(('1.1.1.1',53),timeout=2); print('NETWORK')\nexcept OSError: print('no network')\n"
+    _, j = call("POST", f"{S}/runs", ana, {"script": job, "inputs": [orders], "output": out, "timeout_s": 90})
+    for _ in range(300):
+        time.sleep(0.5)
+        run = call("GET", f"{S}/runs/{j['id']}", ana)[1]
+        if run["state"] not in ("queued", "running"):
+            break
+    step(f"the job ended {run['state']}; it printed {run['stdout'].split()}")
+    files = call("GET", f"{S}/volumes/{out}/files", ana)[1]["items"]
+    summary = call("GET", f"{S}/volumes/{out}/files/{files[0]['path']}", ana)[1]
+    step(f"and its file reached the results volume through the API: {files[0]['path'].split('/')[-1]} = {summary.decode()}")
+    print("smoke ok")
+finally:
+    stop()
+    log = open(f"{work}/agent.log").read() if os.path.exists(f"{work}/agent.log") else ""
+    if "--keep" not in sys.argv and "ok" in log + "ok":
+        pass
