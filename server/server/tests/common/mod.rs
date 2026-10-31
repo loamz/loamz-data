@@ -28,8 +28,8 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 pub const ISSUER: &str = "http://keycloak.test/realms/loamz";
-pub const ACME: &str = "6f1c1a52-0000-4000-8000-00000000acme";
-pub const RIVAL: &str = "6f1c1a52-0000-4000-8000-0000000rival";
+pub const ACME: &str = "acme";
+pub const RIVAL: &str = "rival";
 
 struct Keys {
     pem: String,
