@@ -70,6 +70,7 @@ mod tests {
                 .collect(),
             roles: vec![],
             actor: None,
+            scope: None,
         }
     }
 

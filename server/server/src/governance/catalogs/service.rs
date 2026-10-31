@@ -394,3 +394,29 @@ pub async fn remove_row(uow: &mut Uow<'_>, org: &str, id: &str) -> Result<()> {
 pub async fn exists(app: &App, org: &str, id: &str) -> Result<bool> {
     Ok(store::get(app.db.pool(), org, id).await?.is_some())
 }
+
+/// Finds an entry by its names, `catalog`, then `schema`, then `table` or `volume`, as seen from a workspace. An entry that is not there,
+/// is being dropped, or sits in a catalog bound to other workspaces is "not found".
+///
+/// # Errors
+/// `NotFound`.
+pub async fn resolve(
+    app: &App,
+    workspace: &str,
+    org: &str,
+    path: &[String],
+) -> Result<(Securable, Target)> {
+    let gone = || Error::NotFound("not found".into());
+    let mut parent = String::new();
+    for name in path {
+        let next = store::child_by_name(app.db.pool(), org, &parent, name)
+            .await?
+            .filter(|s| s.state == "active")
+            .ok_or_else(gone)?;
+        parent = next.id;
+    }
+    if parent.is_empty() {
+        return Err(gone());
+    }
+    target_in(app, workspace, org, &parent).await
+}

@@ -692,12 +692,373 @@ paths:
           $ref: '#/components/responses/Problem'
         '503':
           $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/tables/{id}/files:
+    get:
+      parameters:
+      - description: A workspace id.
+        in: path
+        name: ws
+        required: true
+        schema:
+          type: string
+      - description: A securable id, or `metastore` where grants are concerned.
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+      summary: List the files of a table. Needs READ VOLUME.
+  /api/v1/workspaces/{ws}/tables/{id}/files/{path}:
+    delete:
+      parameters:
+      - &id005
+        description: A workspace id.
+        in: path
+        name: ws
+        required: true
+        schema:
+          type: string
+      - &id006
+        description: A securable id, or `metastore` where grants are concerned.
+        in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - allowReserved: true
+        in: path
+        name: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+      summary: Delete one file. Needs WRITE VOLUME.
+    get:
+      parameters:
+      - *id005
+      - *id006
+      - allowReserved: true
+        in: path
+        name: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+      summary: Download a file, always as an attachment. Needs READ VOLUME.
+    put:
+      parameters:
+      - *id005
+      - *id006
+      - allowReserved: true
+        in: path
+        name: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '201':
+          description: Stored
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '413':
+          $ref: '#/components/responses/Problem'
+      summary: Upload a file (the request body is its bytes). Needs WRITE VOLUME.
+  /api/v1/workspaces/{ws}/compute/targets:
+    get:
+      summary: The compute attached to the workspace's organization, and whether each is answering.
+      parameters:
+      - &id007
+        name: ws
+        in: path
+        required: true
+        schema:
+          type: string
+        description: A workspace id.
+      responses:
+        '200':
+          description: The targets
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/sql/statements:
+    post:
+      summary: Run a SQL statement and wait a while for its rows.
+      description: 'Needs the `sql-access` entitlement and `SELECT` on every table it reads. The statement is parsed first: only one plain query
+        is accepted, and every table must be named `catalog.schema.table`. It comes back finished (200) or still running (202), with the run''s
+        id to ask about.'
+      parameters:
+      - *id007
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Statement'
+      responses:
+        '200':
+          description: The finished run, with its rows
+        '202':
+          description: Still running
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/runs:
+    post:
+      summary: 'Run a job: a Python script with read-only inputs and one output volume.'
+      description: Needs the `compute-create` entitlement, `SELECT` or `READ VOLUME` on each input and `WRITE VOLUME` on the output.
+      parameters:
+      - *id007
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Job'
+      responses:
+        '202':
+          description: Queued
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+    get:
+      summary: 'The workspace''s runs, newest first: your own, or everyone''s for a workspace admin.'
+      parameters:
+      - *id007
+      - name: kind
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: The runs, without their rows or output
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/runs/{id}:
+    get:
+      summary: One run, with its rows, output and what it was asked to do.
+      parameters:
+      - *id007
+      - &id008
+        name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The run
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/runs/{id}/cancel:
+    post:
+      summary: 'Stop a run: at once if it has not started, otherwise when its compute next checks in.'
+      parameters:
+      - *id007
+      - *id008
+      responses:
+        '202':
+          description: Stopping
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /api/v1/orgs/{org}/compute/targets:
+    get:
+      summary: The attached compute. Account admins.
+      parameters:
+      - &id009
+        name: org
+        in: path
+        required: true
+        schema:
+          type: string
+        description: An organization id.
+      responses:
+        '200':
+          description: The targets
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+    post:
+      summary: Attach compute. Account admins.
+      description: The answer carries the agent's secret, once. Only a hash of it is kept.
+      parameters:
+      - *id009
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Target'
+      responses:
+        '201':
+          description: Attached, with its secret
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /api/v1/orgs/{org}/compute/targets/{id}:
+    delete:
+      summary: Remove compute. What was waiting or running on it fails. Account admins.
+      parameters:
+      - *id009
+      - *id008
+      responses:
+        '204':
+          description: Removed
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/orgs/{org}/compute/targets/{id}/secret:
+    post:
+      summary: Give the compute a new secret; the agent using the old one is turned away. Account admins.
+      parameters:
+      - *id009
+      - *id008
+      responses:
+        '200':
+          description: The new secret, once
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/agent/lease:
+    post:
+      summary: An agent asks for its next piece of work.
+      description: 'Waits up to 20 seconds (or `wait_s`, at most 25) for work. The answer carries a run and the token that run''s files are read
+        and written with: the person it runs for, narrowed to the tables and volumes it declared, for this workspace only, and dead when the run
+        ends.'
+      security: &id010
+      - agent: []
+      parameters:
+      - name: wait_s
+        in: query
+        required: false
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: A run and its token
+        '204':
+          description: Nothing is waiting
+        '401':
+          $ref: '#/components/responses/Problem'
+  /api/v1/agent/runs/{id}/heartbeat:
+    post:
+      summary: An agent says it is still working on a run, and hears whether it was cancelled.
+      security: *id010
+      parameters:
+      - *id008
+      responses:
+        '200':
+          description: '`cancel` says whether to stop'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/agent/runs/{id}/complete:
+    post:
+      summary: An agent says how a run ended, with its rows or output.
+      security: *id010
+      parameters:
+      - *id008
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Report'
+      responses:
+        '204':
+          description: Recorded
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
 components:
   securitySchemes:
     bearer:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    agent:
+      type: http
+      scheme: bearer
+      description: "A compute agent's own secret (agt_\u2026), shown once when the compute is attached."
   responses:
     Problem:
       description: An RFC 9457 problem document.
@@ -836,4 +1197,80 @@ components:
         code_verifier:
           type: string
         refresh_token:
+          type: string
+    Statement:
+      type: object
+      required:
+      - sql
+      properties:
+        sql:
+          type: string
+        limit:
+          type: integer
+          description: Rows to return, at most 10000 (default 1000).
+        target:
+          type: string
+        wait_s:
+          type: integer
+          description: Seconds to wait for the answer, at most 60 (default 30).
+    Job:
+      type: object
+      required:
+      - script
+      - output
+      properties:
+        title:
+          type: string
+        script:
+          type: string
+        inputs:
+          type: array
+          items:
+            type: string
+          description: Table or volume ids, mounted read-only under /inputs/<name>.
+        output:
+          type: string
+          description: 'A volume id: what the script leaves in /workspace is saved there under runs/<run id>/.'
+        target:
+          type: string
+        memory_mb:
+          type: integer
+        cpu_millis:
+          type: integer
+        timeout_s:
+          type: integer
+    Target:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        max_memory_mb:
+          type: integer
+          description: Default 2048.
+        max_cpu_millis:
+          type: integer
+          description: Default 1000.
+    Report:
+      type: object
+      required:
+      - state
+      properties:
+        state:
+          enum:
+          - succeeded
+          - failed
+          - cancelled
+          - timed_out
+        exit_code:
+          type: integer
+        stdout:
+          type: string
+        stderr:
+          type: string
+        result:
+          type: string
+          description: A statement's rows, as JSON text.
+        error:
           type: string

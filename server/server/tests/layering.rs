@@ -75,7 +75,9 @@ fn only_a_features_own_service_reads_its_store() {
         }
         if path.contains("/kernel/") && !path.ends_with("/system.rs") {
             assert!(
-                !body.contains("governance::") && !body.contains("storage::"),
+                !body.contains("governance::")
+                    && !body.contains("storage::")
+                    && !body.contains("compute::"),
                 "{path}: the kernel knows no feature"
             );
         }
@@ -84,7 +86,7 @@ fn only_a_features_own_service_reads_its_store() {
 
 #[test]
 fn services_form_one_line_with_no_loop() {
-    // audit < orgs < workspaces < iam < catalogs < volumes < lifecycle: a service may use only those before it.
+    // audit < orgs < workspaces < iam < catalogs < volumes < compute < lifecycle: a service may use only those before it.
     let order = [
         "audit",
         "orgs",
@@ -92,6 +94,7 @@ fn services_form_one_line_with_no_loop() {
         "iam",
         "catalogs",
         "volumes",
+        "compute",
         "lifecycle",
     ];
     let mut checked = 0;

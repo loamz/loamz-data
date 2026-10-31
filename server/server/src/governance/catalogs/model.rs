@@ -33,6 +33,12 @@ impl Kind {
         })
     }
 
+    /// Whether it holds files of its own: a volume (any files) or a table (CSV or Parquet files that a query reads as rows).
+    #[must_use]
+    pub fn holds_files(self) -> bool {
+        matches!(self, Self::Volume | Self::Table)
+    }
+
     /// What this must sit inside. A catalog sits at the tenant's root, which is no entry at all.
     #[must_use]
     pub fn parent(self) -> Option<Kind> {

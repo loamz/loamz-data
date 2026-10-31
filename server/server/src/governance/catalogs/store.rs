@@ -143,3 +143,20 @@ pub async fn delete<'e, E: Executor<'e, Database = Any>>(e: E, org: &str, id: &s
         .await?;
     Ok(())
 }
+
+pub async fn child_by_name<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    org: &str,
+    parent: &str,
+    name: &str,
+) -> Result<Option<Securable>> {
+    let r = sqlx::query(&format!(
+        "SELECT {COLUMNS} FROM securables WHERE org_id = $1 AND parent_id = $2 AND name = $3"
+    ))
+    .bind(org)
+    .bind(parent)
+    .bind(name)
+    .fetch_optional(e)
+    .await?;
+    r.as_ref().map(row).transpose()
+}
