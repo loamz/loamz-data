@@ -2,7 +2,7 @@
 
 use sha2::{Digest, Sha256};
 
-use crate::kernel::auth::Caller;
+use crate::kernel::auth::Identity;
 
 /// Who did it, and for whom. An agent acting for a person has both recorded.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -13,14 +13,14 @@ pub struct Who {
 
 impl Who {
     #[must_use]
-    pub fn of(caller: &Caller) -> Self {
-        match &caller.actor {
+    pub fn of(identity: &Identity) -> Self {
+        match &identity.actor {
             Some(agent) => Self {
                 actor: agent.clone(),
-                on_behalf_of: caller.subject.clone(),
+                on_behalf_of: identity.subject.clone(),
             },
             None => Self {
-                actor: caller.subject.clone(),
+                actor: identity.subject.clone(),
                 on_behalf_of: String::new(),
             },
         }
@@ -38,9 +38,9 @@ impl Who {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
+    pub org: String,
     pub seq: i64,
     pub at_ms: i64,
-    pub tenant: String,
     pub actor: String,
     pub on_behalf_of: String,
     pub action: String,
@@ -59,9 +59,9 @@ pub fn hash(e: &Entry) -> String {
     let mut h = Sha256::new();
     for part in [
         &e.prev_hash,
+        &e.org,
         &e.seq.to_string(),
         &e.at_ms.to_string(),
-        &e.tenant,
         &e.actor,
         &e.on_behalf_of,
         &e.action,
@@ -100,9 +100,9 @@ mod tests {
         let mut out: Vec<Entry> = Vec::new();
         for seq in 1..=n {
             let mut e = Entry {
+                org: "o".into(),
                 seq,
                 at_ms: seq * 10,
-                tenant: "t".into(),
                 actor: "ana".into(),
                 on_behalf_of: String::new(),
                 action: "create".into(),
@@ -149,6 +149,14 @@ mod tests {
         a.on_behalf_of = "c".into();
         b.actor = "a".into();
         b.on_behalf_of = "bc".into();
+        assert_ne!(hash(&a), hash(&b));
+    }
+
+    #[test]
+    fn the_same_entry_in_another_organization_hashes_differently() {
+        let a = chain(1).remove(0);
+        let mut b = a.clone();
+        b.org = "p".into();
         assert_ne!(hash(&a), hash(&b));
     }
 }

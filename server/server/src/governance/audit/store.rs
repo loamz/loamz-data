@@ -1,14 +1,13 @@
-use loamz_lake::sql::Db;
-use sqlx::Row;
+use sqlx::{Any, Executor, Row};
 
 use super::model::Entry;
 use crate::kernel::error::Result;
 
 fn entry(r: &sqlx::any::AnyRow) -> std::result::Result<Entry, sqlx::Error> {
     Ok(Entry {
+        org: r.try_get("org_id")?,
         seq: r.try_get("seq")?,
         at_ms: r.try_get("at_ms")?,
-        tenant: r.try_get("tenant")?,
         actor: r.try_get("actor")?,
         on_behalf_of: r.try_get("on_behalf_of")?,
         action: r.try_get("action")?,
@@ -20,44 +19,51 @@ fn entry(r: &sqlx::any::AnyRow) -> std::result::Result<Entry, sqlx::Error> {
 }
 
 const COLUMNS: &str =
-    "seq, at_ms, tenant, actor, on_behalf_of, action, target, outcome, prev_hash, hash";
+    "org_id, seq, at_ms, actor, on_behalf_of, action, target, outcome, prev_hash, hash";
 
-pub async fn last(db: &Db) -> Result<Option<Entry>> {
+pub async fn last<'e, E: Executor<'e, Database = Any>>(e: E, org: &str) -> Result<Option<Entry>> {
     let row = sqlx::query(&format!(
-        "SELECT {COLUMNS} FROM audit ORDER BY seq DESC LIMIT 1"
+        "SELECT {COLUMNS} FROM audit WHERE org_id = $1 ORDER BY seq DESC LIMIT 1"
     ))
-    .fetch_optional(db.pool())
+    .bind(org)
+    .fetch_optional(e)
     .await?;
     Ok(row.as_ref().map(entry).transpose()?)
 }
 
-pub async fn insert(db: &Db, e: &Entry) -> Result<()> {
+pub async fn insert<'e, E: Executor<'e, Database = Any>>(e: E, x: &Entry) -> Result<()> {
     sqlx::query(&format!(
         "INSERT INTO audit ({COLUMNS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
     ))
-    .bind(e.seq)
-    .bind(e.at_ms)
-    .bind(&e.tenant)
-    .bind(&e.actor)
-    .bind(&e.on_behalf_of)
-    .bind(&e.action)
-    .bind(&e.target)
-    .bind(&e.outcome)
-    .bind(&e.prev_hash)
-    .bind(&e.hash)
-    .execute(db.pool())
+    .bind(&x.org)
+    .bind(x.seq)
+    .bind(x.at_ms)
+    .bind(&x.actor)
+    .bind(&x.on_behalf_of)
+    .bind(&x.action)
+    .bind(&x.target)
+    .bind(&x.outcome)
+    .bind(&x.prev_hash)
+    .bind(&x.hash)
+    .execute(e)
     .await?;
     Ok(())
 }
 
-/// Entries from `after` (exclusive), oldest first.
-pub async fn since(db: &Db, after: i64, limit: i64) -> Result<Vec<Entry>> {
+/// Entries of one organization after `after` (exclusive), oldest first.
+pub async fn since<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    org: &str,
+    after: i64,
+    limit: i64,
+) -> Result<Vec<Entry>> {
     let rows = sqlx::query(&format!(
-        "SELECT {COLUMNS} FROM audit WHERE seq > $1 ORDER BY seq LIMIT $2"
+        "SELECT {COLUMNS} FROM audit WHERE org_id = $1 AND seq > $2 ORDER BY seq LIMIT $3"
     ))
+    .bind(org)
     .bind(after)
     .bind(limit)
-    .fetch_all(db.pool())
+    .fetch_all(e)
     .await?;
     Ok(rows
         .iter()
@@ -65,14 +71,18 @@ pub async fn since(db: &Db, after: i64, limit: i64) -> Result<Vec<Entry>> {
         .collect::<std::result::Result<_, _>>()?)
 }
 
-/// The newest entries of one tenant, newest first.
-pub async fn recent(db: &Db, tenant: &str, limit: i64) -> Result<Vec<Entry>> {
+/// The newest entries of one organization, newest first.
+pub async fn recent<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    org: &str,
+    limit: i64,
+) -> Result<Vec<Entry>> {
     let rows = sqlx::query(&format!(
-        "SELECT {COLUMNS} FROM audit WHERE tenant = $1 ORDER BY seq DESC LIMIT $2"
+        "SELECT {COLUMNS} FROM audit WHERE org_id = $1 ORDER BY seq DESC LIMIT $2"
     ))
-    .bind(tenant)
+    .bind(org)
     .bind(limit)
-    .fetch_all(db.pool())
+    .fetch_all(e)
     .await?;
     Ok(rows
         .iter()

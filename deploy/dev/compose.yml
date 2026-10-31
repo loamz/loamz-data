@@ -6,6 +6,8 @@ name: loamz-data-dev
 services:
   postgres:
     image: postgres:17-alpine
+    # Each database test makes its own database and pool; the default 100 connections runs out when they run together.
+    command: ["postgres", "-c", "max_connections=400"]
     environment:
       POSTGRES_USER: data
       POSTGRES_PASSWORD: data-dev-only

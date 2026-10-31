@@ -79,6 +79,12 @@ impl Db {
         self.dialect
     }
 
+    /// Starts a transaction. With `SQLite` the pool has one connection, so while a transaction is open everything must go
+    /// through it.
+    pub async fn begin(&self) -> Result<sqlx::Transaction<'static, sqlx::Any>, DbError> {
+        Ok(self.pool.begin().await?)
+    }
+
     pub async fn migrate(&self, migrator: &Migrator) -> Result<(), DbError> {
         migrator.run(&self.pool).await?;
         Ok(())

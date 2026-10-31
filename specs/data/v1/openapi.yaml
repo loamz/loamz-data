@@ -2,200 +2,799 @@ openapi: 3.1.0
 info:
   title: Loamz Data
   version: 1.0.0
-  description: >
-    The governed data API. Every call is authenticated with a Keycloak bearer token and checked by IAM; every refusal
-    and every change is recorded in the audit trail. Errors are RFC 9457 problem documents. A caller who may not see a
-    thing is told it does not exist (404), never that it is forbidden.
+  description: The governed data API. Every call carries a Keycloak bearer token for the audience `loamz-data`, and is checked by IAM; every refusal
+    and change is recorded in the organization's audit chain. Errors are RFC 9457 problem documents. A caller who may not see a thing is told
+    it does not exist (404), never that it is forbidden.
 servers:
-  - url: /
+- url: /
 security:
-  - bearer: []
+- bearer: []
 paths:
   /healthz:
     get:
       summary: The process is up.
-      security: []
+      parameters: []
       responses:
-        "200": { description: ok }
+        '200':
+          description: OK
+      security: []
   /readyz:
     get:
       summary: The database answers.
-      security: []
+      parameters: []
       responses:
-        "200": { description: ready }
-        "500": { $ref: "#/components/responses/Problem" }
+        '200':
+          description: OK
+        '500':
+          $ref: '#/components/responses/Problem'
+      security: []
   /api/v1/me:
     get:
-      summary: Who the token says the caller is.
+      summary: Who the token says the caller is, their organizations (including their own space) and the workspaces they can open.
+      parameters: []
       responses:
-        "200": { description: The caller }
-        "401": { $ref: "#/components/responses/Problem" }
-  /api/v1/securables:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+      description: A person's own space and a workspace in it are made on first use.
+  /api/v1/orgs/{org}/account:
     post:
-      summary: Create a catalog, schema, table, volume or view.
-      description: Needs `create` on the parent (or on the tenant for a catalog). The creator becomes its owner.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/CreateSecurable" }
-      responses:
-        "201": { description: Created }
-        "400": { $ref: "#/components/responses/Problem" }
-        "404": { $ref: "#/components/responses/Problem" }
-        "403": { $ref: "#/components/responses/Problem" }
-        "409": { $ref: "#/components/responses/Problem" }
-    get:
-      summary: List what is directly inside a parent (the tenant when `parent_id` is empty) that the caller may see.
+      summary: Create the Data account of an organization the caller belongs to. Needs the Keycloak role `account-admin`; the creator becomes
+        its first admin.
       parameters:
-        - { name: parent_id, in: query, required: false, schema: { type: string } }
+      - &id001
+        name: org
+        in: path
+        required: true
+        schema:
+          type: string
+        description: 'An organization id: the Keycloak organization id, or personal:<subject> for your own space.'
       responses:
-        "200": { description: The entries }
-  /api/v1/securables/{id}:
-    parameters:
-      - { name: id, in: path, required: true, schema: { type: string } }
+        '201':
+          description: Created
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /api/v1/orgs/{org}/admins:
     get:
-      summary: One entry. Needs `use`.
+      summary: Who manages the account (account admins).
+      parameters:
+      - *id001
       responses:
-        "200": { description: The entry }
-        "404": { $ref: "#/components/responses/Problem" }
-    delete:
-      summary: Drop an entry and everything inside it. Needs `manage`.
-      description: The entry disappears at once. The bytes are removed by a durable task, and the answer carries its id.
-      responses:
-        "202": { description: A drop task was queued }
-        "403": { $ref: "#/components/responses/Problem" }
-        "404": { $ref: "#/components/responses/Problem" }
-  /api/v1/securables/{id}/grants:
-    parameters:
-      - { name: id, in: path, required: true, schema: { type: string }, description: An entry id, or `root` for the tenant. }
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
     put:
-      summary: Give a principal a role (reader, contributor, owner) here. Needs `manage`.
+      summary: Make a principal an account admin.
+      parameters:
+      - *id001
+      responses:
+        '204':
+          description: Added
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/Assign" }
-      responses:
-        "204": { description: Granted }
-        "400": { $ref: "#/components/responses/Problem" }
-        "403": { $ref: "#/components/responses/Problem" }
-        "404": { $ref: "#/components/responses/Problem" }
-    get:
-      summary: Who holds what directly here. Needs `manage`.
-      responses:
-        "200": { description: The grants }
-        "403": { $ref: "#/components/responses/Problem" }
-        "404": { $ref: "#/components/responses/Problem" }
-  /api/v1/securables/{id}/grants/{principal}:
-    parameters:
-      - { name: id, in: path, required: true, schema: { type: string } }
-      - { name: principal, in: path, required: true, schema: { type: string } }
+            schema:
+              $ref: '#/components/schemas/Principal'
+  /api/v1/orgs/{org}/admins/{principal}:
     delete:
-      summary: Take away everything a principal holds directly here. Needs `manage`.
+      summary: Take away admin rights. An account always keeps one admin.
+      parameters:
+      - *id001
+      - &id003
+        name: principal
+        in: path
+        required: true
+        schema:
+          type: string
+        description: user:<id>, group:<path> or sp:<id>, percent-encoded.
       responses:
-        "204": { description: Revoked }
-        "403": { $ref: "#/components/responses/Problem" }
-        "404": { $ref: "#/components/responses/Problem" }
-  /api/v1/volumes/{id}/files:
-    parameters:
-      - { name: id, in: path, required: true, schema: { type: string } }
+        '204':
+          description: Removed
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /api/v1/orgs/{org}/workspaces:
     get:
-      summary: List the files of a volume. Needs `read`.
+      summary: The workspaces of the organization the caller can open.
+      parameters:
+      - *id001
       responses:
-        "200": { description: The files }
-        "404": { $ref: "#/components/responses/Problem" }
-  /api/v1/volumes/{id}/files/{path}:
-    parameters:
-      - { name: id, in: path, required: true, schema: { type: string } }
-      - { name: path, in: path, required: true, schema: { type: string }, allowReserved: true }
-    put:
-      summary: Upload a file (the request body is its bytes). Needs `write`.
-      responses:
-        "201": { description: Stored }
-        "400": { $ref: "#/components/responses/Problem" }
-        "403": { $ref: "#/components/responses/Problem" }
-        "404": { $ref: "#/components/responses/Problem" }
-        "413": { $ref: "#/components/responses/Problem" }
-    get:
-      summary: Download a file, always as an attachment. Needs `read`.
-      responses:
-        "200": { description: The bytes }
-        "404": { $ref: "#/components/responses/Problem" }
-    delete:
-      summary: Delete one file. Needs `write`.
-      responses:
-        "204": { description: Deleted }
-        "403": { $ref: "#/components/responses/Problem" }
-        "404": { $ref: "#/components/responses/Problem" }
-  /api/v1/erase:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
     post:
-      summary: Erase a person's data in this tenant. Needs `manage` on the tenant.
-      description: Queues a durable task that removes everything the person owns, their files and their grants, and checks it is gone. The audit trail is kept.
+      summary: Create a workspace. Account admins only; the creator becomes its admin.
+      parameters:
+      - *id001
+      responses:
+        '201':
+          description: Created
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/Erase" }
-      responses:
-        "202": { description: An erase task was queued }
-        "403": { $ref: "#/components/responses/Problem" }
-  /api/v1/tasks/{id}:
-    parameters:
-      - { name: id, in: path, required: true, schema: { type: string } }
+            schema:
+              $ref: '#/components/schemas/Name'
+  /api/v1/workspaces/{ws}:
     get:
-      summary: The state of a drop or erase task. Needs `manage` on the tenant.
-      responses:
-        "200": { description: The task }
-        "404": { $ref: "#/components/responses/Problem" }
-  /api/v1/audit:
-    get:
-      summary: The tenant's recent audit entries, newest first. Needs `manage` on the tenant.
+      summary: One workspace, and the caller's standing in it.
       parameters:
-        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 500 } }
+      - &id002
+        name: ws
+        in: path
+        required: true
+        schema:
+          type: string
+        description: A workspace id.
       responses:
-        "200": { description: The entries }
-  /api/v1/audit/verify:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+    put:
+      summary: Rename a workspace (account admins).
+      parameters:
+      - *id002
+      responses:
+        '200':
+          description: OK
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Name'
+    delete:
+      summary: Delete a workspace and its assignments. Catalogs are not touched.
+      parameters:
+      - *id002
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/members:
     get:
-      summary: Walk the whole hash chain. Needs `manage` on the tenant.
+      summary: Who is assigned to the workspace, and as what. Workspace admins.
+      parameters:
+      - *id002
       responses:
-        "200": { description: "`intact`, the entry count, and the first broken entry if any" }
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+    put:
+      summary: Assign a person, group or service principal as `admin` or `user`, or change their role.
+      parameters:
+      - *id002
+      responses:
+        '204':
+          description: Assigned
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Assign'
+  /api/v1/workspaces/{ws}/members/{principal}:
+    delete:
+      summary: Take a principal out of the workspace. A workspace keeps one admin.
+      parameters:
+      - *id002
+      - *id003
+      responses:
+        '204':
+          description: Removed
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/entitlements:
+    get:
+      summary: What assigned principals are entitled to.
+      parameters:
+      - *id002
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+    put:
+      summary: Give an entitlement (`sql-access`, `compute-create`, `sandbox-access`) to an assigned principal.
+      parameters:
+      - *id002
+      responses:
+        '204':
+          description: Given
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Entitle'
+  /api/v1/workspaces/{ws}/entitlements/{principal}/{entitlement}:
+    delete:
+      summary: Take an entitlement away.
+      parameters:
+      - *id002
+      - *id003
+      - name: entitlement
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Removed
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/catalogs:
+    get:
+      summary: The catalogs bound to this workspace (none bound anywhere means a catalog is visible in every workspace).
+      parameters:
+      - *id002
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/catalogs/{catalog}:
+    put:
+      summary: Bind a catalog to this workspace. Account admins.
+      parameters:
+      - *id002
+      - name: catalog
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Bound
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+    delete:
+      summary: Remove a binding.
+      parameters:
+      - *id002
+      - name: catalog
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Unbound
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/securables:
+    post:
+      summary: Create a catalog, schema, table, volume or view. Needs the matching CREATE privilege on the parent (CREATE CATALOG on the metastore).
+        The creator owns it.
+      parameters:
+      - *id002
+      responses:
+        '201':
+          description: Created
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSecurable'
+    get:
+      summary: List what is directly inside a parent (the metastore when `parent_id` is empty) that the caller may see from this workspace.
+      parameters:
+      - *id002
+      - name: parent_id
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Empty for catalogs.
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/securables/{id}:
+    get:
+      summary: One entry.
+      parameters:
+      - *id002
+      - &id004
+        name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: A securable id, or `metastore` where grants are concerned.
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+    delete:
+      summary: Drop an entry and everything inside it. Needs MANAGE. The entry disappears at once; the bytes are removed by a durable task.
+      parameters:
+      - *id002
+      - *id004
+      responses:
+        '202':
+          description: A drop task was queued
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/securables/{id}/owner:
+    put:
+      summary: Hand an entry to a new owner. Needs MANAGE.
+      parameters:
+      - *id002
+      - *id004
+      responses:
+        '204':
+          description: Done
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Owner'
+  /api/v1/workspaces/{ws}/securables/{id}/grants:
+    get:
+      summary: Who holds what directly here. Needs MANAGE.
+      parameters:
+      - *id002
+      - *id004
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+    put:
+      summary: Give a principal a role (reader, contributor, owner) here. The USE privileges are placed on the catalog and schema above. Needs
+        MANAGE.
+      parameters:
+      - *id002
+      - *id004
+      responses:
+        '204':
+          description: Granted
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantRole'
+  /api/v1/workspaces/{ws}/securables/{id}/grants/{principal}:
+    delete:
+      summary: Take away everything a principal holds directly here. Needs MANAGE.
+      parameters:
+      - *id002
+      - *id004
+      - *id003
+      responses:
+        '204':
+          description: Revoked
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/volumes/{id}/files:
+    get:
+      summary: List the files of a volume. Needs READ VOLUME.
+      parameters:
+      - *id002
+      - *id004
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/volumes/{id}/files/{path}:
+    put:
+      summary: Upload a file (the request body is its bytes). Needs WRITE VOLUME.
+      parameters:
+      - *id002
+      - *id004
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+        allowReserved: true
+      responses:
+        '201':
+          description: Stored
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '413':
+          $ref: '#/components/responses/Problem'
+    get:
+      summary: Download a file, always as an attachment. Needs READ VOLUME.
+      parameters:
+      - *id002
+      - *id004
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+        allowReserved: true
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+    delete:
+      summary: Delete one file. Needs WRITE VOLUME.
+      parameters:
+      - *id002
+      - *id004
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+        allowReserved: true
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/orgs/{org}/erase:
+    post:
+      summary: Erase a principal's data in this organization. Account admins.
+      parameters:
+      - *id001
+      responses:
+        '202':
+          description: An erase task was queued
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+      description: Queues a durable task that removes everything the principal owns, their files, grants, workspace assignments and admin rights,
+        and checks it is gone. The audit trail is kept.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Erase'
+  /api/v1/orgs/{org}/tasks/{id}:
+    get:
+      summary: The state of a drop or erase task. Account admins.
+      parameters:
+      - *id001
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/orgs/{org}/audit:
+    get:
+      summary: The organization's recent audit entries, newest first. Account admins.
+      parameters:
+      - *id001
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/orgs/{org}/audit/verify:
+    get:
+      summary: Walk the organization's whole hash chain. Account admins.
+      parameters:
+      - *id001
+      responses:
+        '200':
+          description: '`intact`, the entry count, and the first broken entry if any'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
 components:
   securitySchemes:
-    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   responses:
     Problem:
       description: An RFC 9457 problem document.
       content:
         application/problem+json:
-          schema: { $ref: "#/components/schemas/Problem" }
+          schema:
+            $ref: '#/components/schemas/Problem'
   schemas:
     Problem:
       type: object
-      required: [type, title, status, detail]
+      required:
+      - type
+      - title
+      - status
+      - detail
       properties:
-        type: { type: string }
-        title: { type: string }
-        status: { type: integer }
-        detail: { type: string }
-    CreateSecurable:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+    Principal:
       type: object
-      required: [kind, name]
+      required:
+      - principal
       properties:
-        kind: { enum: [catalog, schema, table, volume, view] }
-        parent_id: { type: string }
-        name: { type: string, description: "Lower case letters, digits and underscores, starting with a letter." }
-        classification: { enum: [normal, personal, sealed] }
-        placement: { enum: [local] }
-        consistency: { enum: [transaction, snapshot], description: A volume can only promise snapshot. }
+        principal:
+          type: string
+    Name:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
     Assign:
       type: object
-      required: [principal, role]
+      required:
+      - principal
+      - role
       properties:
-        principal: { type: string }
-        role: { enum: [reader, contributor, owner] }
+        principal:
+          type: string
+        role:
+          enum:
+          - admin
+          - user
+    Entitle:
+      type: object
+      required:
+      - principal
+      - entitlement
+      properties:
+        principal:
+          type: string
+        entitlement:
+          enum:
+          - sql-access
+          - compute-create
+          - sandbox-access
+    CreateSecurable:
+      type: object
+      required:
+      - kind
+      - name
+      properties:
+        kind:
+          enum:
+          - catalog
+          - schema
+          - table
+          - volume
+          - view
+        parent_id:
+          type: string
+        name:
+          type: string
+          description: Lower case letters, digits and underscores, starting with a letter.
+        classification:
+          enum:
+          - normal
+          - personal
+          - sealed
+        placement:
+          enum:
+          - local
+        consistency:
+          enum:
+          - transaction
+          - snapshot
+          description: A volume can only promise snapshot.
+    Owner:
+      type: object
+      required:
+      - owner
+      properties:
+        owner:
+          type: string
+    GrantRole:
+      type: object
+      required:
+      - principal
+      - role
+      properties:
+        principal:
+          type: string
+        role:
+          enum:
+          - reader
+          - contributor
+          - owner
     Erase:
       type: object
-      required: [subject]
+      required:
+      - subject
       properties:
-        subject: { type: string }
+        subject:
+          type: string
+          description: A typed principal such as user:<id>.

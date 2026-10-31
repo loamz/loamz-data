@@ -1,18 +1,15 @@
-use axum::{
-    Json,
-    body::Bytes,
-    extract::{Path, State},
-    http::StatusCode,
-};
+use axum::{Json, body::Bytes, extract::State, http::StatusCode};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::service;
-use crate::kernel::{
-    auth::Caller,
-    error::Result,
-    http::{Routes, json as body_json},
-    state::Shared,
+use crate::{
+    governance::context::OrgCtx,
+    kernel::{
+        error::{Error, Result},
+        http::{Routes, json as body_json},
+        state::Shared,
+    },
 };
 
 #[derive(Deserialize)]
@@ -22,20 +19,21 @@ struct Erase {
 
 async fn erase(
     State(app): State<Shared>,
-    caller: Caller,
+    c: OrgCtx,
     body: Bytes,
 ) -> Result<(StatusCode, Json<Value>)> {
     let req: Erase = body_json(&body)?;
-    let task = service::request_erase(&app, &caller, &req.subject).await?;
+    let task = service::request_erase(&app, &c.identity, &c.org, &req.subject).await?;
     Ok((StatusCode::ACCEPTED, Json(json!({"task_id": task.id}))))
 }
 
-async fn task(
-    State(app): State<Shared>,
-    caller: Caller,
-    Path(id): Path<String>,
-) -> Result<Json<Value>> {
-    let t = service::task(&app, &caller, &id).await?;
+async fn task(State(app): State<Shared>, c: OrgCtx) -> Result<Json<Value>> {
+    let id = c
+        .params
+        .get("id")
+        .cloned()
+        .ok_or_else(|| Error::Internal("the route has no id".into()))?;
+    let t = service::task(&app, &c.identity, &c.org, &id).await?;
     Ok(Json(
         json!({"id": t.id, "kind": t.kind, "state": t.state, "attempts": t.attempts, "last_error": t.last_error}),
     ))
@@ -44,6 +42,6 @@ async fn task(
 #[must_use]
 pub fn routes() -> Routes {
     Routes::new()
-        .post("/api/v1/erase", erase)
-        .get("/api/v1/tasks/{id}", task)
+        .post("/api/v1/orgs/{org}/erase", erase)
+        .get("/api/v1/orgs/{org}/tasks/{id}", task)
 }

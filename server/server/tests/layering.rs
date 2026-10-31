@@ -84,8 +84,16 @@ fn only_a_features_own_service_reads_its_store() {
 
 #[test]
 fn services_form_one_line_with_no_loop() {
-    // audit < iam < catalogs < volumes < lifecycle: a service may use only those below it.
-    let order = ["audit", "iam", "catalogs", "volumes", "lifecycle"];
+    // audit < orgs < workspaces < iam < catalogs < volumes < lifecycle: a service may use only those before it.
+    let order = [
+        "audit",
+        "orgs",
+        "workspaces",
+        "iam",
+        "catalogs",
+        "volumes",
+        "lifecycle",
+    ];
     let mut checked = 0;
     for (path, src) in all()
         .into_iter()

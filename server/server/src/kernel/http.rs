@@ -10,12 +10,12 @@ use axum::{
 };
 
 use super::{
-    auth::{AuthError, Caller},
+    auth::{AuthError, Identity},
     error::Error,
     state::Shared,
 };
 
-impl FromRequestParts<Shared> for Caller {
+impl FromRequestParts<Shared> for Identity {
     type Rejection = Error;
 
     async fn from_request_parts(parts: &mut Parts, app: &Shared) -> Result<Self, Error> {

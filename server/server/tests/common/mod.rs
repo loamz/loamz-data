@@ -1,9 +1,9 @@
-//! A whole server in the test process: a real database, a real folder for volumes, real signed tokens, and requests
-//! sent straight to the router (no network).
+//! A whole server in the test process: a real database, a real folder for stores, real signed tokens, and requests sent
+//! straight to the router (no network). The verifier is given the test key in code; there is no other way to give it keys.
 
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
 
-use std::{collections::HashSet, path::PathBuf, sync::OnceLock};
+use std::{path::PathBuf, sync::OnceLock};
 
 use axum::{
     Router,
@@ -17,7 +17,7 @@ use loamz_data_server::{
     MIGRATIONS,
     kernel::{
         new_id,
-        settings::{KeySource, Settings},
+        settings::Settings,
         state::{App, Shared},
     },
     router, shared,
@@ -28,7 +28,8 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 pub const ISSUER: &str = "http://keycloak.test/realms/loamz";
-pub const AUDIENCE: &str = "loamz-data";
+pub const ACME: &str = "6f1c1a52-0000-4000-8000-00000000acme";
+pub const RIVAL: &str = "6f1c1a52-0000-4000-8000-0000000rival";
 
 struct Keys {
     pem: String,
@@ -64,37 +65,77 @@ fn keys() -> &'static Keys {
 }
 
 /// Who a token says it is.
-pub struct Who<'a> {
-    pub sub: &'a str,
-    pub org: Option<&'a str>,
-    pub acting: Option<&'a str>,
+#[derive(Clone)]
+pub struct Who {
+    pub sub: String,
+    pub orgs: Vec<(String, String)>,
+    pub groups: Vec<String>,
+    pub roles: Vec<String>,
+    pub acting: Option<String>,
 }
 
-pub fn person(sub: &str) -> Who<'_> {
+/// A person with no organization.
+pub fn person(sub: &str) -> Who {
     Who {
-        sub,
-        org: None,
+        sub: sub.into(),
+        orgs: vec![],
+        groups: vec![],
+        roles: vec![],
         acting: None,
     }
 }
 
-pub fn member<'a>(sub: &'a str, org: &'a str) -> Who<'a> {
+/// A member of the organization `acme`.
+pub fn member(sub: &str) -> Who {
     Who {
-        sub,
-        org: Some(org),
-        acting: None,
+        orgs: vec![(ACME.into(), "acme".into())],
+        ..person(sub)
     }
 }
 
-fn mint_with(who: &Who, pem: &str, audience: &str) -> String {
+impl Who {
+    pub fn in_group(mut self, g: &str) -> Self {
+        self.groups.push(g.into());
+        self
+    }
+
+    pub fn with_role(mut self, r: &str) -> Self {
+        self.roles.push(r.into());
+        self
+    }
+
+    pub fn also_in(mut self, id: &str, alias: &str) -> Self {
+        self.orgs.push((id.into(), alias.into()));
+        self
+    }
+
+    pub fn acting_as(mut self, agent: &str) -> Self {
+        self.acting = Some(agent.into());
+        self
+    }
+
+    pub fn id(&self) -> String {
+        format!("user:{}", self.sub)
+    }
+}
+
+fn mint_with(who: &Who, pem: &str, audience: &str, issuer: &str) -> String {
     let mut claims = json!({
-        "sub": who.sub, "iss": ISSUER, "aud": audience,
+        "sub": who.sub, "iss": issuer, "aud": audience, "azp": "loamz-data",
         "exp": loamz_data_server::kernel::now_ms() / 1000 + 3600,
+        "name": who.sub, "email": format!("{}@example.test", who.sub),
+        "groups": who.groups,
+        "resource_access": {"loamz-data": {"roles": who.roles}},
     });
-    if let Some(org) = who.org {
-        claims["organization"] = json!({ org: {} });
+    if !who.orgs.is_empty() {
+        claims["organization"] = Value::Object(
+            who.orgs
+                .iter()
+                .map(|(id, alias)| (alias.clone(), json!({"id": id})))
+                .collect(),
+        );
     }
-    if let Some(agent) = who.acting {
+    if let Some(agent) = &who.acting {
         claims["act"] = json!({"sub": agent});
     }
     let mut header = Header::new(Algorithm::RS256);
@@ -108,15 +149,24 @@ fn mint_with(who: &Who, pem: &str, audience: &str) -> String {
 }
 
 pub fn token(who: &Who) -> String {
-    mint_with(who, &keys().pem, AUDIENCE)
+    mint_with(who, &keys().pem, "loamz-data", ISSUER)
 }
 
 pub fn forged(who: &Who) -> String {
-    mint_with(who, &keys().other_pem, AUDIENCE)
+    mint_with(who, &keys().other_pem, "loamz-data", ISSUER)
 }
 
 pub fn wrong_audience(who: &Who) -> String {
-    mint_with(who, &keys().pem, "someone-else")
+    mint_with(who, &keys().pem, "someone-else", ISSUER)
+}
+
+pub fn wrong_issuer(who: &Who) -> String {
+    mint_with(
+        who,
+        &keys().pem,
+        "loamz-data",
+        "http://evil.test/realms/loamz",
+    )
 }
 
 pub struct Reply {
@@ -128,6 +178,10 @@ pub struct Reply {
 impl Reply {
     pub fn json(&self) -> Value {
         serde_json::from_slice(&self.bytes).unwrap_or(Value::Null)
+    }
+
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.bytes).into_owned()
     }
 }
 
@@ -164,23 +218,18 @@ pub async fn server(db: Db) -> Server {
 }
 
 pub async fn server_with(db: Db, max_upload: u64) -> Server {
-    let dir = std::env::temp_dir().join(format!("loamz-data-volumes-{}", new_id()));
-    let jwks = std::env::temp_dir().join(format!("loamz-data-jwks-{}.json", new_id()));
-    std::fs::write(&jwks, &keys().jwks).unwrap();
+    let dir = std::env::temp_dir().join(format!("loamz-data-stores-{}", new_id()));
     let settings = Settings {
         listen: "127.0.0.1:0".parse().unwrap(),
         database_url: String::new(),
-        volumes_dir: dir.clone(),
+        stores_dir: dir.clone(),
         issuer: ISSUER.into(),
-        audience: AUDIENCE.into(),
-        keys: KeySource::File(jwks),
-        // "ana" owns the organization "acme"'s whole catalog space.
-        admins: HashSet::from(["ana".to_owned()]),
         max_upload_bytes: max_upload,
+        web_dir: None,
     };
     db.migrate(&MIGRATIONS).await.unwrap();
     let app = shared(App::new(&settings, db));
-    app.verifier.refresh().await.unwrap();
+    app.verifier.set_keys(&keys().jwks).unwrap();
     let (door, routes) = router(app.clone());
     Server {
         app,
@@ -217,13 +266,7 @@ impl Server {
         }
     }
 
-    pub async fn call(
-        &self,
-        method: &str,
-        path: &str,
-        who: &Who<'_>,
-        body: Option<Value>,
-    ) -> Reply {
+    pub async fn call(&self, method: &str, path: &str, who: &Who, body: Option<Value>) -> Reply {
         self.send(
             method,
             path,
@@ -233,65 +276,108 @@ impl Server {
         .await
     }
 
-    pub async fn get(&self, path: &str, who: &Who<'_>) -> Reply {
+    pub async fn get(&self, path: &str, who: &Who) -> Reply {
         self.call("GET", path, who, None).await
     }
 
-    pub async fn post(&self, path: &str, who: &Who<'_>, body: Value) -> Reply {
+    pub async fn post(&self, path: &str, who: &Who, body: Value) -> Reply {
         self.call("POST", path, who, Some(body)).await
     }
 
-    pub async fn delete(&self, path: &str, who: &Who<'_>) -> Reply {
+    pub async fn put(&self, path: &str, who: &Who, body: Value) -> Reply {
+        self.call("PUT", path, who, Some(body)).await
+    }
+
+    pub async fn delete(&self, path: &str, who: &Who) -> Reply {
         self.call("DELETE", path, who, None).await
     }
 
-    pub async fn upload(&self, volume: &str, path: &str, who: &Who<'_>, bytes: &[u8]) -> Reply {
+    pub async fn upload(
+        &self,
+        ws: &str,
+        volume: &str,
+        path: &str,
+        who: &Who,
+        bytes: &[u8],
+    ) -> Reply {
         self.send(
             "PUT",
-            &format!("/api/v1/volumes/{volume}/files/{path}"),
+            &format!("/api/v1/workspaces/{ws}/volumes/{volume}/files/{path}"),
             Some(&token(who)),
             Body::from(bytes.to_vec()),
         )
         .await
     }
 
-    pub async fn download(&self, volume: &str, path: &str, who: &Who<'_>) -> Reply {
-        self.get(&format!("/api/v1/volumes/{volume}/files/{path}"), who)
-            .await
+    pub async fn download(&self, ws: &str, volume: &str, path: &str, who: &Who) -> Reply {
+        self.get(
+            &format!("/api/v1/workspaces/{ws}/volumes/{volume}/files/{path}"),
+            who,
+        )
+        .await
+    }
+
+    /// Creates the Data account of `acme` (by `ana`, who holds the Keycloak role) and a workspace in it; returns the workspace id.
+    pub async fn acme(&self) -> String {
+        let r = self
+            .post(&format!("/api/v1/orgs/{ACME}/account"), &ana(), json!({}))
+            .await;
+        assert_eq!(r.status, 201, "creating the account: {}", r.text());
+        self.workspace(&ana(), ACME, "Main").await
+    }
+
+    pub async fn workspace(&self, who: &Who, org: &str, name: &str) -> String {
+        let r = self
+            .post(
+                &format!("/api/v1/orgs/{org}/workspaces"),
+                who,
+                json!({"name": name}),
+            )
+            .await;
+        assert_eq!(r.status, 201, "creating workspace {name}: {}", r.text());
+        r.json()["id"].as_str().unwrap().to_owned()
+    }
+
+    /// Assigns people (as principals) to a workspace as users.
+    pub async fn assign(&self, ws: &str, who: &[&Who]) {
+        for w in who {
+            let r = self
+                .put(
+                    &format!("/api/v1/workspaces/{ws}/members"),
+                    &ana(),
+                    json!({"principal": w.id(), "role": "user"}),
+                )
+                .await;
+            assert_eq!(r.status, 204, "assigning {}: {}", w.sub, r.text());
+        }
     }
 
     /// Creates something and returns its id, failing the test if it is refused.
-    pub async fn make(&self, who: &Who<'_>, kind: &str, parent: &str, name: &str) -> String {
+    pub async fn make(&self, ws: &str, who: &Who, kind: &str, parent: &str, name: &str) -> String {
         let r = self
             .post(
-                "/api/v1/securables",
+                &format!("/api/v1/workspaces/{ws}/securables"),
                 who,
                 json!({"kind": kind, "parent_id": parent, "name": name}),
             )
             .await;
-        assert_eq!(
-            r.status,
-            201,
-            "creating {kind} {name}: {}",
-            String::from_utf8_lossy(&r.bytes)
-        );
+        assert_eq!(r.status, 201, "creating {kind} {name}: {}", r.text());
         r.json()["id"].as_str().unwrap().to_owned()
     }
 
-    pub async fn grant(&self, who: &Who<'_>, on: &str, principal: &str, role: &str) {
+    pub async fn grant(&self, ws: &str, who: &Who, on: &str, principal: &str, role: &str) {
         let r = self
-            .call(
-                "PUT",
-                &format!("/api/v1/securables/{on}/grants"),
+            .put(
+                &format!("/api/v1/workspaces/{ws}/securables/{on}/grants"),
                 who,
-                Some(json!({"principal": principal, "role": role})),
+                json!({"principal": principal, "role": role}),
             )
             .await;
         assert_eq!(
             r.status,
             204,
             "granting {role} to {principal}: {}",
-            String::from_utf8_lossy(&r.bytes)
+            r.text()
         );
     }
 
@@ -310,7 +396,7 @@ impl Server {
         n
     }
 
-    pub fn volume_dir(&self, id: &str) -> PathBuf {
+    pub fn store_dir(&self, id: &str) -> PathBuf {
         self.dir.join(id)
     }
 }
@@ -319,4 +405,18 @@ impl Drop for Server {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+/// The organization's account admin: holds the Keycloak role that lets them create the account.
+pub fn ana() -> Who {
+    member("ana").with_role("account-admin")
+}
+pub fn bob() -> Who {
+    member("bob")
+}
+pub fn cy() -> Who {
+    member("cy")
+}
+pub fn zed() -> Who {
+    member("zed")
 }
