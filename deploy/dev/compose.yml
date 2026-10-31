@@ -32,3 +32,5 @@ services:
       - "127.0.0.1:8082:8082"
     volumes:
       - ./realm-loamz-dev.json:/opt/keycloak/data/import/realm-loamz.json:ro
+      # The Loamz sign-in theme, the same folder the live server is given (kept in the deploy repository, next to this one).
+      - ../../../loamz-deploy/roles/keycloak/files/theme/loamz:/opt/keycloak/themes/loamz:ro
