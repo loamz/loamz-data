@@ -5,7 +5,7 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 dest=${1:-$HOME/.cache/loamz/rootfs}
-duckdb=${DUCKDB_VERSION:-1.3.2}
+duckdb=${DUCKDB_VERSION:-2.0.0}
 docker build --quiet -t loamz-sandbox-rootfs --build-arg "DUCKDB_VERSION=$duckdb" "$here" >/dev/null
 id=$(docker create loamz-sandbox-rootfs)
 trap 'docker rm "$id" >/dev/null' EXIT

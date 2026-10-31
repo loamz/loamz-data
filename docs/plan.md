@@ -95,7 +95,10 @@ SeaweedFS and Azure volumes, a Kubernetes runner, a microVM tier, SDKs generated
 ## Not doing yet
 
 External locations and federation, sharing, row filters, column masks and attribute-based rules, materialized views,
-custom roles, multi-region, and writing Delta or Iceberg tables.
+custom roles, multi-region, and Delta tables.
+
+Decided 2026-10-31 (owner): **tables are Iceberg only**, with DuckDB 2.0 as the engine and this server as the Iceberg REST catalog
+(governance on load and commit, short-lived folder-scoped storage credentials vended with each table). Volumes stay plain files.
 
 ## Risks to watch
 

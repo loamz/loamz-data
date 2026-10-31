@@ -27,7 +27,10 @@ sign-in, workspaces and compute existed.)
 14. **Compute belongs to the organization and is usable from every workspace of it.** No per-workspace binding yet (catalog-style bindings would be the same pattern).
 15. **One run at a time per agent**; a run is queued for a target picked when it is submitted (the first online one big enough), and fails if its agent stops answering for 90 seconds or nobody takes it for 10 minutes. Not retried: a job may have side effects.
 16. **A job's token lasts the run plus five minutes**, is deleted when the run ends, and is checked against the person's rights on every file call, so taking a grant away stops a running job at its next file.
-17. **A table is a folder of CSV or Parquet files, one kind per table**, read together as its rows. No schema is stored; DuckDB reads it.
+17. **A table is an Iceberg table** (owner, 2026-10-31; replaces CSV/Parquet folders). This server is its REST catalog; DuckDB 2.0 reads and writes it.
 18. **Without root, gVisor cannot enforce memory and process limits**, and can map only the agent's own user into the sandbox (as an unprivileged root of an empty namespace). The agent warns at start and the check verifies the user that will really run. Verified as root on Oracle (1.02 of 2 CPUs used; 2.5 GB killed at the 2 GB limit).
 19. **The default sandbox platform is `systrap`;** `ptrace` is needed on WSL2.
 20. **Result rows are capped** (10,000 rows, about 3.5 MB); a statement says when it was cut.
+21. **Data bytes live in the R2 bucket `loamz-data`**, one prefix per securable id. The server alone holds the bucket key; a remote machine is given credentials issued for minutes, for one prefix, read-only unless it writes (`loamz-lake::grants`, proven against the real bucket).
+22. **Serverless compute** (a provider endpoint such as Modal) is a compute target of kind `serverless`; the server calls it over https. It takes SQL only, only over data classified `normal`, and is used when asked for or when no machine of the organization answers.
+23. **The server holds two storage secrets**, as mounted files: the bucket's S3 key, and a Cloudflare token that can issue temporary credentials (today it covers all buckets of the account; narrow it if other buckets appear).
