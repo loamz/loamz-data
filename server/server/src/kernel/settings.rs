@@ -16,6 +16,25 @@ pub struct Settings {
     pub max_upload_bytes: u64,
     /// The built web app, served by this server when set.
     pub web_dir: Option<PathBuf>,
+    /// A mounted file holding the token serverless compute endpoints expect.
+    pub serverless_token_file: Option<PathBuf>,
+}
+
+impl Settings {
+    /// # Errors
+    /// The file cannot be read or is empty.
+    pub fn serverless_token(&self) -> Result<Option<String>, String> {
+        let Some(p) = &self.serverless_token_file else {
+            return Ok(None);
+        };
+        let t =
+            std::fs::read_to_string(p).map_err(|e| format!("cannot read {}: {e}", p.display()))?;
+        let t = t.trim().to_string();
+        if t.len() < 32 {
+            return Err("the serverless token must be at least 32 characters".into());
+        }
+        Ok(Some(t))
+    }
 }
 
 /// Where data bytes live: a bucket (Cloudflare R2 or any S3, so remote machines can query it) or a folder.
@@ -106,6 +125,7 @@ impl Settings {
             issuer,
             max_upload_bytes: max_mb.saturating_mul(1024 * 1024),
             web_dir: var("LOAMZ_DATA_WEB_DIR").map(Into::into),
+            serverless_token_file: var("LOAMZ_DATA_SERVERLESS_TOKEN_FILE").map(Into::into),
         })
     }
 }

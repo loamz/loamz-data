@@ -15,11 +15,18 @@ pub const MAX_TIMEOUT_S: i64 = 3_600;
 pub const MAX_OUTPUT: usize = 64 * 1024;
 pub const MAX_RESULT: usize = 4 * 1024 * 1024;
 
+pub const AGENT: &str = "agent";
+pub const SERVERLESS: &str = "serverless";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Target {
     pub id: String,
     pub org_id: String,
     pub name: String,
+    /// `agent` or `serverless`.
+    pub kind: String,
+    /// For a serverless target, the https address of the provider's endpoint.
+    pub endpoint: String,
     pub max_memory_mb: i64,
     pub max_cpu_millis: i64,
     pub created_by: String,
@@ -29,8 +36,14 @@ pub struct Target {
 
 impl Target {
     #[must_use]
+    pub fn serverless(&self) -> bool {
+        self.kind == SERVERLESS
+    }
+
+    /// Serverless compute is started when work arrives, so it is always there to be asked.
+    #[must_use]
     pub fn online(&self, now: i64) -> bool {
-        self.last_seen_ms > 0 && now - self.last_seen_ms < ONLINE_MS
+        self.serverless() || self.last_seen_ms > 0 && now - self.last_seen_ms < ONLINE_MS
     }
 }
 
@@ -200,6 +213,8 @@ mod tests {
             id: "t".into(),
             org_id: "o".into(),
             name: "oracle".into(),
+            kind: AGENT.into(),
+            endpoint: String::new(),
             max_memory_mb: 2048,
             max_cpu_millis: 1000,
             created_by: String::new(),

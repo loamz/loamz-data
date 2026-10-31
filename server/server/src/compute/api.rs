@@ -66,7 +66,7 @@ fn run_view(r: &Run, detail: bool) -> Value {
 }
 
 fn target_view(t: &Target, now: i64) -> Value {
-    json!({"id": t.id, "name": t.name, "online": t.online(now), "max_memory_mb": t.max_memory_mb, "max_cpu_millis": t.max_cpu_millis, "last_seen_ms": t.last_seen_ms, "created_ms": t.created_ms})
+    json!({"id": t.id, "name": t.name, "kind": t.kind, "online": t.online(now), "max_memory_mb": t.max_memory_mb, "max_cpu_millis": t.max_cpu_millis, "last_seen_ms": t.last_seen_ms, "created_ms": t.created_ms})
 }
 
 // ---- people ------------------------------------------------------------------------------------------------------
@@ -177,6 +177,10 @@ async fn account_targets(State(app): State<Shared>, c: OrgCtx) -> Result<Json<Va
 #[derive(Deserialize)]
 struct NewTarget {
     name: String,
+    /// `agent` (default) or `serverless`.
+    kind: Option<String>,
+    /// For serverless: the https address of the provider's endpoint.
+    endpoint: Option<String>,
     max_memory_mb: Option<i64>,
     max_cpu_millis: Option<i64>,
 }
@@ -188,6 +192,19 @@ async fn attach(
     body: Bytes,
 ) -> Result<(StatusCode, Json<Value>)> {
     let req: NewTarget = body_json(&body)?;
+    if req.kind.as_deref() == Some(super::model::SERVERLESS) {
+        let t = service::add_serverless(
+            &app,
+            &c.identity,
+            &c.org,
+            &req.name,
+            req.endpoint.as_deref().unwrap_or_default(),
+            req.max_memory_mb.unwrap_or(2048),
+            req.max_cpu_millis.unwrap_or(1000),
+        )
+        .await?;
+        return Ok((StatusCode::CREATED, Json(target_view(&t, now_ms()))));
+    }
     let e = service::add_target(
         &app,
         &c.identity,

@@ -226,6 +226,7 @@ pub async fn server_with(db: Db, max_upload: u64) -> Server {
         issuer: ISSUER.into(),
         max_upload_bytes: max_upload,
         web_dir: None,
+        serverless_token_file: None,
     };
     db.migrate(&MIGRATIONS).await.unwrap();
     let app = shared(App::new(&settings, db).unwrap());
