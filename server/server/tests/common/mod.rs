@@ -17,7 +17,7 @@ use loamz_data_server::{
     MIGRATIONS,
     kernel::{
         new_id,
-        settings::Settings,
+        settings::{Settings, Storage},
         state::{App, Shared},
     },
     router, shared,
@@ -222,13 +222,13 @@ pub async fn server_with(db: Db, max_upload: u64) -> Server {
     let settings = Settings {
         listen: "127.0.0.1:0".parse().unwrap(),
         database_url: String::new(),
-        stores_dir: dir.clone(),
+        storage: Storage::Folder(dir.clone()),
         issuer: ISSUER.into(),
         max_upload_bytes: max_upload,
         web_dir: None,
     };
     db.migrate(&MIGRATIONS).await.unwrap();
-    let app = shared(App::new(&settings, db));
+    let app = shared(App::new(&settings, db).unwrap());
     app.verifier.set_keys(&keys().jwks).unwrap();
     let (door, routes) = router(app.clone());
     Server {

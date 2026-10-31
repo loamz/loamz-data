@@ -4,7 +4,7 @@ The governed data platform of Loamz, in Rust. Design: `docs/charter.md`. Plan: `
 
 ## Layout
 
-- `server/lake` (`loamz-lake`): storage library. `sql.rs` is one database layer for SQLite and Postgres; `files.rs` is a folder per volume or table on a POSIX path.
+- `server/lake` (`loamz-lake`): storage library. `sql.rs` is one database layer for SQLite and Postgres; `files.rs` is a folder per volume or table on a POSIX path; `objects.rs` is the `Store` the server uses: a bucket (Cloudflare R2/S3, the home of data so remote machines can query it; signed GET/PUT addresses for exactly one file) or a folder. Settings: `LOAMZ_DATA_BUCKET` + `_ENDPOINT` + `_KEY_ID_FILE` + `_SECRET_FILE`, or `LOAMZ_DATA_STORES_DIR`.
 - `server/server` (`loamz-data-server`, binary `loamz-data`): the governed API.
   - `kernel/`: settings, the token check (OIDC only), errors (problem+json), the one `authz::authorize`, app state. Knows no feature.
   - `governance/{audit,orgs,workspaces,iam,catalogs,lifecycle}/` and `compute/`: each has `model.rs` (pure), `service.rs` (use cases), `store.rs` (SQL), `api.rs` (HTTP). `governance/context.rs` works out what a request is about (`OrgCtx`, `WsCtx`, `FileCtx`).

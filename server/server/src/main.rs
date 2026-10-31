@@ -41,7 +41,7 @@ async fn run(command: &str) -> Result<(), String> {
         tracing::info!("database is up to date");
         return Ok(());
     }
-    let app = shared(App::new(&settings, db));
+    let app = shared(App::new(&settings, db)?);
     app.verifier
         .refresh()
         .await
