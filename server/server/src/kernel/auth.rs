@@ -28,7 +28,8 @@ pub enum Kind {
     Service,
 }
 
-/// An organization named in the token. The id is Keycloak's and never changes; the alias is what people read.
+/// An organization named in the token. Keycloak never lets an organization's alias change and keeps it unique in the realm, so
+/// the alias is the organization's identity here; `alias` is kept apart from `id` only so the two can be told apart in the code.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrgRef {
     pub id: String,
@@ -102,16 +103,19 @@ struct Claims {
     email: Option<String>,
     #[serde(default)]
     groups: Vec<String>,
-    organization: Option<HashMap<String, OrgClaim>>,
+    organization: Option<Organizations>,
     resource_access: Option<HashMap<String, ClientAccess>>,
     /// `"agent"` or `"service"` on a service account's token (set by a mapper on its Keycloak client); absent for people.
     loamz_kind: Option<String>,
     act: Option<Act>,
 }
 
+/// Keycloak writes `"organization": ["acme"]`, or `{"acme": {...}}` when asked to add attributes; the aliases are what matters.
 #[derive(Deserialize)]
-struct OrgClaim {
-    id: Option<String>,
+#[serde(untagged)]
+enum Organizations {
+    List(Vec<String>),
+    Map(HashMap<String, serde::de::IgnoredAny>),
 }
 
 #[derive(Deserialize)]
@@ -252,17 +256,21 @@ impl Verifier {
         if c.sub.is_empty() || c.sub.len() > 128 {
             return Err(AuthError::Invalid);
         }
-        let mut orgs: Vec<OrgRef> = c
-            .organization
-            .unwrap_or_default()
+        let aliases: Vec<String> = match c.organization {
+            Some(Organizations::List(l)) => l,
+            Some(Organizations::Map(m)) => m.into_keys().collect(),
+            None => vec![],
+        };
+        let mut orgs: Vec<OrgRef> = aliases
             .into_iter()
-            // An organization without an id cannot be told apart from a renamed one, so it is not used.
-            .filter_map(|(alias, o)| {
-                o.id.filter(|i| !i.is_empty())
-                    .map(|id| OrgRef { id, alias })
+            .filter(|a| !a.is_empty() && a.len() <= 128)
+            .map(|alias| OrgRef {
+                id: alias.clone(),
+                alias,
             })
             .collect();
         orgs.sort_by(|a, b| a.id.cmp(&b.id));
+        orgs.dedup_by(|a, b| a.id == b.id);
         let mut groups: Vec<String> = c
             .groups
             .into_iter()
