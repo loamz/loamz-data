@@ -10,6 +10,7 @@ const id = "c480ec64-2a04-4f53-8b8d-e7daffddbed9";
 describe("routes", () => {
   it("reads the address", () => {
     expect(parseRoute("/")).toEqual({ screen: "home" });
+    expect(parseRoute(`/w/${id}`)).toEqual({ screen: "workspace", ws: id });
     expect(parseRoute("/w/" + id + "/catalog")).toEqual({ screen: "catalog", ws: id, id: null });
     expect(parseRoute(`/w/${id}/catalog/${id}`)).toEqual({ screen: "catalog", ws: id, id });
     expect(parseRoute(`/w/${id}/settings`)).toEqual({ screen: "settings", ws: id });
@@ -26,6 +27,7 @@ describe("routes", () => {
   it("writes the address it reads", () => {
     for (const r of [
       { screen: "home" },
+      { screen: "workspace", ws: id },
       { screen: "catalog", ws: id, id: null },
       { screen: "catalog", ws: id, id },
       { screen: "settings", ws: id },

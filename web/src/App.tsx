@@ -1,4 +1,4 @@
-import { Building2, Database, House, LogOut, Moon, Settings as Gear, Sun, type LucideIcon } from "lucide-react";
+import { Building2, Database, House, LayoutDashboard, LayoutGrid, LogOut, Moon, Settings as Gear, Sun, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Button, ConfirmHost, Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Toaster, Tooltip, TooltipProvider, cn } from "@/design";
 import * as api from "./api";
@@ -10,19 +10,11 @@ import { Account } from "./screens/Account";
 import { Catalog } from "./screens/Catalog";
 import { Home } from "./screens/Home";
 import { Settings } from "./screens/Settings";
+import { Workspace } from "./screens/Workspace";
 import { Landing } from "./Landing";
 import { applyTheme, getTheme, setTheme } from "./theme";
 
 const snapshot = () => (signedIn() ? "1" : "");
-const LAST = "loamz-data-last-workspace";
-
-function remembered(): string | null {
-  try {
-    return localStorage.getItem(LAST);
-  } catch {
-    return null;
-  }
-}
 
 export function App() {
   const here = useSyncExternalStore(onAuthChange, snapshot) !== "";
@@ -68,18 +60,8 @@ function Shell() {
   const dark = theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
   useEffect(() => applyTheme(theme), [theme]);
 
-  // The workspace the rail points into: the one in the address, else the last one used, else the first there is.
-  const inAddress = route.screen === "catalog" || route.screen === "settings" ? route.ws : null;
-  const ws = inAddress ?? (me?.workspaces.find((w) => w.id === remembered())?.id ?? me?.workspaces[0]?.id ?? null);
-  useEffect(() => {
-    if (inAddress) {
-      try {
-        localStorage.setItem(LAST, inAddress);
-      } catch {
-        /* the rail falls back to the first workspace */
-      }
-    }
-  }, [inAddress]);
+  // Outside a workspace the rail has only what belongs to you as a person. Inside one it has that workspace's own things, and a way back.
+  const inAddress = route.screen === "workspace" || route.screen === "catalog" || route.screen === "settings" ? route.ws : null;
   // A workspace made, renamed or opened from a link since we last asked: ask again, once for each.
   const asked = useRef(new Set<string>());
   useEffect(() => {
@@ -90,22 +72,27 @@ function Shell() {
   }, [inAddress, me]); // eslint-disable-line react-hooks/exhaustive-deps
   const anAdmin = me?.orgs.find((o) => o.account_admin && o.kind === "org");
 
-  const places: { to: Route; label: string; icon: LucideIcon; active: boolean; show: boolean }[] = [
-    { to: { screen: "home" }, label: "Home", icon: House, active: route.screen === "home", show: true },
-    { to: { screen: "catalog", ws: ws ?? "", id: null }, label: "Catalog", icon: Database, active: route.screen === "catalog", show: ws !== null },
-    { to: { screen: "settings", ws: ws ?? "" }, label: "Workspace settings", icon: Gear, active: route.screen === "settings", show: ws !== null },
-    { to: { screen: "account", org: anAdmin?.id ?? "", tab: "workspaces" }, label: "Account console", icon: Building2, active: route.screen === "account", show: Boolean(anAdmin) },
-  ];
+  const places: { to: Route; label: string; icon: LucideIcon; active: boolean }[] = inAddress
+    ? [
+        { to: { screen: "home" }, label: "All workspaces", icon: LayoutGrid, active: false },
+        { to: { screen: "workspace", ws: inAddress }, label: "Workspace overview", icon: LayoutDashboard, active: route.screen === "workspace" },
+        { to: { screen: "catalog", ws: inAddress, id: null }, label: "Catalog", icon: Database, active: route.screen === "catalog" },
+        { to: { screen: "settings", ws: inAddress }, label: "Workspace settings", icon: Gear, active: route.screen === "settings" },
+      ]
+    : [
+        { to: { screen: "home" }, label: "Home", icon: House, active: route.screen === "home" },
+        ...(anAdmin ? [{ to: { screen: "account", org: anAdmin.id, tab: "workspaces" } as Route, label: "Account console", icon: Building2, active: route.screen === "account" }] : []),
+      ];
 
   return (
     <div className="flex h-full flex-col-reverse bg-background text-foreground md:flex-row">
       <nav aria-label="Main" className="flex shrink-0 items-center justify-around gap-1 border-t border-border bg-sidebar px-2 py-1.5 md:w-14 md:flex-col md:justify-start md:border-r md:border-t-0 md:px-0 md:py-3">
         <div className="hidden md:mb-3 md:block">
-          <Mark />
+          <Link to={{ screen: "home" }} aria-label="Loamz Data home">
+            <Mark />
+          </Link>
         </div>
-        {places
-          .filter((p) => p.show)
-          .map(({ to, label, icon: Icon, active }) => (
+        {places.map(({ to, label, icon: Icon, active }) => (
             <Tooltip key={label} label={label} side="right">
               <Button asChild variant="ghost" size="icon" className={cn(active && "bg-accent/20 text-accent hover:bg-accent/20")}>
                 <Link to={to} aria-label={label} aria-current={active ? "page" : undefined}>
@@ -139,6 +126,11 @@ function Shell() {
             <MenuLabel>{me ? me.name || me.subject : "Signed in"}</MenuLabel>
             {me?.email && <p className="px-2 pb-1.5 text-2xs text-muted">{me.email}</p>}
             <MenuSeparator />
+            {anAdmin && (
+              <MenuItem onSelect={() => go({ screen: "account", org: anAdmin.id, tab: "workspaces" })}>
+                <Building2 /> Account console
+              </MenuItem>
+            )}
             <MenuItem onSelect={() => void signOut()}>
               <LogOut /> Sign out
             </MenuItem>
@@ -147,6 +139,7 @@ function Shell() {
       </nav>
       <main className="min-h-0 min-w-0 flex-1">
         {route.screen === "home" && <Home me={me} reload={who.reload} />}
+        {route.screen === "workspace" && <Workspace key={route.ws} ws={route.ws} me={me} />}
         {route.screen === "catalog" && <Catalog key={route.ws} ws={route.ws} id={route.id} me={me} />}
         {route.screen === "settings" && <Settings ws={route.ws} me={me} />}
         {route.screen === "account" && <Account org={route.org} tab={route.tab} me={me} />}

@@ -54,6 +54,9 @@ with sync_playwright() as p:
     # -- ana: the account admin of acme
     ana = person("ana", viewport={"width": 1360, "height": 820})
     expect(ana.get_by_role("heading", name="Welcome, Ana")).to_be_visible(); step("signing in through Keycloak lands on Home")
+    for thing in ("Catalog", "Workspace settings", "Workspace overview"):
+        expect(ana.get_by_label("Main").get_by_label(thing)).to_have_count(0)
+    step("outside a workspace the rail shows no workspace things")
     ana.reload(); expect(ana.get_by_role("heading", name="Welcome, Ana")).to_be_visible(); step("the session survives a reload")
     expect(ana.get_by_text("No Data account yet")).to_be_visible()
     ana.get_by_role("button", name="Create account").click()
@@ -62,7 +65,12 @@ with sync_playwright() as p:
     expect(ana.get_by_text("Finance", exact=True)).to_be_visible(); step("and a workspace in it")
     shot(ana, "account-workspaces")
 
-    ana.get_by_role("button", name="Settings").click()
+    ana.get_by_role("button", name="Open").click()
+    expect(ana.get_by_role("heading", name="Finance")).to_be_visible()
+    expect(ana.get_by_text("Jobs and ETL")).to_be_visible(); expect(ana.get_by_text("SQL editor")).to_be_visible()
+    step("opening a workspace shows its overview, with what is and is not there yet")
+    expect(ana.get_by_label("Main").get_by_label("Catalog")).to_be_visible(); step("and now the rail has the workspace's own things")
+    ana.get_by_label("Main").get_by_label("Workspace settings").click()
     expect(ana.get_by_role("heading", name="Finance")).to_be_visible()
     principal(ana, "Group", "/finance/analysts"); ana.get_by_role("button", name="Assign").click()
     expect(ana.get_by_text("/finance/analysts").first).to_be_visible(); step("a Keycloak group is assigned to the workspace")
@@ -89,19 +97,24 @@ with sync_playwright() as p:
     assert open(dl.value.path()).read() == "hello from the browser"; step("the downloaded bytes are the uploaded bytes")
     shot(ana, "volume-files")
 
-    # -- access: give the group read on the catalog
-    ana.get_by_role("tab", name="Access").click()
-    expect(ana.get_by_text("MANAGE")).to_be_hidden() if False else None
-    ana.get_by_role("button", name="Collapse raw").click() if False else None
-    ana.get_by_label("Expand sales").click() if ana.get_by_label("Expand sales").count() else None
+    ana.get_by_label("Main").get_by_label("Workspace overview").click()
+    expect(ana.get_by_role("button", name="sales")).to_be_visible(); step("the overview lists the workspace's catalogs")
+    ana.get_by_label("Main").get_by_label("All workspaces").click()
+    expect(ana.get_by_role("heading", name="Welcome, Ana")).to_be_visible(); step("All workspaces goes back to Home")
+    expect(ana.get_by_label("Main").get_by_label("Catalog")).to_have_count(0)
+    ana.get_by_role("button", name=re.compile("Finance")).first.click()
+    ana.get_by_label("Main").get_by_label("Catalog").click()
     ana.get_by_role("button", name="sales", exact=True).click()
+
+    # -- access: give the group read on the catalog
     ana.get_by_role("tab", name="Access").click()
     principal(ana, "Group", "/finance/analysts"); ana.get_by_role("button", name="Give access").click()
     expect(ana.get_by_text("SELECT").first).to_be_visible(); step("a group is given the Reader role on the catalog")
     shot(ana, "catalog-access")
 
     # -- account console: admins, activity, record check
-    ana.get_by_label("Main").get_by_label("Account console").click()
+    ana.get_by_label("Account menu").click(); ana.get_by_role("menuitem", name="Account console").click()
+    expect(ana.get_by_label("Main").get_by_label("Catalog")).to_have_count(0); step("the account console is reached from the account menu, outside any workspace")
     ana.get_by_role("button", name="Account admins").click()
     expect(ana.get_by_text("Make admin")).to_be_visible(); step("the account admins are listed")
     ana.get_by_role("button", name="Activity").click()
@@ -115,7 +128,10 @@ with sync_playwright() as p:
     expect(cyd.get_by_text("Finance", exact=True).first).to_be_visible(); step("a member of the assigned group sees the workspace on Home")
     expect(cyd.get_by_label("Main").get_by_label("Account console")).to_have_count(0); step("and no account console")
     cyd.get_by_text("Finance", exact=True).first.click()
-    expect(cyd.get_by_role("button", name="sales", exact=True)).to_be_visible(); step("they see the catalog the group was given")
+    expect(cyd.get_by_role("heading", name="Finance")).to_be_visible()
+    expect(cyd.get_by_role("button", name="sales")).to_be_visible(); step("they open it and see the catalog the group was given on its overview")
+    expect(cyd.get_by_text("Members, entitlements and catalogs")).to_have_count(0); step("without the admin's settings link")
+    cyd.get_by_label("Main").get_by_label("Catalog").click()
     cyd.get_by_label("Expand sales").click(); cyd.get_by_label("Expand raw").click(); cyd.get_by_role("button", name="uploads").click()
     expect(cyd.get_by_text(name, exact=True)).to_be_visible(); step("and can read its files")
     cyd.locator("input[type=file]").set_input_files(src.name)
