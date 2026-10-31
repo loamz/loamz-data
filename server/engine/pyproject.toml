@@ -1,6 +1,6 @@
 [project]
 name = "loamz-engine"
-version = "0.1.0"
+version = "0.1.1"
 description = "Loamz Data's embeddable engines: SQL on SQLite or PostgreSQL, files, vectors, memory and documents."
 readme = "README.md"
 license = "Apache-2.0"
