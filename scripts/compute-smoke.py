@@ -4,6 +4,10 @@ Needs the dev stack (deploy/dev), `cargo build --release -p loamz-data-server -p
 (scripts/fetch-runsc.sh, server/runner/rootfs/build.sh). Uses only the standard library, and a throwaway folder.
 
   scripts/compute-smoke.py            (prints each step and what came back)
+
+  REMOTE=ubuntu@host KEY=~/.ssh/key scripts/compute-smoke.py
+      Runs the agent on that machine instead (as root, so gVisor holds each run to its memory and CPU limits). It connects out to
+      this server through an ssh reverse tunnel. Needs ~/loamz-compute/{loamz-runner,runsc,rootfs-duckdb} there (see CLAUDE.md).
 """
 import json, os, signal, subprocess, sys, tempfile, time, urllib.error, urllib.request
 
@@ -71,11 +75,20 @@ try:
     _, t = call("POST", f"/api/v1/orgs/{org}/compute/targets", ana, {"name": "this-machine", "max_memory_mb": 2048, "max_cpu_millis": 1000})
     secret = f"{work}/agent.secret"
     open(secret, "w").write(t["secret"]); os.chmod(secret, 0o600)
-    cache = os.path.expanduser("~/.cache/loamz")
-    aenv = {**os.environ, "LOAMZ_DATA_URL": API, "LOAMZ_AGENT_SECRET_FILE": secret, "LOAMZ_RUNSC": f"{cache}/runsc", "LOAMZ_ROOTFS": f"{cache}/rootfs",
-            "LOAMZ_WORK": f"{work}/agent", "LOAMZ_PLATFORM": os.environ.get("LOAMZ_PLATFORM", "ptrace")}
-    procs.append(subprocess.Popen([os.path.join(ROOT, "target/release/loamz-runner"), "agent"], env=aenv, stdout=open(f"{work}/agent.log", "w"), stderr=subprocess.STDOUT))
-    for _ in range(100):
+    remote, key = os.environ.get("REMOTE"), os.path.expanduser(os.environ.get("KEY", "~/.ssh/id_ed25519"))
+    if remote:
+        home = "/home/ubuntu/loamz-compute"
+        subprocess.run(["ssh", "-i", key, "-o", "BatchMode=yes", remote, f"umask 077; cat > {home}/agent.secret"], input=t["secret"].encode(), check=True)
+        agent_cmd = ["ssh", "-i", key, "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-R", "127.0.0.1:18040:127.0.0.1:18040", remote,
+                     f"sudo env LOAMZ_DATA_URL=http://127.0.0.1:18040 LOAMZ_AGENT_SECRET_FILE={home}/agent.secret LOAMZ_RUNSC={home}/runsc "
+                     f"LOAMZ_ROOTFS={home}/rootfs-duckdb LOAMZ_WORK=/var/tmp/loamz-compute {home}/loamz-runner agent"]
+        procs.append(subprocess.Popen(agent_cmd, stdout=open(f"{work}/agent.log", "w"), stderr=subprocess.STDOUT))
+    else:
+        cache = os.path.expanduser("~/.cache/loamz")
+        aenv = {**os.environ, "LOAMZ_DATA_URL": API, "LOAMZ_AGENT_SECRET_FILE": secret, "LOAMZ_RUNSC": f"{cache}/runsc", "LOAMZ_ROOTFS": f"{cache}/rootfs",
+                "LOAMZ_WORK": f"{work}/agent", "LOAMZ_PLATFORM": os.environ.get("LOAMZ_PLATFORM", "ptrace")}
+        procs.append(subprocess.Popen([os.path.join(ROOT, "target/release/loamz-runner"), "agent"], env=aenv, stdout=open(f"{work}/agent.log", "w"), stderr=subprocess.STDOUT))
+    for _ in range(150):
         time.sleep(0.2)
         if call("GET", f"{S}/compute/targets", ana)[1]["items"][0]["online"]:
             break
@@ -106,9 +119,23 @@ try:
     files = call("GET", f"{S}/volumes/{out}/files", ana)[1]["items"]
     summary = call("GET", f"{S}/volumes/{out}/files/{files[0]['path']}", ana)[1]
     step(f"and its file reached the results volume through the API: {files[0]['path'].split('/')[-1]} = {summary.decode()}")
+    if remote:
+        # As root, gVisor holds a run to its limits. 1 CPU of two, and 2 GB of the machine's twelve.
+        busy = "import os, time\nt0=time.time()\nkids=[]\nfor _ in range(2):\n    p=os.fork()\n    if p==0:\n        end=t0+5\n        while time.time()<end: pass\n        os._exit(0)\n    kids.append(p)\n[os.waitpid(k,0) for k in kids]\nwall=time.time()-t0\nc=os.times()\nprint('cpus worth', round((c.children_user+c.children_system)/wall,2), 'of', os.cpu_count(), 'visible')\n"
+        eat = "b=bytearray(1536*1024*1024); b[::4096]=b'x'*len(b[::4096]); print('1.5 GB ok', flush=True)\nc=bytearray(2560*1024*1024); c[::4096]=b'x'*len(c[::4096]); print('2.5 GB ok (should not get here)')\n"
+        for name, script in (("cpu", busy), ("memory", eat)):
+            _, j2 = call("POST", f"{S}/runs", ana, {"script": script, "inputs": [], "output": out, "memory_mb": 2048, "cpu_millis": 1000, "timeout_s": 120})
+            for _ in range(600):
+                time.sleep(0.5)
+                run2 = call("GET", f"{S}/runs/{j2['id']}", ana)[1]
+                if run2["state"] not in ("queued", "running"):
+                    break
+            step(f"{name} limit job: {run2['state']}; printed {run2['stdout'].split()}; {run2['error']}")
     print("smoke ok")
 finally:
     stop()
+    if os.environ.get("REMOTE"):
+        subprocess.run(["ssh", "-i", os.path.expanduser(os.environ.get("KEY", "~/.ssh/id_ed25519")), "-o", "BatchMode=yes", os.environ["REMOTE"], "rm -f /home/ubuntu/loamz-compute/agent.secret; sudo pkill -f '[l]oamz-compute/loamz-runner agent'; true"], check=False)
     log = open(f"{work}/agent.log").read() if os.path.exists(f"{work}/agent.log") else ""
     if "--keep" not in sys.argv and "ok" in log + "ok":
         pass
