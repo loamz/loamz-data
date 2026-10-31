@@ -1,0 +1,32 @@
+# Local development services for loamz-data. Throwaway credentials, bound to this computer only.
+#   docker compose -f deploy/dev/compose.yml up -d
+# Keycloak is the same realm the live server uses (rendered by deploy/dev/render-realm.sh from the loamz-deploy template).
+# Admin console: http://127.0.0.1:8082 (admin / admin-dev-only). Issuer: http://127.0.0.1:8082/realms/loamz
+name: loamz-data-dev
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: data
+      POSTGRES_PASSWORD: data-dev-only
+      POSTGRES_DB: data
+    ports:
+      - "127.0.0.1:55434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U data"]
+      interval: 2s
+      retries: 20
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin-dev-only
+      KC_HTTP_PORT: "8082"
+      KC_HOSTNAME: http://127.0.0.1:8082
+      LOAMZ_DATA_DIRECTORY_SECRET: directory-dev-only
+    ports:
+      - "127.0.0.1:8082:8082"
+    volumes:
+      - ./realm-loamz-dev.json:/opt/keycloak/data/import/realm-loamz.json:ro
