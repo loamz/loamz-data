@@ -93,7 +93,7 @@ con.execute("SET lock_configuration = true")
 try:
     relation = con.sql(spec["sql"])
     columns = [{"name": n, "type": str(t)} for n, t in zip(relation.columns, relation.types)]
-    rows = relation.fetchmany(limit + 1)
+    rows = relation.limit(limit + 1).fetchall()
 except Exception as e:  # noqa: BLE001
     fail(str(e))
 
