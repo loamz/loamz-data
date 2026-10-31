@@ -18,6 +18,7 @@ use super::{
     },
     sql, store,
 };
+use crate::storage::tables::service as tables;
 use crate::{
     governance::{
         audit::{model::Who, service::Uow},
@@ -714,6 +715,45 @@ pub struct Lease {
     pub run: Run,
     pub token: String,
     pub limits: Limits,
+    /// Where and how to read the run's tables: short-lived read-only credentials for exactly their folders. None if it reads none.
+    pub storage: Option<Value>,
+}
+
+/// The tables a run reads, by id.
+fn table_ids(run: &Run, spec: &Value) -> Vec<String> {
+    let field = |v: &Value| v["id"].as_str().map(str::to_owned);
+    if run.kind == "sql" {
+        spec["tables"].as_array().into_iter().flatten().filter_map(field).collect()
+    } else {
+        spec["inputs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|i| i["kind"] == "table")
+            .filter_map(field)
+            .collect()
+    }
+}
+
+/// What a machine needs to read some tables itself: credentials limited to those tables' folders and to reading, good for the
+/// run's time and a little more, and where each table's current metadata is.
+async fn storage_for(app: &App, org: &str, ids: &[String], timeout_s: i64) -> Result<Value> {
+    let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let ttl = Duration::from_secs(u64::try_from(timeout_s).unwrap_or(120) + 300);
+    let creds = tables::vend(app, &refs, false, ttl).await?;
+    let (endpoint, bucket) = app
+        .stores
+        .bucket_place()
+        .ok_or_else(|| Error::Unavailable("this server's storage is not a bucket".into()))?;
+    let mut located = serde_json::Map::new();
+    for id in ids {
+        let (uri, rel) = tables::locate(app, org, id).await?;
+        located.insert(id.clone(), json!({"uri": uri, "metadata": rel}));
+    }
+    Ok(json!({
+        "endpoint": endpoint, "bucket": bucket, "key_id": creds.key_id, "secret": creds.secret,
+        "session_token": creds.session_token, "tables": located,
+    }))
 }
 
 /// Hands the target its next queued run, with the token that run's files are read and written with. None if nothing is waiting.
@@ -767,7 +807,33 @@ pub async fn lease(app: &App, target: &Target) -> Result<Option<Lease>> {
         },
     )
     .await?;
-    Ok(Some(Lease { run, token, limits }))
+    let ids = table_ids(&run, &spec);
+    let storage = if ids.is_empty() {
+        None
+    } else {
+        match storage_for(app, &run.org_id, &ids, limits.timeout_s).await {
+            Ok(s) => Some(s),
+            Err(e) => {
+                // The run cannot be given its data; say so now rather than let it time out.
+                let report = Report {
+                    state: "failed".into(),
+                    exit_code: -1,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    result: String::new(),
+                    error: e.to_string(),
+                };
+                complete(app, target, &run.id, report).await?;
+                return Ok(None);
+            }
+        }
+    };
+    Ok(Some(Lease {
+        run,
+        token,
+        limits,
+        storage,
+    }))
 }
 
 /// Renews a run's lease. Returns whether the agent should stop, because the run was cancelled; None if this is not its run any more.

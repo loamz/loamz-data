@@ -1,7 +1,7 @@
 //! Serverless compute: a provider's endpoint (such as Modal) that starts when a statement arrives and stops when idle.
 //!
 //! The server calls the endpoint over https (outbound only). The endpoint never reaches back and holds no storage credential: it is
-//! given a short-lived signed address for each file of each table the statement declared, and returns the rows in the answer.
+//! given short-lived read-only credentials for the folders of the tables the statement declared, and returns the rows in the answer.
 
 use std::time::Duration;
 
@@ -15,9 +15,6 @@ use crate::kernel::{
     error::{Error, Result},
     state::App,
 };
-
-/// Files one statement may read through signed addresses.
-const MAX_FILES: usize = 200;
 
 /// Serves the queued statements of every serverless target, forever.
 pub async fn serve_forever(app: crate::kernel::state::Shared) {
@@ -66,25 +63,25 @@ async fn call(app: &App, target: &Target, lease: &service::Lease) -> Result<Repo
         .ok_or_else(|| Error::Internal("no serverless token".into()))?;
     let spec: Value = serde_json::from_str(&lease.run.spec)
         .map_err(|e| Error::Internal(format!("a run has a spec that is not JSON: {e}")))?;
-    let valid = Duration::from_secs(u64::try_from(lease.limits.timeout_s).unwrap_or(120) + 120);
+    let storage = lease
+        .storage
+        .as_ref()
+        .ok_or_else(|| Error::Internal("the run has no storage".into()))?;
     let mut tables = Vec::new();
-    let mut total = 0;
     for t in spec["tables"].as_array().into_iter().flatten() {
-        let (id, name) = (t["id"].as_str().unwrap_or_default(), &t["name"]);
-        let mut files = Vec::new();
-        for f in app.stores.list(id).await? {
-            total += 1;
-            if total > MAX_FILES {
-                return Ok(failed(format!("that reads more than {MAX_FILES} files")));
-            }
-            files.push(
-                json!({"path": f.path, "url": app.stores.sign_get(id, &f.path, valid).await?}),
-            );
-        }
-        tables.push(json!({"name": name, "files": files}));
+        let id = t["id"].as_str().unwrap_or_default();
+        let at = &storage["tables"][id];
+        tables.push(json!({
+            "name": t["name"],
+            "metadata": format!("{}/{}", at["uri"].as_str().unwrap_or_default(), at["metadata"].as_str().unwrap_or_default()),
+        }));
     }
     let body = json!({
         "sql": spec["sql"], "limit": spec["limit"], "memory_mb": lease.limits.memory_mb, "tables": tables,
+        "storage": {
+            "endpoint": storage["endpoint"], "bucket": storage["bucket"], "key_id": storage["key_id"],
+            "secret": storage["secret"], "session_token": storage["session_token"],
+        },
     });
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(

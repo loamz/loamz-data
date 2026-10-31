@@ -15,6 +15,8 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 API = "http://127.0.0.1:18040"
 work = tempfile.mkdtemp(prefix="loamz-smoke-")
 procs = []
+r2 = os.path.expanduser("~/.config/loamz/r2")
+DUCK = os.path.expanduser("~/.cache/loamz/modal-venv/bin/python")
 
 
 def token(who):
@@ -51,7 +53,7 @@ def stop():
 
 try:
     env = {**os.environ, "LOAMZ_DATA_LISTEN": "127.0.0.1:18040", "LOAMZ_DATA_DATABASE_URL": f"sqlite:{work}/d.db?mode=rwc",
-           "LOAMZ_DATA_STORES_DIR": f"{work}/stores", "LOAMZ_DATA_OIDC_ISSUER": "http://127.0.0.1:8082/realms/loamz"}
+           "LOAMZ_DATA_BUCKET": "loamz-data", "LOAMZ_DATA_BUCKET_ENDPOINT": open(r2 + "/endpoint").read().strip(), "LOAMZ_DATA_BUCKET_KEY_ID_FILE": r2 + "/key-id", "LOAMZ_DATA_BUCKET_SECRET_FILE": r2 + "/secret", "LOAMZ_DATA_BUCKET_ISSUER_TOKEN_FILE": r2 + "/api-token", "LOAMZ_DATA_OIDC_ISSUER": "http://127.0.0.1:8082/realms/loamz"}
     procs.append(subprocess.Popen([os.path.join(ROOT, "target/release/loamz-data"), "serve"], env=env, stdout=open(f"{work}/server.log", "w"), stderr=subprocess.STDOUT))
     for _ in range(100):
         try:
@@ -68,9 +70,14 @@ try:
     S = f"/api/v1/workspaces/{ws}"
     mk = lambda kind, parent, name: call("POST", f"{S}/securables", ana, {"kind": kind, "parent_id": parent, "name": name})[1]["id"]
     cat = mk("catalog", "", "shop"); sch = mk("schema", cat, "main")
-    orders, out = mk("table", sch, "orders"), mk("volume", sch, "results")
-    call("PUT", f"{S}/tables/{orders}/files/orders.csv", ana, raw=b"order,region,amount\n1,north,120\n2,south,80\n3,north,200\n4,east,50\n5,south,300\n")
-    step("a table of 5 rows (a few hundred bytes) is uploaded")
+    out = mk("volume", sch, "results")
+    seed = subprocess.run([DUCK, os.path.join(ROOT, "scripts/iceberg_seed.py"), API + S + "/iceberg", "shop", "main.orders", "order_id BIGINT, region VARCHAR, amount BIGINT"],
+                          input=json.dumps([[1, "north", 120], [2, "south", 80], [3, "north", 200], [4, "east", 50], [5, "south", 300]]), text=True, capture_output=True,
+                          env={**os.environ, "LZ_TOKEN": ana})
+    if seed.returncode:
+        sys.exit("seeding failed: " + seed.stderr[-400:])
+    orders = next(i["id"] for i in call("GET", f"{S}/securables?parent_id={sch}", ana)[1]["items"] if i["name"] == "orders")
+    step("an Iceberg table of 5 rows was made and filled through the catalog, as any DuckDB client would (its files are in the R2 bucket)")
 
     _, t = call("POST", f"/api/v1/orgs/{org}/compute/targets", ana, {"name": "this-machine", "max_memory_mb": 2048, "max_cpu_millis": 1000})
     secret = f"{work}/agent.secret"
@@ -108,7 +115,7 @@ try:
     _, r3 = call("POST", f"{S}/sql/statements", ana, {"sql": "SELECT nope FROM shop.main.orders", "wait_s": 60})
     step(f"a mistake in the SQL is an answer, not a crash: {r3['state']}: {r3['error'][:80]}")
 
-    job = "import csv, json\nrows=list(csv.DictReader(open('/inputs/orders/orders.csv')))\nopen('/workspace/summary.json','w').write(json.dumps({'rows':len(rows),'total':sum(int(r['amount']) for r in rows)}))\nprint('rows', len(rows))\ntry:\n    import socket; socket.create_connection(('1.1.1.1',53),timeout=2); print('NETWORK')\nexcept OSError: print('no network')\n"
+    job = "import duckdb, json\nc=duckdb.connect(config={'extension_directory':'/opt/duckdb-extensions','autoinstall_known_extensions':'false','autoload_known_extensions':'false'})\nc.execute('LOAD iceberg')\nv=json.load(open('/inputs/orders/loamz-table.json'))['metadata'].split('/')[-1].removesuffix('.metadata.json')\nrows,total=c.sql(f\"select count(*), sum(amount) from iceberg_scan('/inputs/orders', version='{v}', allow_moved_paths=true)\").fetchall()[0]\nopen('/workspace/summary.json','w').write(json.dumps({'rows':rows,'total':int(total)}))\nprint('rows', rows)\ntry:\n    import socket; socket.create_connection(('1.1.1.1',53),timeout=2); print('NETWORK')\nexcept OSError: print('no network')\n"
     _, j = call("POST", f"{S}/runs", ana, {"script": job, "inputs": [orders], "output": out, "timeout_s": 90})
     for _ in range(300):
         time.sleep(0.5)
@@ -133,6 +140,12 @@ try:
             step(f"{name} limit job: {run2['state']}; printed {run2['stdout'].split()}; {run2['error']}")
     print("smoke ok")
 finally:
+    try:
+        # Takes the smoke catalog away, and with it every file it left in the bucket.
+        call("DELETE", f"{S}/securables/{cat}", ana)
+        time.sleep(4)
+    except NameError:
+        pass
     stop()
     if os.environ.get("REMOTE"):
         subprocess.run(["ssh", "-i", os.path.expanduser(os.environ.get("KEY", "~/.ssh/id_ed25519")), "-o", "BatchMode=yes", os.environ["REMOTE"], "rm -f /home/ubuntu/loamz-compute/agent.secret; sudo pkill -f '[l]oamz-compute/loamz-runner agent'; true"], check=False)
