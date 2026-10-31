@@ -14,7 +14,7 @@ trap 'kill "${PID:-0}" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 PORT=${PORT:-18030}; API=http://127.0.0.1:$PORT; TUNNEL_PORT=${TUNNEL_PORT:-18030}
 
 cargo run -q --release --example dev_token -- "$WORK/keys" ana acme >"$WORK/tok"; T=$(cat "$WORK/tok")
-export LOAMZ_DATA_LISTEN=127.0.0.1:$PORT LOAMZ_DATA_DATABASE_URL="sqlite:$WORK/d.db?mode=rwc" LOAMZ_DATA_VOLUMES_DIR=$WORK/volumes
+export LOAMZ_DATA_LISTEN=127.0.0.1:$PORT LOAMZ_DATA_DATABASE_URL="sqlite:$WORK/d.db?mode=rwc" LOAMZ_DATA_VOLUMES_DIR=${DEMO_VOLUMES:-$WORK/volumes}
 export LOAMZ_DATA_OIDC_ISSUER=http://dev.local/realm LOAMZ_DATA_JWKS_FILE=$WORK/keys/jwks.json LOAMZ_DATA_ADMINS=ana
 "$BIN" serve >"$WORK/server.log" 2>&1 & PID=$!
 until curl -fs "$API/readyz" >/dev/null 2>&1; do :; done
