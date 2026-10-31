@@ -1,6 +1,6 @@
-import { CheckCircle2, Layers, ScrollText, ShieldAlert, ShieldCheck, UserMinus, UserX, UsersRound } from "lucide-react";
+import { CheckCircle2, Copy, Cpu, KeyRound, Layers, Plus, ScrollText, ShieldAlert, ShieldCheck, Trash2, UserMinus, UserX, UsersRound } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Badge, Button, Input, NavItem, Page, PageEmpty, Section, Segmented, confirmAction, toast } from "@/design";
+import { Badge, Button, Dialog, DialogContent, DialogFooter, Input, NavItem, Page, PageEmpty, Section, Segmented, Select, confirmAction, toast } from "@/design";
 import * as api from "@/api";
 import { Principal } from "@/components/Principal";
 import { PrincipalField } from "@/components/PrincipalField";
@@ -9,9 +9,11 @@ import { useLoad } from "@/hooks";
 import { useNames } from "@/names";
 import { openWorkspace } from "@/site";
 import { go, type AccountTab } from "@/route";
+import { centralOrigin } from "@/site";
 
 const tabs: { id: AccountTab; label: string; icon: typeof Layers }[] = [
   { id: "workspaces", label: "Workspaces", icon: Layers },
+  { id: "compute", label: "Compute", icon: Cpu },
   { id: "admins", label: "Account admins", icon: UsersRound },
   { id: "activity", label: "Activity", icon: ScrollText },
   { id: "erase", label: "Erase a person", icon: UserX },
@@ -54,6 +56,7 @@ export function Account({ org, tab, me }: { org: string; tab: AccountTab; me: ap
       </aside>
       <section className="min-h-0 min-w-0 flex-1">
         {tab === "workspaces" && <Workspaces org={org} />}
+        {tab === "compute" && <ComputeTab org={org} />}
         {tab === "admins" && <Admins org={org} />}
         {tab === "activity" && <Activity org={org} ws={me?.workspaces.find((w) => w.org_id === org)?.id} />}
         {tab === "erase" && <Erase org={org} />}
@@ -287,5 +290,177 @@ function Erase({ org }: { org: string }) {
         )}
       </Section>
     </Page>
+  );
+}
+
+const MEMORY = [
+  { value: "1024", label: "1 GB" },
+  { value: "2048", label: "2 GB" },
+  { value: "4096", label: "4 GB" },
+  { value: "8192", label: "8 GB" },
+  { value: "16384", label: "16 GB" },
+];
+const CPU = [
+  { value: "500", label: "½ CPU" },
+  { value: "1000", label: "1 CPU" },
+  { value: "2000", label: "2 CPUs" },
+  { value: "4000", label: "4 CPUs" },
+];
+
+/** Compute an organization has attached. A machine connects out to this server and asks for work, so nothing is opened on it. */
+function ComputeTab({ org }: { org: string }) {
+  const list = useLoad(() => api.attachedCompute(org), org);
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [memory, setMemory] = useState("2048");
+  const [cpu, setCpu] = useState("1000");
+  const [shown, setShown] = useState<api.Compute | null>(null);
+  const items = list.data ?? [];
+
+  // Anyone watching the list sees a machine come online as soon as its agent connects.
+  const waiting = items.some((c) => !c.online);
+  useEffect(() => {
+    if (!waiting) return;
+    const t = setInterval(list.reload, 5000);
+    return () => clearInterval(t);
+  }, [waiting, list.reload]);
+
+  return (
+    <Page
+      title="Compute"
+      subtitle="The machines your workspaces run statements and jobs on. Each connects out to this server, so nothing is opened on it."
+      actions={
+        <Button variant="primary" onClick={() => setAdding(true)}>
+          <Plus /> Attach compute
+        </Button>
+      }
+    >
+      {items.length === 0 && !list.loading ? (
+        <PageEmpty icon={Cpu} title="No compute attached" action={<Button variant="primary" onClick={() => setAdding(true)}><Plus /> Attach compute</Button>}>
+          Attach a machine, then start the agent on it with the secret you are shown. Until then nothing can run.
+        </PageEmpty>
+      ) : (
+        <div className="divide-y divide-border rounded-xl border border-border bg-background/40">
+          {items.map((c) => (
+            <div key={c.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+              <Cpu className="shrink-0 text-muted" aria-hidden />
+              <span className="min-w-0 flex-1 basis-48">
+                <span className="block truncate text-sm font-medium text-foreground">{c.name}</span>
+                <span className="block text-xs text-muted">Up to {c.max_memory_mb.toLocaleString()} MB and {c.max_cpu_millis / 1000} CPU per run{c.last_seen_ms ? ` · last heard ${when(c.last_seen_ms)}` : " · its agent has not connected yet"}</span>
+              </span>
+              <Badge tone={c.online ? "success" : "neutral"}>{c.online ? "online" : "offline"}</Badge>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={async () => {
+                  if (!(await confirmAction({ title: `Give ${c.name} a new secret?`, description: "The agent using the old one is turned away until it is given the new one.", confirmLabel: "New secret" }))) return;
+                  try {
+                    setShown(await api.newComputeSecret(org, c.id));
+                    list.reload();
+                  } catch (e) {
+                    toast.error("Could not make a new secret", (e as Error).message);
+                  }
+                }}
+              >
+                <KeyRound /> New secret
+              </Button>
+              <Button
+                variant="danger"
+                size="icon-sm"
+                aria-label={`Remove ${c.name}`}
+                onClick={async () => {
+                  if (!(await confirmAction({ title: `Remove ${c.name}?`, description: "What is waiting or running on it fails.", confirmLabel: "Remove", danger: true }))) return;
+                  try {
+                    await api.detachCompute(org, c.id);
+                    list.reload();
+                  } catch (e) {
+                    toast.error("Could not remove it", (e as Error).message);
+                  }
+                }}
+              >
+                <Trash2 />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Dialog open={adding} onOpenChange={setAdding}>
+        <DialogContent title="Attach compute" description="Name the machine and say how much of it one run may use.">
+          <form
+            className="mt-4 space-y-4"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              try {
+                const made = await api.attachCompute(org, { name: name.trim(), max_memory_mb: Number(memory), max_cpu_millis: Number(cpu) });
+                setAdding(false);
+                setName("");
+                setShown(made);
+                list.reload();
+              } catch (err) {
+                toast.error("Could not attach it", (err as Error).message);
+              }
+            }}
+          >
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-foreground">Name</span>
+              <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="oracle" />
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block space-y-1.5">
+                <span className="text-xs font-medium text-foreground">Memory per run</span>
+                <Select aria-label="Memory per run" value={memory} onValueChange={setMemory} options={MEMORY} />
+              </label>
+              <label className="block space-y-1.5">
+                <span className="text-xs font-medium text-foreground">CPU per run</span>
+                <Select aria-label="CPU per run" value={cpu} onValueChange={setCpu} options={CPU} />
+              </label>
+            </div>
+            <DialogFooter>
+              <Button type="submit" variant="primary" disabled={!name.trim()}>
+                Attach
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={shown !== null} onOpenChange={(o) => !o && setShown(null)}>
+        <DialogContent title={`Start the agent on ${shown?.name ?? ""}`} description="This secret is shown once. Keep it in a file only the agent's user can read." className="max-w-xl">
+          {shown?.secret && <Secret compute={shown} />}
+        </DialogContent>
+      </Dialog>
+    </Page>
+  );
+}
+
+function Secret({ compute }: { compute: api.Compute }) {
+  const secret = compute.secret ?? "";
+  const command = `umask 077 && printf '%s' '${secret}' > ~/.loamz-agent.secret
+
+LOAMZ_DATA_URL=${centralOrigin} \\
+LOAMZ_AGENT_SECRET_FILE=~/.loamz-agent.secret \\
+LOAMZ_RUNSC=~/.cache/loamz/runsc \\
+LOAMZ_ROOTFS=~/.cache/loamz/rootfs \\
+loamz-runner agent`;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      toast.success("Copied");
+    } catch {
+      toast.error("Could not copy", "Select the text and copy it.");
+    }
+  };
+  return (
+    <div className="mt-4 space-y-3">
+      <p className="text-xs text-muted">On the machine, in a shell (it needs <span className="font-mono">runsc</span> and the sandbox filesystem; <span className="font-mono">scripts/fetch-runsc.sh</span> and <span className="font-mono">server/runner/rootfs/build.sh</span> make them):</p>
+      <pre className="scroll-area whitespace-pre-wrap break-all rounded-md border border-border bg-background/50 p-3 font-mono text-xs text-foreground">{command}</pre>
+      <div className="flex justify-end">
+        <Button variant="secondary" onClick={() => void copy()}>
+          <Copy /> Copy
+        </Button>
+      </div>
+      <p className="text-xs text-muted">When the agent connects, the machine shows as online here within a few seconds.</p>
+    </div>
   );
 }

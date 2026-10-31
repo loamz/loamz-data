@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { readError } from "./api";
 import { expiryOf } from "./auth";
-import { bytes, describe as say, parseTarget, shortTarget, when } from "./format";
+import { bytes, cellText, describe as say, parseTarget, shortTarget, toCsv, when } from "./format";
+import { titleOf } from "./sqlTabs";
 import { childKinds, shortId, validName } from "./kinds";
 import { hrefOf, parseRoute } from "./route";
 import { relayTarget, siteOf } from "./site";
@@ -59,6 +60,9 @@ describe("routes", () => {
     expect(parseRoute(`/catalog/${id}`, "workspace", WS)).toEqual({ screen: "catalog", ws: WS, id });
     expect(parseRoute("/catalog/<script>", "workspace", WS)).toEqual({ screen: "catalog", ws: WS, id: null });
     expect(parseRoute("/settings", "workspace", WS)).toEqual({ screen: "settings", ws: WS });
+    expect(parseRoute("/sql", "workspace", WS)).toEqual({ screen: "sql", ws: WS });
+    expect(parseRoute("/compute", "workspace", WS)).toEqual({ screen: "compute", ws: WS });
+    expect(parseRoute("/account/acme/compute", "account")).toEqual({ screen: "account", org: "acme", tab: "compute" });
     expect(parseRoute("/account/acme", "workspace", WS)).toEqual({ screen: "workspace", ws: WS }); // a workspace site has no account console
   });
   it("writes the address it reads", () => {
@@ -69,6 +73,9 @@ describe("routes", () => {
       [{ screen: "catalog", ws: WS, id: null }, "workspace"],
       [{ screen: "catalog", ws: WS, id }, "workspace"],
       [{ screen: "settings", ws: WS }, "workspace"],
+      [{ screen: "sql", ws: WS }, "workspace"],
+      [{ screen: "compute", ws: WS }, "workspace"],
+      [{ screen: "account", org: "acme", tab: "compute" }, "account"],
     ] as const) {
       expect(parseRoute(hrefOf(r), kind, WS)).toEqual(r);
     }
@@ -133,5 +140,27 @@ describe("words", () => {
     expect(shortTarget(`volume ${id}/a/b.csv`, { [id]: "uploads" })).toBe("volume uploads/a/b.csv");
     expect(shortTarget(`volume ${id}`)).toBe("volume c480ec64…");
     expect(shortTarget("tenant")).toBe("tenant");
+  });
+});
+
+describe("results", () => {
+  it("writes CSV a spreadsheet reads as data, never as a formula", () => {
+    const cols = [{ name: "name" }, { name: "note" }];
+    const csv = toCsv(cols, [["Ana", 'said "hi", twice'], ["=HYPERLINK(\"http://evil\")", "+1"], ["-2", "@SUM(A1)"], [42, null], ["line\nbreak", { a: 1 }]]);
+    const rows = csv.split("\r\n");
+    expect(rows[0]).toBe("name,note");
+    expect(rows[1]).toBe('Ana,"said ""hi"", twice"');
+    expect(rows[2]).toBe(`"'=HYPERLINK(""http://evil"")",'+1`);
+    expect(rows[3]).toBe("'-2,'@SUM(A1)");
+    expect(rows[4]).toBe("42,"); // a number is a number, and null is empty
+    expect(csv).toContain('"{""a"":1}"');
+  });
+  it("shows cells as text", () => {
+    expect([cellText(null), cellText(undefined), cellText(5), cellText(true), cellText([1, 2])]).toEqual(["", "", "5", "true", "[1,2]"]);
+  });
+  it("names a tab from the first words of its statement", () => {
+    expect(titleOf("SELECT * FROM a.b.c", "Query 1")).toBe("SELECT * FROM a.b.c");
+    expect(titleOf("-- note\nSELECT   count(*)\nFROM   shop.main.orders WHERE x", "Query 1")).toBe("SELECT count(*) FROM sho…");
+    expect(titleOf("  \n ", "Query 1")).toBe("Query 1");
   });
 });

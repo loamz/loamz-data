@@ -166,7 +166,57 @@ export const grants = async (ws: string, id: string) => (await json<{ items: Hel
 export const assign = (ws: string, id: string, principal: string, role: Role) => none(send("PUT", `${W(ws)}/securables/${enc(id)}/grants`, { principal, role }));
 export const revoke = (ws: string, id: string, principal: string) => none(send("DELETE", `${W(ws)}/securables/${enc(id)}/grants/${enc(principal)}`));
 
-export const files = async (ws: string, volume: string) => (await json<{ items: FileEntry[] }>(send("GET", `${W(ws)}/volumes/${enc(volume)}/files`))).items;
-export const upload = (ws: string, volume: string, path: string, file: Blob) => none(send("PUT", `${W(ws)}/volumes/${enc(volume)}/files/${seg(path)}`, file, { "Content-Type": "application/octet-stream" }));
-export const download = async (ws: string, volume: string, path: string) => (await send("GET", `${W(ws)}/volumes/${enc(volume)}/files/${seg(path)}`)).blob();
-export const removeFile = (ws: string, volume: string, path: string) => none(send("DELETE", `${W(ws)}/volumes/${enc(volume)}/files/${seg(path)}`));
+/** What holds files: a volume (any files) or a table (CSV or Parquet files a query reads as rows). */
+export type Holder = "volumes" | "tables";
+export const files = async (ws: string, holder: Holder, id: string) => (await json<{ items: FileEntry[] }>(send("GET", `${W(ws)}/${holder}/${enc(id)}/files`))).items;
+export const upload = (ws: string, holder: Holder, id: string, path: string, file: Blob) => none(send("PUT", `${W(ws)}/${holder}/${enc(id)}/files/${seg(path)}`, file, { "Content-Type": "application/octet-stream" }));
+export const download = async (ws: string, holder: Holder, id: string, path: string) => (await send("GET", `${W(ws)}/${holder}/${enc(id)}/files/${seg(path)}`)).blob();
+export const removeFile = (ws: string, holder: Holder, id: string, path: string) => none(send("DELETE", `${W(ws)}/${holder}/${enc(id)}/files/${seg(path)}`));
+
+// Compute
+export interface Compute {
+  id: string;
+  name: string;
+  online: boolean;
+  max_memory_mb: number;
+  max_cpu_millis: number;
+  last_seen_ms: number;
+  created_ms: number;
+  /** Only in the answer to attaching it or giving it a new secret, and only once. */
+  secret?: string;
+}
+export type RunState = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out";
+export interface Run {
+  id: string;
+  kind: "sql" | "job";
+  state: RunState;
+  title: string;
+  requested_by: string;
+  on_behalf_of: string;
+  target_id: string;
+  created_ms: number;
+  started_ms: number;
+  finished_ms: number;
+  error: string;
+  exit_code: number;
+  cancelling: boolean;
+  // Only on the one run, not in a list:
+  spec?: { sql?: string; script?: string; tables?: { id: string; name: string }[]; inputs?: { id: string; kind: string; name: string }[]; output?: string; memory_mb?: number; cpu_millis?: number; timeout_s?: number };
+  stdout?: string;
+  stderr?: string;
+  result?: { columns: { name: string; type: string }[]; rows: unknown[][]; truncated: boolean } | null;
+}
+export const isRunning = (r: Pick<Run, "state">) => r.state === "queued" || r.state === "running";
+
+export const computeTargets = async (ws: string) => (await json<{ items: Compute[] }>(send("GET", `${W(ws)}/compute/targets`))).items;
+export const runStatement = (ws: string, sql: string, limit: number, waitS = 30) => json<Run>(send("POST", `${W(ws)}/sql/statements`, { sql, limit, wait_s: waitS }));
+export const submitJob = (ws: string, b: { title: string; script: string; inputs: string[]; output: string; timeout_s?: number }) => json<Run>(send("POST", `${W(ws)}/runs`, b));
+export const runs = async (ws: string, kind?: "sql" | "job", limit = 50) => (await json<{ items: Run[] }>(send("GET", `${W(ws)}/runs?limit=${limit}${kind ? `&kind=${kind}` : ""}`))).items;
+export const run = (ws: string, id: string) => json<Run>(send("GET", `${W(ws)}/runs/${enc(id)}`));
+export const cancelRun = (ws: string, id: string) => json<Run>(send("POST", `${W(ws)}/runs/${enc(id)}/cancel`, {}));
+
+// Compute, in the account console
+export const attachedCompute = async (org: string) => (await json<{ items: Compute[] }>(send("GET", `/api/v1/orgs/${enc(org)}/compute/targets`))).items;
+export const attachCompute = (org: string, b: { name: string; max_memory_mb: number; max_cpu_millis: number }) => json<Compute>(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets`, b));
+export const newComputeSecret = (org: string, id: string) => json<Compute>(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}/secret`, {}));
+export const detachCompute = (org: string, id: string) => none(send("DELETE", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}`));

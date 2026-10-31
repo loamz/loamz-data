@@ -1,8 +1,9 @@
-import { Database, MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import { Database, MoreHorizontal, Plus, TerminalSquare, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Badge, Button, Menu, MenuContent, MenuItem, MenuTrigger, Page, PageEmpty, SettingGroup, SettingRow, Tabs, TabsContent, TabsList, TabsTrigger, confirmAction, toast } from "@/design";
 import * as api from "@/api";
 import { go } from "@/route";
+import { openInEditor } from "@/sqlTabs";
 import { AccessList } from "@/components/AccessList";
 import { FilesTab } from "@/components/FilesTab";
 import { NewDialog } from "@/components/NewDialog";
@@ -158,12 +159,21 @@ function Detail({ ws, item, onBack, onDropped }: { ws: string; item: api.Securab
   }, item.id);
 
   const subtitle = [...(trail.data ?? []), kindLabel[item.kind].toLowerCase()].join(" / ");
+  const holdsFiles = item.kind === "volume" || item.kind === "table";
+  // A table is named in full in SQL: catalog.schema.table.
+  const fullName = trail.data?.length === 2 ? `${trail.data.join(".")}.${item.name}` : null;
   return (
     <Page
       title={item.name}
       subtitle={subtitle}
       onBack={wide ? undefined : onBack}
       actions={
+        <>
+          {item.kind === "table" && fullName && (
+            <Button variant="primary" onClick={() => openInEditor(ws, `SELECT * FROM ${fullName} LIMIT 100`, item.name)}>
+              <TerminalSquare /> Query
+            </Button>
+          )}
         <Menu>
           <MenuTrigger asChild>
             <Button variant="ghost" size="icon" aria-label="More">
@@ -188,17 +198,18 @@ function Detail({ ws, item, onBack, onDropped }: { ws: string; item: api.Securab
             </MenuItem>
           </MenuContent>
         </Menu>
+        </>
       }
     >
-      <Tabs defaultValue={item.kind === "volume" ? "files" : "about"} className="space-y-4">
+      <Tabs defaultValue={holdsFiles ? "files" : "about"} className="space-y-4">
         <TabsList>
-          {item.kind === "volume" && <TabsTrigger value="files">Files</TabsTrigger>}
+          {holdsFiles && <TabsTrigger value="files">Files</TabsTrigger>}
           <TabsTrigger value="about">About</TabsTrigger>
           <TabsTrigger value="access">Access</TabsTrigger>
         </TabsList>
-        {item.kind === "volume" && (
+        {holdsFiles && (
           <TabsContent value="files">
-            <FilesTab ws={ws} volume={item.id} />
+            <FilesTab ws={ws} holder={item.kind === "table" ? "tables" : "volumes"} id={item.id} hint={item.kind === "table" ? "Upload CSV or Parquet files. A query reads all of a table's files together, as its rows." : undefined} />
           </TabsContent>
         )}
         <TabsContent value="about">

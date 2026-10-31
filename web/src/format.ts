@@ -55,3 +55,20 @@ export function shortTarget(target: string, names: Record<string, string> = {}):
   const name = names[t.id] ?? `${t.id.slice(0, 8)}…`;
   return `${t.kind} ${name}${t.path}${t.rest ? ` ${t.rest.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, (x) => x.slice(0, 8))}` : ""}`;
 }
+
+/** A result cell as text. */
+export function cellText(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  return typeof v === "object" ? JSON.stringify(v) : String(v);
+}
+
+/** Rows as CSV the way a spreadsheet reads it: quotes doubled, and a text cell that could be taken for a formula (`=`, `+`, `-`, `@`)
+ * marked as text, so a value someone put in a table cannot run when the file is opened. */
+export function toCsv(columns: { name: string }[], rows: unknown[][]): string {
+  const cell = (v: unknown) => {
+    let text = cellText(v);
+    if (typeof v === "string" && /^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+    return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  return [columns.map((c) => cell(c.name)).join(","), ...rows.map((r) => r.map(cell).join(","))].join("\r\n");
+}
