@@ -65,6 +65,11 @@ impl Volumes {
         Ok(self.root.join(volume))
     }
 
+    /// The folder of one volume, for naming it to a client.
+    pub fn path_of(&self, volume: &str) -> Result<PathBuf, FileError> {
+        self.dir(volume)
+    }
+
     /// Splits a caller's path into safe components. No empty parts, no `.` or `..`, no backslashes or control characters.
     pub(crate) fn components(rel: &str) -> Result<Vec<&str>, FileError> {
         if rel.is_empty() || rel.len() > 1024 {

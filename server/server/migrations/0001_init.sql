@@ -68,6 +68,8 @@ CREATE TABLE securables (
     consistency    TEXT NOT NULL,
     state          TEXT NOT NULL,
     created_ms     BIGINT NOT NULL,
+    -- a table's current Iceberg metadata file (a path inside the table's own folder); empty for everything else
+    metadata       TEXT NOT NULL,
     UNIQUE (org_id, parent_id, name)
 );
 CREATE INDEX securables_parent ON securables (org_id, parent_id);

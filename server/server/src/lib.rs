@@ -24,6 +24,7 @@ pub fn routes() -> Routes {
         .merge(governance::audit::api::routes())
         .merge(governance::lifecycle::api::routes())
         .merge(storage::volumes::api::routes())
+        .merge(storage::tables::api::routes())
         .merge(compute::api::routes())
 }
 

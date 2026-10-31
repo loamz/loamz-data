@@ -148,8 +148,15 @@ pub async fn create(
         Kind::View => Privilege::CreateView,
     };
     iam::require(app, identity, org, sides, need, &parent).await?;
+    // A table exists only with its Iceberg metadata (made by the tables service); nothing else has any.
+    if (draft.kind == Kind::Table) != draft.table.is_some() {
+        return Err(Error::Invalid(
+            "a table is created with its columns, through the tables service".into(),
+        ));
+    }
+    let (id, metadata) = draft.table.unwrap_or_else(|| (new_id(), String::new()));
     let entry = Securable {
-        id: new_id(),
+        id,
         org_id: org.to_owned(),
         kind: draft.kind,
         parent_id: draft.parent_id,
@@ -161,6 +168,7 @@ pub async fn create(
         consistency: draft.consistency,
         state: "active".into(),
         created_ms: now_ms(),
+        metadata,
     };
     let mut uow = Uow::begin(app).await?;
     if store::name_taken(&mut *uow.tx, org, &entry.parent_id, &entry.name).await? {
@@ -190,6 +198,14 @@ pub async fn create(
     .await?;
     uow.commit().await?;
     Ok(entry)
+}
+
+/// Moves a table to its next metadata file in the same unit of work as its audit entry; false if another commit got there first.
+///
+/// # Errors
+/// The database could not be written.
+pub async fn advance(uow: &mut Uow<'_>, org: &str, id: &str, from: &str, to: &str) -> Result<bool> {
+    store::advance(&mut *uow.tx, org, id, from, to).await
 }
 
 /// Whether anything the caller holds sits at or below this entry (so a container they can drill into is shown).

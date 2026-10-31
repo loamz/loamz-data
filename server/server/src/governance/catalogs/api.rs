@@ -76,6 +76,7 @@ async fn create(
         classification: req.classification,
         placement: req.placement,
         consistency: req.consistency,
+        table: None,
     };
     let made =
         service::create(&app, &c.identity, &c.workspace.id, c.org(), &c.sides, draft).await?;

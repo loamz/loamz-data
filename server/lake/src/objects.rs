@@ -31,7 +31,11 @@ pub struct Bucket {
 #[derive(Clone)]
 pub enum Store {
     Folder(Volumes),
-    Bucket(Arc<AmazonS3>),
+    Bucket {
+        s3: Arc<AmazonS3>,
+        endpoint: String,
+        name: String,
+    },
 }
 
 pub type Reading = BoxStream<'static, std::io::Result<Bytes>>;
@@ -53,13 +57,38 @@ impl Store {
             .with_region("auto")
             .build()
             .map_err(|e| FileError::Io(std::io::Error::other(e.to_string())))?;
-        Ok(Self::Bucket(Arc::new(s3)))
+        Ok(Self::Bucket {
+            s3: Arc::new(s3),
+            endpoint: b.endpoint.clone(),
+            name: b.name.clone(),
+        })
     }
 
     /// Whether machines other than this server can be handed signed addresses.
     #[must_use]
     pub fn is_remote(&self) -> bool {
-        matches!(self, Self::Bucket(_))
+        matches!(self, Self::Bucket { .. })
+    }
+
+    /// The address a client names a volume's folder by: `s3://bucket/<volume>`, or `file://` and the folder.
+    ///
+    /// # Errors
+    /// The volume id is not allowed.
+    pub fn uri(&self, volume: &str) -> Result<String, FileError> {
+        check_volume(volume)?;
+        Ok(match self {
+            Self::Folder(v) => format!("file://{}", v.path_of(volume)?.display()),
+            Self::Bucket { name, .. } => format!("s3://{name}/{volume}"),
+        })
+    }
+
+    /// For a bucket: its S3 endpoint and name.
+    #[must_use]
+    pub fn bucket_place(&self) -> Option<(&str, &str)> {
+        match self {
+            Self::Bucket { endpoint, name, .. } => Some((endpoint, name)),
+            Self::Folder(_) => None,
+        }
     }
 
     fn key(volume: &str, rel: &str) -> Result<Key, FileError> {
@@ -77,7 +106,7 @@ impl Store {
     pub async fn begin_put(&self, volume: &str, rel: &str, max: u64) -> Result<Upload, FileError> {
         match self {
             Self::Folder(v) => Ok(Upload::Folder(v.begin_put(volume, rel, max).await?)),
-            Self::Bucket(s3) => {
+            Self::Bucket { s3, .. } => {
                 let up = s3
                     .put_multipart(&Self::key(volume, rel)?)
                     .await
@@ -98,7 +127,7 @@ impl Store {
                 let (file, size) = v.open(volume, rel).await?;
                 Ok((ReaderStream::new(file).boxed(), size))
             }
-            Self::Bucket(s3) => {
+            Self::Bucket { s3, .. } => {
                 let got = s3.get(&Self::key(volume, rel)?).await.map_err(gone)?;
                 let size = got.meta.size;
                 Ok((
@@ -112,7 +141,7 @@ impl Store {
     pub async fn delete(&self, volume: &str, rel: &str) -> Result<(), FileError> {
         match self {
             Self::Folder(v) => v.delete(volume, rel).await,
-            Self::Bucket(s3) => {
+            Self::Bucket { s3, .. } => {
                 let key = Self::key(volume, rel)?;
                 // A bucket deletes quietly what is not there; a caller should be told.
                 s3.head(&key).await.map_err(gone)?;
@@ -125,7 +154,7 @@ impl Store {
     pub async fn list(&self, volume: &str) -> Result<Vec<Entry>, FileError> {
         match self {
             Self::Folder(v) => v.list(volume).await,
-            Self::Bucket(s3) => {
+            Self::Bucket { s3, .. } => {
                 let prefix = Self::prefix(volume)?;
                 let cut = volume.len() + 1;
                 let mut out: Vec<Entry> = s3
@@ -147,7 +176,7 @@ impl Store {
     pub async fn remove_volume(&self, volume: &str) -> Result<(), FileError> {
         match self {
             Self::Folder(v) => v.remove_volume(volume).await,
-            Self::Bucket(s3) => {
+            Self::Bucket { s3, .. } => {
                 let prefix = Self::prefix(volume)?;
                 let keys = s3.list(Some(&prefix)).map_ok(|m| m.location).boxed();
                 s3.delete_stream(keys)
@@ -163,7 +192,7 @@ impl Store {
     pub async fn exists(&self, volume: &str) -> Result<bool, FileError> {
         match self {
             Self::Folder(v) => v.exists(volume).await,
-            Self::Bucket(s3) => {
+            Self::Bucket { s3, .. } => {
                 let prefix = Self::prefix(volume)?;
                 let first = s3.list(Some(&prefix)).next().await;
                 first.transpose().map(|m| m.is_some()).map_err(io)
@@ -204,7 +233,7 @@ impl Store {
         rel: &str,
         valid: Duration,
     ) -> Result<String, FileError> {
-        let Self::Bucket(s3) = self else {
+        let Self::Bucket { s3, .. } = self else {
             return Err(FileError::BadPath("this store is not a bucket"));
         };
         let url = s3
