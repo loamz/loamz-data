@@ -1,0 +1,36 @@
+/* Loamz Data. The design system (tokens, primitives) is copied from the chat app; this file only holds the page base. */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "@fontsource-variable/geist";
+@import "./design/tokens.css";
+
+:root {
+  --font-geist-sans: "Geist Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-geist-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body { background: var(--background); color: var(--foreground); font-family: var(--font-geist-sans); font-size: 14px; -webkit-font-smoothing: antialiased; }
+  /* Fingers need more room than a mouse pointer. */
+  @media (pointer: coarse) { :root { --control-sm: 2.75rem; --control-md: 2.75rem; --control-lg: 2.75rem; } }
+  ::selection { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+}
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+* { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+
+/* The one way a region scrolls: smooth, contained, and the bar never shifts the layout. */
+.scroll-area { overflow-y: auto; scroll-behavior: smooth; overscroll-behavior: contain; scrollbar-gutter: stable; }
+@media (prefers-reduced-motion: reduce) { .scroll-area { scroll-behavior: auto; } }
+
+/* The few motion classes the primitives name. */
+@keyframes loamz-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes loamz-fade { from { opacity: 0; } to { opacity: 1; } }
+.loamz-pop, .loamz-pop-in, .loamz-dialog { animation: loamz-in var(--duration-normal) var(--ease-out-expo) both; }
+.loamz-fade { animation: loamz-fade var(--duration-fast) ease-out both; }
+@media (prefers-reduced-motion: reduce) { .loamz-pop, .loamz-pop-in, .loamz-dialog, .loamz-fade { animation: none; } }

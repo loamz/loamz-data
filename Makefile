@@ -1,10 +1,11 @@
 # Root entry points. Rust: one Cargo workspace. Python: only the embeddable engine (server/engine).
-.PHONY: lint test test-engine imports budget check help
+.PHONY: lint test test-engine test-web imports budget check help
 
 help:
 	@echo "make lint     cargo fmt --check + clippy"
 	@echo "make test     cargo test (SQLite; add LOAMZ_TEST_POSTGRES_URL and --include-ignored for Postgres)"
 	@echo "make budget   release build: idle memory, start time, one binary"
+	@echo "make test-web  web app: types and unit tests"
 	@echo "make imports  engine import contract"
 	@echo "make check    lint + test + imports"
 
@@ -15,6 +16,9 @@ lint:
 test:
 	cargo test --workspace
 
+test-web:
+	cd web && pnpm exec tsc --noEmit && pnpm test
+
 test-engine:
 	cd server/engine && uv run --package loamz-engine pytest -q -n 4 --timeout=120
 
@@ -24,4 +28,4 @@ imports:
 budget:
 	scripts/budget.sh
 
-check: lint test imports
+check: lint test test-web imports
