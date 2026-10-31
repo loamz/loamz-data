@@ -8,7 +8,7 @@
 //! the agent. Both are kept, because what such a call may do is only what both are allowed to do.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     sync::{Mutex, RwLock},
     time::{Duration, Instant},
 };
@@ -115,7 +115,7 @@ struct Claims {
 #[serde(untagged)]
 enum Organizations {
     List(Vec<String>),
-    Map(HashMap<String, serde::de::IgnoredAny>),
+    Map(BTreeMap<String, serde_json::Value>),
 }
 
 #[derive(Deserialize)]
@@ -148,11 +148,13 @@ struct RawKey {
 struct Discovery {
     issuer: String,
     jwks_uri: String,
+    token_endpoint: String,
 }
 
 pub struct Verifier {
     keys: RwLock<HashMap<String, (String, String)>>,
     issuer: String,
+    token_endpoint: RwLock<Option<String>>,
     last_fetch: Mutex<Option<Instant>>,
     http: reqwest::Client,
 }
@@ -163,6 +165,7 @@ impl Verifier {
         Self {
             keys: RwLock::new(HashMap::new()),
             issuer: issuer.trim_end_matches('/').to_owned(),
+            token_endpoint: RwLock::new(None),
             last_fetch: Mutex::new(None),
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
@@ -226,7 +229,40 @@ impl Verifier {
             .text()
             .await
             .map_err(|e| e.to_string())?;
+        if let Ok(mut slot) = self.token_endpoint.write() {
+            *slot = Some(doc.token_endpoint);
+        }
         self.set_keys(&keys).map_err(|e| e.to_string())
+    }
+
+    /// Sends a token request to the issuer, on behalf of the browser (see `kernel::system`). Returns the issuer's status and body.
+    ///
+    /// # Errors
+    /// The issuer's address is not known yet, or it could not be reached.
+    pub async fn exchange(&self, form: &[(&str, &str)]) -> Result<(u16, String), String> {
+        let url = self
+            .token_endpoint
+            .read()
+            .ok()
+            .and_then(|e| e.clone())
+            .ok_or("the sign-in service has not been reached yet")?;
+        let res = self
+            .http
+            .post(url)
+            .form(form)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = res.status().as_u16();
+        Ok((status, res.text().await.map_err(|e| e.to_string())?))
+    }
+
+    /// For tests: where token requests go, without a discovery document.
+    #[doc(hidden)]
+    pub fn set_token_endpoint(&self, url: &str) {
+        if let Ok(mut slot) = self.token_endpoint.write() {
+            *slot = Some(url.to_owned());
+        }
     }
 
     fn key(&self, kid: &str) -> Option<DecodingKey> {

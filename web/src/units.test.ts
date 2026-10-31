@@ -4,36 +4,73 @@ import { expiryOf } from "./auth";
 import { bytes, describe as say, parseTarget, shortTarget, when } from "./format";
 import { childKinds, shortId, validName } from "./kinds";
 import { hrefOf, parseRoute } from "./route";
+import { relayTarget, siteOf } from "./site";
 
 const id = "c480ec64-2a04-4f53-8b8d-e7daffddbed9";
 
-describe("routes", () => {
-  it("reads the address", () => {
-    expect(parseRoute("/")).toEqual({ screen: "home" });
-    expect(parseRoute(`/w/${id}`)).toEqual({ screen: "workspace", ws: id });
-    expect(parseRoute("/w/" + id + "/catalog")).toEqual({ screen: "catalog", ws: id, id: null });
-    expect(parseRoute(`/w/${id}/catalog/${id}`)).toEqual({ screen: "catalog", ws: id, id });
-    expect(parseRoute(`/w/${id}/settings`)).toEqual({ screen: "settings", ws: id });
-    expect(parseRoute("/account/acme/activity")).toEqual({ screen: "account", org: "acme", tab: "activity" });
-    expect(parseRoute("/account/acme")).toEqual({ screen: "account", org: "acme", tab: "workspaces" });
-    expect(parseRoute("/account/personal%3Aabc/admins")).toEqual({ screen: "account", org: "personal:abc", tab: "admins" });
+const WS = "6f1c1a52-0000-4000-8000-000000000001";
+
+describe("sites", () => {
+  it("tells a workspace's own site from the account site", () => {
+    expect(siteOf("localhost:5180")).toEqual({ kind: "account", base: "localhost:5180" });
+    expect(siteOf(`w-${WS}.localhost:5180`)).toEqual({ kind: "workspace", ws: WS, base: "localhost:5180" });
+    expect(siteOf(`w-${WS}.data.loamz.com`)).toEqual({ kind: "workspace", ws: WS, base: "data.loamz.com" });
+    // Anything that only looks like one is the account site, never a workspace.
+    for (const h of ["w-nope.data.loamz.com", `x-${WS}.data.loamz.com`, `w-${WS}`, "data.loamz.com"]) {
+      expect(siteOf(h).kind).toBe("account");
+    }
   });
-  it("ignores what cannot be an id, and an unknown tab", () => {
-    expect(parseRoute("/w/../etc/catalog")).toEqual({ screen: "home" });
-    expect(parseRoute(`/w/${id}/catalog/<script>`)).toEqual({ screen: "catalog", ws: id, id: null });
-    expect(parseRoute("/account/acme/nonsense")).toEqual({ screen: "account", org: "acme", tab: "workspaces" });
-    expect(parseRoute("/somewhere/else")).toEqual({ screen: "home" });
+
+  const state = (origin: string) => `nonce.${btoa(origin).replace(/\+/g, "-").replace(/\//g, "_")}`;
+  it("hands a sign-in code only to a workspace site of this account site", () => {
+    const own = `http://w-${WS}.localhost:5180`;
+    expect(relayTarget(state(own), "http:", "localhost:5180")).toBe(own);
+  });
+  it("refuses everywhere else", () => {
+    const base = "data.loamz.com";
+    for (const origin of [
+      `https://w-${WS}.evil.com`, //                  another domain
+      `https://w-${WS}.${base}.evil.com`, //          a lookalike
+      `https://${base}`, //                           the account site itself
+      `http://w-${WS}.${base}`, //                    the wrong protocol
+      `https://w-${WS}.${base}/steal`, //             a path (not an origin)
+      `https://user@w-${WS}.${base}`, //              credentials in the address
+    ]) {
+      expect(relayTarget(state(origin), "https:", base), origin).toBeNull();
+    }
+    for (const bad of ["", "nodot", "a.", "a.!!!", `a.${btoa("not a url")}`]) {
+      expect(relayTarget(bad, "https:", base), bad).toBeNull();
+    }
+  });
+});
+
+describe("routes", () => {
+  it("reads the account site's addresses", () => {
+    expect(parseRoute("/", "account")).toEqual({ screen: "home" });
+    expect(parseRoute("/account/acme/activity", "account")).toEqual({ screen: "account", org: "acme", tab: "activity" });
+    expect(parseRoute("/account/acme", "account")).toEqual({ screen: "account", org: "acme", tab: "workspaces" });
+    expect(parseRoute("/account/personal%3Aabc/admins", "account")).toEqual({ screen: "account", org: "personal:abc", tab: "admins" });
+    expect(parseRoute("/account/acme/nonsense", "account")).toEqual({ screen: "account", org: "acme", tab: "workspaces" });
+    expect(parseRoute("/catalog", "account")).toEqual({ screen: "home" });
+  });
+  it("reads a workspace site's addresses", () => {
+    expect(parseRoute("/", "workspace", WS)).toEqual({ screen: "workspace", ws: WS });
+    expect(parseRoute("/catalog", "workspace", WS)).toEqual({ screen: "catalog", ws: WS, id: null });
+    expect(parseRoute(`/catalog/${id}`, "workspace", WS)).toEqual({ screen: "catalog", ws: WS, id });
+    expect(parseRoute("/catalog/<script>", "workspace", WS)).toEqual({ screen: "catalog", ws: WS, id: null });
+    expect(parseRoute("/settings", "workspace", WS)).toEqual({ screen: "settings", ws: WS });
+    expect(parseRoute("/account/acme", "workspace", WS)).toEqual({ screen: "workspace", ws: WS }); // a workspace site has no account console
   });
   it("writes the address it reads", () => {
-    for (const r of [
-      { screen: "home" },
-      { screen: "workspace", ws: id },
-      { screen: "catalog", ws: id, id: null },
-      { screen: "catalog", ws: id, id },
-      { screen: "settings", ws: id },
-      { screen: "account", org: "personal:abc", tab: "erase" },
+    for (const [r, kind] of [
+      [{ screen: "home" }, "account"],
+      [{ screen: "account", org: "personal:abc", tab: "erase" }, "account"],
+      [{ screen: "workspace", ws: WS }, "workspace"],
+      [{ screen: "catalog", ws: WS, id: null }, "workspace"],
+      [{ screen: "catalog", ws: WS, id }, "workspace"],
+      [{ screen: "settings", ws: WS }, "workspace"],
     ] as const) {
-      expect(parseRoute(hrefOf(r))).toEqual(r);
+      expect(parseRoute(hrefOf(r), kind, WS)).toEqual(r);
     }
   });
 });

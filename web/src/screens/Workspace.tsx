@@ -11,9 +11,9 @@ export function Workspace({ ws, me }: { ws: string; me: api.Me | undefined }) {
   const catalogs = useLoad(() => api.list(ws, ""), ws);
   if (w.error) {
     return (
-      <Page title="Workspace not found" onBack={() => go("/")}>
+      <Page title="Workspace not found">
         <PageEmpty icon={Database} title="This workspace isn't here, or you are not part of it">
-          Go back Home to see the workspaces you can open.
+          Check the address.
         </PageEmpty>
       </Page>
     );
@@ -26,7 +26,7 @@ export function Workspace({ ws, me }: { ws: string; me: api.Me | undefined }) {
     <Page
       title={here.name}
       subtitle={`${org === "Personal" ? "Your own space" : (org ?? "")} · you are ${here.account_admin ? "an account admin" : here.admin ? "an admin" : "a user"} here`}
-      actions={me && <WorkspaceSwitcher current={ws} all={me.workspaces} where="overview" />}
+      actions={me && <WorkspaceSwitcher current={ws} all={me.workspaces} />}
       layout="columns"
     >
       <Section title="Catalogs" description="The data you can reach in this workspace. Open one to browse its schemas, tables and files.">

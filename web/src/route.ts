@@ -1,9 +1,10 @@
-// The address is the screen. Real paths, so a link can be shared and the server can serve the page at any of them:
-//   /                        Home
-//   /w/<ws>                  a workspace's overview: what you can do in it
-//   /w/<ws>/catalog[/<id>]   its Catalog Explorer
-//   /w/<ws>/settings         the workspace's members, entitlements, bound catalogs
-//   /account/<org>[/<tab>]   the account console of an organization (tabs: workspaces, admins, activity, erase)
+// The address is the screen. Real paths, so a link can be shared and the server can serve the page at any of them. There are
+// two sites (see site.ts), each with its own paths:
+//   account site    /                        Home
+//                   /account/<org>[/<tab>]   the account console of an organization (tabs: workspaces, admins, activity, erase)
+//   workspace site  /                        the workspace's overview: what you can do in it
+//                   /catalog[/<id>]          its Catalog Explorer
+//                   /settings                its members, entitlements, bound catalogs
 
 export type AccountTab = "workspaces" | "admins" | "activity" | "erase";
 
@@ -17,12 +18,12 @@ export type Route =
 const TABS: AccountTab[] = ["workspaces", "admins", "activity", "erase"];
 const WS = /^[0-9a-f-]{8,64}$/;
 
-export function parseRoute(path: string): Route {
+export function parseRoute(path: string, kind: "account" | "workspace", ws = ""): Route {
   const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
-  if (parts[0] === "w" && parts[1] && WS.test(parts[1])) {
-    if (parts[2] === "settings") return { screen: "settings", ws: parts[1] };
-    if (parts[2] === "catalog") return { screen: "catalog", ws: parts[1], id: parts[3] && WS.test(parts[3]) ? parts[3] : null };
-    return { screen: "workspace", ws: parts[1] };
+  if (kind === "workspace") {
+    if (parts[0] === "settings") return { screen: "settings", ws };
+    if (parts[0] === "catalog") return { screen: "catalog", ws, id: parts[1] && WS.test(parts[1]) ? parts[1] : null };
+    return { screen: "workspace", ws };
   }
   if (parts[0] === "account" && parts[1]) {
     const tab = TABS.find((t) => t === parts[2]);
@@ -36,11 +37,11 @@ export function hrefOf(r: Route): string {
     case "home":
       return "/";
     case "workspace":
-      return `/w/${r.ws}`;
+      return "/";
     case "catalog":
-      return `/w/${r.ws}/catalog${r.id ? `/${r.id}` : ""}`;
+      return `/catalog${r.id ? `/${r.id}` : ""}`;
     case "settings":
-      return `/w/${r.ws}/settings`;
+      return "/settings";
     case "account":
       return `/account/${encodeURIComponent(r.org)}/${r.tab}`;
   }

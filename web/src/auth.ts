@@ -2,6 +2,8 @@
 // The page keeps the session in sessionStorage, so it ends with the tab, and renews the access token with the refresh
 // token shortly before it expires. There is no other way to sign in.
 
+import { centralOrigin, relayTarget, site } from "./site";
+
 const SESSION = "loamz-data-session";
 const FLOW = "loamz-data-oidc";
 const authority = import.meta.env.VITE_OIDC_AUTHORITY as string | undefined;
@@ -80,18 +82,19 @@ export async function token(): Promise<string | null> {
 
 async function renew(s: Session): Promise<string | null> {
   try {
-    const { token_endpoint } = await endpoints();
-    const r = await fetch(token_endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ grant_type: "refresh_token", client_id: clientId, refresh_token: s.refresh ?? "" }),
-    });
+    const r = await exchange({ grant_type: "refresh_token", refresh_token: s.refresh ?? "" });
     if (!r.ok) throw new Error("refused");
     return keep((await r.json()) as TokenAnswer, s.id);
   } catch {
     write(null);
     return null;
   }
+}
+
+/** Asks our own server to talk to Keycloak's token endpoint for us. Keycloak only lets exact addresses call it from a page, and every
+ * workspace is a site of its own, so the page does not call it directly (see the server's `/api/v1/auth/token`). */
+function exchange(body: Record<string, string>): Promise<Response> {
+  return fetch("/api/v1/auth/token", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 }
 
 interface TokenAnswer {
@@ -119,7 +122,7 @@ async function challenge(verifier: string): Promise<string> {
   return btoa(String.fromCharCode(...new Uint8Array(d))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-let discovered: { authorization_endpoint: string; token_endpoint: string; end_session_endpoint?: string } | null = null;
+let discovered: { authorization_endpoint: string; end_session_endpoint?: string } | null = null;
 async function endpoints() {
   if (discovered) return discovered;
   const r = await fetch(`${authority}/.well-known/openid-configuration`);
@@ -128,19 +131,32 @@ async function endpoints() {
   return discovered!;
 }
 
-/** Sends the browser to Keycloak, and brings it back to where it was. */
-export async function startLogin(): Promise<void> {
+let starting: Promise<void> | null = null;
+
+/** Sends the browser to Keycloak, and brings it back to where it was. A workspace site comes back through the account site's relay,
+ * because Keycloak only accepts exact addresses and a workspace has an address of its own. */
+export function startLogin(): Promise<void> {
+  starting ??= begin().catch((e: unknown) => {
+    starting = null;
+    throw e;
+  });
+  return starting;
+}
+
+async function begin(): Promise<void> {
   if (!authority) throw new Error("Sign-in is not set up for this address (VITE_OIDC_AUTHORITY).");
   const verifier = random();
-  const state = random(16);
-  sessionStorage.setItem(FLOW, JSON.stringify({ verifier, state, back: location.pathname + location.search }));
+  const workspace = site.kind === "workspace";
+  const redirect = workspace ? `${centralOrigin}/relay` : `${location.origin}/`;
+  const state = workspace ? `${random(16)}.${btoa(location.origin).replace(/\+/g, "-").replace(/\//g, "_")}` : random(16);
+  sessionStorage.setItem(FLOW, JSON.stringify({ verifier, state, redirect, back: location.pathname + location.search }));
   const { authorization_endpoint } = await endpoints();
   const q = new URLSearchParams({
     client_id: clientId,
     response_type: "code",
     // `organization:*` asks for every organization the person belongs to, not just one.
     scope: "openid organization:*",
-    redirect_uri: location.origin + "/",
+    redirect_uri: redirect,
     state,
     code_challenge: await challenge(verifier),
     code_challenge_method: "S256",
@@ -148,37 +164,69 @@ export async function startLogin(): Promise<void> {
   location.assign(`${authorization_endpoint}?${q}`);
 }
 
-/** Back from Keycloak with `?code=…`: trades it for a session. Returns false if this page load was not a sign-in return. */
-export async function finishLogin(): Promise<boolean> {
+/** The two addresses on the account site that are not screens. `/relay` hands a sign-in code on to the workspace site that asked for it,
+ * and `/signout` ends the session here and in Keycloak (a workspace site sends you there, so signing out is the same everywhere).
+ * Returns whether this page was one of them. */
+export function relayIfNeeded(): boolean {
+  if (site.kind !== "account") return false;
+  if (location.pathname === "/signout") {
+    void signOut();
+    return true;
+  }
+  if (location.pathname !== "/relay") return false;
+  const target = relayTarget(new URLSearchParams(location.search).get("state") ?? "", location.protocol, site.base);
+  location.replace(target ? `${target}/${location.search}` : "/");
+  return true;
+}
+
+let finishing: Promise<boolean> | null = null;
+
+/** Back from Keycloak with `?code=…`: trades it for a session. Returns false if this page load was not a sign-in return. The code
+ * can be used once, so this runs once however many times it is asked for (React runs effects twice while developing). */
+export function finishLogin(): Promise<boolean> {
+  finishing ??= complete();
+  return finishing;
+}
+
+async function complete(): Promise<boolean> {
   const p = new URLSearchParams(location.search);
+  if (p.get("error") && authority) {
+    history.replaceState(null, "", location.pathname);
+    throw new Error(p.get("error_description") || "The sign-in was not completed.");
+  }
   const code = p.get("code");
   if (!code || !authority) return false;
-  const saved = JSON.parse(sessionStorage.getItem(FLOW) ?? "null") as { verifier: string; state: string; back: string } | null;
+  const saved = JSON.parse(sessionStorage.getItem(FLOW) ?? "null") as { verifier: string; state: string; redirect: string; back: string } | null;
   sessionStorage.removeItem(FLOW);
   if (!saved || saved.state !== p.get("state")) {
     history.replaceState(null, "", "/");
     throw new Error("The sign-in did not match this tab. Try again.");
   }
-  const { token_endpoint } = await endpoints();
-  const r = await fetch(token_endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ grant_type: "authorization_code", client_id: clientId, code, redirect_uri: location.origin + "/", code_verifier: saved.verifier }),
-  });
+  const r = await exchange({ grant_type: "authorization_code", code, redirect_uri: saved.redirect, code_verifier: saved.verifier });
   history.replaceState(null, "", saved.back && saved.back !== "/" ? saved.back : "/");
   if (!r.ok) throw new Error("The sign-in service refused the code.");
   keep((await r.json()) as TokenAnswer);
   return true;
 }
 
-/** Ends the session here and in Keycloak. */
+let leaving = false;
+/** True from the moment someone chose to sign out, so a workspace site does not start signing them in again. */
+export const leavingNow = () => leaving;
+
+/** Ends the session here and in Keycloak, and goes to the account site's front page. */
 export async function signOut(): Promise<void> {
+  leaving = true;
   const s = memory ?? read();
   write(null);
+  if (site.kind === "workspace") {
+    // Only the account site can end the whole session: it holds its own, and it is the address Keycloak sends people back to.
+    location.assign(`${centralOrigin}/signout`);
+    return;
+  }
   try {
     const { end_session_endpoint } = await endpoints();
     if (end_session_endpoint) {
-      const q = new URLSearchParams({ client_id: clientId, post_logout_redirect_uri: location.origin + "/" });
+      const q = new URLSearchParams({ client_id: clientId, post_logout_redirect_uri: centralOrigin + "/" });
       if (s?.id) q.set("id_token_hint", s.id);
       location.assign(`${end_session_endpoint}?${q}`);
     }

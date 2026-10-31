@@ -6,6 +6,7 @@ from playwright.sync_api import sync_playwright, expect
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 acc = json.load(open(os.path.join(ROOT, ".dev", "accounts.json")))
 SITE = "http://localhost:5180"
+WS_HOST = re.compile(r"^http://w-[0-9a-f-]{36}\.localhost:5180/")
 shots = os.environ.get("SHOTS")
 problems, steps = [], 0
 
@@ -66,10 +67,18 @@ with sync_playwright() as p:
     shot(ana, "account-workspaces")
 
     ana.get_by_role("button", name="Open").click()
-    expect(ana.get_by_role("heading", name="Finance")).to_be_visible()
+    ana.wait_for_url(WS_HOST, timeout=30000)
+    expect(ana.get_by_role("heading", name="Finance")).to_be_visible(); step("opening a workspace goes to the workspace's own site, signed in without asking again")
     expect(ana.get_by_text("Jobs and ETL")).to_be_visible(); expect(ana.get_by_text("SQL editor")).to_be_visible()
-    step("opening a workspace shows its overview, with what is and is not there yet")
-    expect(ana.get_by_label("Main").get_by_label("Catalog")).to_be_visible(); step("and now the rail has the workspace's own things")
+    step("its overview shows what is and is not there yet")
+    expect(ana.get_by_label("Main").get_by_label("Catalog")).to_be_visible(); step("and the rail has the workspace's own things")
+    for out in ("Home", "All workspaces", "Account console"):
+        expect(ana.get_by_label("Main").get_by_label(out)).to_have_count(0)
+    ana.get_by_label("Account menu").click()
+    expect(ana.get_by_role("menuitem", name="Sign out")).to_be_visible()
+    expect(ana.get_by_role("menuitem")).to_have_count(1); step("inside a workspace the only way out is Sign out")
+    ana.keyboard.press("Escape")
+    assert ana.evaluate("[...document.querySelectorAll('a[href]')].every(a => new URL(a.href, location.href).origin === location.origin)"); step("and no link on the page leaves this site")
     ana.get_by_label("Main").get_by_label("Workspace settings").click()
     expect(ana.get_by_role("heading", name="Finance")).to_be_visible()
     principal(ana, "Group", "/finance/analysts"); ana.get_by_role("button", name="Assign").click()
@@ -78,13 +87,13 @@ with sync_playwright() as p:
 
     # -- the catalog
     ana.get_by_label("Main").get_by_label("Catalog").click()
-    ana.get_by_role("button", name="New").click(); ana.get_by_placeholder("sales_2026").fill("Bad Name")
+    ana.get_by_role("button", name="New", exact=True).click(); ana.get_by_placeholder("sales_2026").fill("Bad Name")
     expect(ana.get_by_role("button", name="Create")).to_be_disabled(); step("a name the server would refuse cannot be submitted")
     ana.get_by_placeholder("sales_2026").fill("sales"); ana.get_by_role("button", name="Create").click()
     expect(ana.get_by_role("heading", name="sales")).to_be_visible(); step("a catalog is created")
-    ana.get_by_role("button", name="New").click(); ana.get_by_placeholder("sales_2026").fill("raw"); ana.get_by_role("button", name="Create").click()
+    ana.get_by_role("button", name="New", exact=True).click(); ana.get_by_placeholder("sales_2026").fill("raw"); ana.get_by_role("button", name="Create").click()
     expect(ana.get_by_role("heading", name="raw")).to_be_visible()
-    ana.get_by_role("button", name="New").click(); ana.get_by_label("Kind").click(); ana.get_by_role("option", name="Volume").click()
+    ana.get_by_role("button", name="New", exact=True).click(); ana.get_by_label("Kind").click(); ana.get_by_role("option", name="Volume").click()
     ana.get_by_placeholder("sales_2026").fill("uploads"); ana.get_by_role("button", name="Create").click()
     expect(ana.get_by_role("heading", name="uploads")).to_be_visible(); step("a schema and a volume inside it")
 
@@ -99,10 +108,10 @@ with sync_playwright() as p:
 
     ana.get_by_label("Main").get_by_label("Workspace overview").click()
     expect(ana.get_by_role("button", name="sales")).to_be_visible(); step("the overview lists the workspace's catalogs")
-    ana.get_by_label("Main").get_by_label("All workspaces").click()
-    expect(ana.get_by_role("heading", name="Welcome, Ana")).to_be_visible(); step("All workspaces goes back to Home")
-    expect(ana.get_by_label("Main").get_by_label("Catalog")).to_have_count(0)
+    ana.goto(SITE + "/")
+    expect(ana.get_by_role("heading", name="Welcome, Ana")).to_be_visible(); step("the account site is its own address, and you are signed in there too")
     ana.get_by_role("button", name=re.compile("Finance")).first.click()
+    ana.wait_for_url(WS_HOST, timeout=30000)
     ana.get_by_label("Main").get_by_label("Catalog").click()
     ana.get_by_role("button", name="sales", exact=True).click()
 
@@ -113,8 +122,9 @@ with sync_playwright() as p:
     shot(ana, "catalog-access")
 
     # -- account console: admins, activity, record check
+    ana.goto(SITE + "/")
     ana.get_by_label("Account menu").click(); ana.get_by_role("menuitem", name="Account console").click()
-    expect(ana.get_by_label("Main").get_by_label("Catalog")).to_have_count(0); step("the account console is reached from the account menu, outside any workspace")
+    expect(ana.get_by_label("Main").get_by_label("Catalog")).to_have_count(0); step("the account console is on the account site, outside any workspace")
     ana.get_by_role("button", name="Account admins").click()
     expect(ana.get_by_text("Make admin")).to_be_visible(); step("the account admins are listed")
     ana.get_by_role("button", name="Activity").click()
@@ -128,6 +138,7 @@ with sync_playwright() as p:
     expect(cyd.get_by_text("Finance", exact=True).first).to_be_visible(); step("a member of the assigned group sees the workspace on Home")
     expect(cyd.get_by_label("Main").get_by_label("Account console")).to_have_count(0); step("and no account console")
     cyd.get_by_text("Finance", exact=True).first.click()
+    cyd.wait_for_url(WS_HOST, timeout=30000)
     expect(cyd.get_by_role("heading", name="Finance")).to_be_visible()
     expect(cyd.get_by_role("button", name="sales")).to_be_visible(); step("they open it and see the catalog the group was given on its overview")
     expect(cyd.get_by_text("Members, entitlements and catalogs")).to_have_count(0); step("without the admin's settings link")
@@ -138,9 +149,21 @@ with sync_playwright() as p:
     expect(cyd.get_by_text("Could not upload")).to_be_visible(); step("but a reader's upload is refused with a clear message")
     cyd.get_by_role("tab", name="Access").click()
     expect(cyd.get_by_text("Only managers can see who has access")).to_be_visible(); step("and is told access is for managers")
-    cyd.get_by_label("Main").get_by_label("Workspace settings").click()
-    expect(cyd.get_by_text("Only admins can change this")).to_be_visible(); step("workspace settings are for admins")
+    expect(cyd.get_by_label("Main").get_by_label("Workspace settings")).to_have_count(0); step("a non-admin has no workspace settings in the rail")
+    cyd.goto(cyd.evaluate("location.origin") + "/settings")
+    expect(cyd.get_by_text("Only admins can change this")).to_be_visible(); step("and typing the settings address gives them a plain refusal")
     shot(cyd, "reader-view")
+
+    # -- the sign-in relay hands a code only to a workspace site of this account site
+    evil = cyd.context.new_page()
+    evil.goto(SITE + "/relay?code=x&state=n." + __import__("base64").urlsafe_b64encode(b"https://w-6f1c1a52-0000-4000-8000-000000000001.evil.example").decode().rstrip("="))
+    evil.wait_for_url(SITE + "/", timeout=10000); step("the relay will not pass a sign-in code to a site that is not ours")
+    evil.close()
+    cyd.get_by_label("Account menu").click(); cyd.get_by_role("menuitem", name="Sign out").click()
+    cyd.wait_for_url(re.compile(r"^http://localhost:5180/"), timeout=30000)
+    expect(cyd.get_by_role("button", name="Sign in with Loamz").first).to_be_visible(); step("signing out of a workspace lands on the account site's front page")
+    cyd.goto(cyd.url)  # the account site: still no session
+    expect(cyd.get_by_role("button", name="Sign in with Loamz").first).to_be_visible()
 
     # -- bob: in the organization, not assigned anywhere
     bob = person("bob", viewport={"width": 1360, "height": 820})
