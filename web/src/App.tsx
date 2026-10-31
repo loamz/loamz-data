@@ -10,7 +10,7 @@ import { Account } from "./screens/Account";
 import { Catalog } from "./screens/Catalog";
 import { Home } from "./screens/Home";
 import { Settings } from "./screens/Settings";
-import { SignIn } from "./SignIn";
+import { Landing } from "./Landing";
 import { applyTheme, getTheme, setTheme } from "./theme";
 
 const snapshot = () => (signedIn() ? "1" : "");
@@ -36,7 +36,7 @@ export function App() {
   if (!ready) return null;
   return (
     <TooltipProvider delayDuration={300}>
-      {here ? <Shell /> : <SignIn notice={problem} />}
+      {here ? <Shell /> : <Landing notice={problem} />}
       <Toaster />
       <ConfirmHost />
     </TooltipProvider>
