@@ -4,7 +4,7 @@ import type { WorkspaceInfo } from "@/api";
 import { go } from "@/route";
 
 /** The name of the workspace you are in; open it to move to another, as in Databricks. */
-export function WorkspaceSwitcher({ current, all, where = "catalog" }: { current: string; all: WorkspaceInfo[]; where?: "catalog" | "settings" }) {
+export function WorkspaceSwitcher({ current, all, where = "catalog" }: { current: string; all: WorkspaceInfo[]; where?: "overview" | "catalog" | "settings" }) {
   const here = all.find((w) => w.id === current);
   const orgs = [...new Set(all.map((w) => w.org_alias))];
   return (
@@ -23,7 +23,7 @@ export function WorkspaceSwitcher({ current, all, where = "catalog" }: { current
             {all
               .filter((w) => w.org_alias === org)
               .map((w) => (
-                <MenuItem key={w.id} onSelect={() => go(where === "settings" ? { screen: "settings", ws: w.id } : { screen: "catalog", ws: w.id, id: null })}>
+                <MenuItem key={w.id} onSelect={() => go(where === "settings" ? { screen: "settings", ws: w.id } : where === "overview" ? { screen: "workspace", ws: w.id } : { screen: "catalog", ws: w.id, id: null })}>
                   {w.id === current ? <Check /> : <span className="size-[var(--icon-size)]" />} {w.name}
                 </MenuItem>
               ))}

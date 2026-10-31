@@ -96,7 +96,7 @@ function Workspaces({ org }: { org: string }) {
             <Button variant="secondary" onClick={() => go({ screen: "settings", ws: w.id })}>
               Settings
             </Button>
-            <Button variant="secondary" onClick={() => go({ screen: "catalog", ws: w.id, id: null })}>
+            <Button variant="secondary" onClick={() => go({ screen: "workspace", ws: w.id })}>
               Open
             </Button>
           </div>

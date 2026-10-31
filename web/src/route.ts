@@ -1,6 +1,7 @@
 // The address is the screen. Real paths, so a link can be shared and the server can serve the page at any of them:
 //   /                        Home
-//   /w/<ws>/catalog[/<id>]   a workspace's Catalog Explorer
+//   /w/<ws>                  a workspace's overview: what you can do in it
+//   /w/<ws>/catalog[/<id>]   its Catalog Explorer
 //   /w/<ws>/settings         the workspace's members, entitlements, bound catalogs
 //   /account/<org>[/<tab>]   the account console of an organization (tabs: workspaces, admins, activity, erase)
 
@@ -8,6 +9,7 @@ export type AccountTab = "workspaces" | "admins" | "activity" | "erase";
 
 export type Route =
   | { screen: "home" }
+  | { screen: "workspace"; ws: string }
   | { screen: "catalog"; ws: string; id: string | null }
   | { screen: "settings"; ws: string }
   | { screen: "account"; org: string; tab: AccountTab };
@@ -19,7 +21,8 @@ export function parseRoute(path: string): Route {
   const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
   if (parts[0] === "w" && parts[1] && WS.test(parts[1])) {
     if (parts[2] === "settings") return { screen: "settings", ws: parts[1] };
-    return { screen: "catalog", ws: parts[1], id: parts[2] === "catalog" && parts[3] && WS.test(parts[3]) ? parts[3] : null };
+    if (parts[2] === "catalog") return { screen: "catalog", ws: parts[1], id: parts[3] && WS.test(parts[3]) ? parts[3] : null };
+    return { screen: "workspace", ws: parts[1] };
   }
   if (parts[0] === "account" && parts[1]) {
     const tab = TABS.find((t) => t === parts[2]);
@@ -32,6 +35,8 @@ export function hrefOf(r: Route): string {
   switch (r.screen) {
     case "home":
       return "/";
+    case "workspace":
+      return `/w/${r.ws}`;
     case "catalog":
       return `/w/${r.ws}/catalog${r.id ? `/${r.id}` : ""}`;
     case "settings":
