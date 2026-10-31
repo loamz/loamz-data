@@ -1,20 +1,18 @@
 """Runs one SQL statement over the tables a run declared, inside the sandbox. Written by Loamz, not by the person: it is the only
 thing that touches DuckDB, and it locks DuckDB down before the person's statement is run.
 
-Reads /inputs/job/spec.json, reads tables from /inputs/tables/<id>/ (an Iceberg table's folder, beside loamz-table.json that names its current metadata file), and writes
-/workspace/result.json: {"columns", "rows", "truncated"} or {"error"}. A mistake in the SQL is a result, not a crash."""
+Reads /inputs/job/spec.json, reads tables from /inputs/tables/<id>/ (an Iceberg table's folder, beside loamz-table.json that names
+its current metadata file), and writes /workspace/result.json: {"columns", "rows", "truncated"} or {"error"}. A mistake in the SQL is
+a result, not a crash."""
 
-import datetime
-import decimal
 import json
 import os
 import sys
 
 import duckdb
+from loamz_sql import answer, lit, q
 
 OUT = "/workspace/result.json"
-MAX_BYTES = 3_500_000
-SAFE_INT = 2**53
 
 
 def write(obj):
@@ -25,34 +23,6 @@ def write(obj):
 def fail(message):
     write({"error": message})
     sys.exit(0)
-
-
-def q(name):
-    return '"' + name.replace('"', '""') + '"'
-
-
-def lit(path):
-    return "'" + path.replace("'", "''") + "'"
-
-
-def cell(v):
-    if v is None or isinstance(v, (bool, str)):
-        return v
-    if isinstance(v, int):
-        return v if abs(v) < SAFE_INT else str(v)
-    if isinstance(v, float):
-        return v if v == v and v not in (float("inf"), float("-inf")) else str(v)
-    if isinstance(v, (bytes, bytearray)):
-        return v.hex()
-    if isinstance(v, (datetime.datetime, datetime.date, datetime.time)):
-        return v.isoformat()
-    if isinstance(v, (list, tuple)):
-        return [cell(x) for x in v]
-    if isinstance(v, dict):
-        return {str(k): cell(x) for k, x in v.items()}
-    if isinstance(v, decimal.Decimal):
-        return str(v)
-    return str(v)
 
 
 spec = json.load(open("/inputs/job/spec.json"))
@@ -96,20 +66,5 @@ con.execute("SET allowed_directories = ['/inputs/tables']")
 con.execute("SET enable_external_access = false")
 con.execute("SET lock_configuration = true")
 
-try:
-    relation = con.sql(spec["sql"])
-    columns = [{"name": n, "type": str(t)} for n, t in zip(relation.columns, relation.types)]
-    rows = relation.limit(limit + 1).fetchall()
-except Exception as e:  # noqa: BLE001
-    fail(str(e))
-
-truncated = len(rows) > limit
-out, size = [], 0
-for r in rows[:limit]:
-    row = [cell(v) for v in r]
-    size += len(json.dumps(row))
-    if size > MAX_BYTES:
-        truncated = True
-        break
-    out.append(row)
-write({"columns": columns, "rows": out, "truncated": truncated})
+result = answer(con, spec["sql"], limit)
+write(result)

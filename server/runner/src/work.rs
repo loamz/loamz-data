@@ -308,6 +308,8 @@ async fn files_under(dir: &Path) -> Result<Vec<String>, String> {
 
 /// What runs inside the sandbox to answer a SQL statement. It is part of this program, not something a person supplies.
 pub const RUN_SQL: &str = include_str!("sandbox/run_sql.py");
+/// What `RUN_SQL` imports: how rows become JSON, shared with serverless endpoints.
+pub const LOAMZ_SQL: &str = include_str!("sandbox/loamz_sql.py");
 
 /// Does the work, whatever happens to it, and says how it ended. The run's folder is removed afterwards.
 pub async fn execute(
@@ -383,6 +385,9 @@ async fn stage(lease: &Lease, api: &Api, dir: &Path) -> Result<Staged, String> {
             .await
             .map_err(io)?;
         tokio::fs::write(code.join("run_sql.py"), RUN_SQL)
+            .await
+            .map_err(io)?;
+        tokio::fs::write(code.join("loamz_sql.py"), LOAMZ_SQL)
             .await
             .map_err(io)?;
         mounts.push(("tables".to_owned(), tables));
