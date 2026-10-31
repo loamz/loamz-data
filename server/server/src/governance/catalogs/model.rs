@@ -33,7 +33,7 @@ impl Kind {
         })
     }
 
-    /// Whether it holds files of its own: a volume (any files) or a table (CSV or Parquet files that a query reads as rows).
+    /// Whether it holds files of its own: a volume (any files) or a table (its Iceberg metadata and data files).
     #[must_use]
     pub fn holds_files(self) -> bool {
         matches!(self, Self::Volume | Self::Table)
@@ -69,6 +69,8 @@ pub struct Securable {
     /// `active`, or `dropping` while the drop task is still running.
     pub state: String,
     pub created_ms: i64,
+    /// A table's current Iceberg metadata file, a path inside its folder. Empty for everything else.
+    pub metadata: String,
 }
 
 /// What a caller asks for. Empty choices get the defaults.
@@ -80,6 +82,8 @@ pub struct Draft {
     pub classification: String,
     pub placement: String,
     pub consistency: String,
+    /// A table is born with its first Iceberg metadata file already written under this id: `(id, path of the file)`.
+    pub table: Option<(String, String)>,
 }
 
 /// Names are lower case words with digits and underscores, so they are safe in any URL, file name or SQL identifier.
@@ -161,6 +165,7 @@ mod tests {
             classification: String::new(),
             placement: String::new(),
             consistency: String::new(),
+            table: None,
         }
     }
 

@@ -3,7 +3,7 @@ use sqlx::{Any, Executor, Row};
 use super::model::{Kind, Securable};
 use crate::kernel::error::{Error, Result};
 
-const COLUMNS: &str = "id, org_id, kind, parent_id, name, owner, classification, placement, consistency, state, created_ms";
+const COLUMNS: &str = "id, org_id, kind, parent_id, name, owner, classification, placement, consistency, state, created_ms, metadata";
 
 fn row(r: &sqlx::any::AnyRow) -> Result<Securable> {
     let kind: String = r.try_get("kind")?;
@@ -20,12 +20,13 @@ fn row(r: &sqlx::any::AnyRow) -> Result<Securable> {
         consistency: r.try_get("consistency")?,
         state: r.try_get("state")?,
         created_ms: r.try_get("created_ms")?,
+        metadata: r.try_get("metadata")?,
     })
 }
 
 pub async fn insert<'e, E: Executor<'e, Database = Any>>(e: E, s: &Securable) -> Result<()> {
     sqlx::query(&format!(
-        "INSERT INTO securables ({COLUMNS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+        "INSERT INTO securables ({COLUMNS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
     ))
     .bind(&s.id)
     .bind(&s.org_id)
@@ -38,6 +39,7 @@ pub async fn insert<'e, E: Executor<'e, Database = Any>>(e: E, s: &Securable) ->
     .bind(&s.consistency)
     .bind(&s.state)
     .bind(s.created_ms)
+    .bind(&s.metadata)
     .execute(e)
     .await?;
     Ok(())
@@ -159,4 +161,24 @@ pub async fn child_by_name<'e, E: Executor<'e, Database = Any>>(
     .fetch_optional(e)
     .await?;
     r.as_ref().map(row).transpose()
+}
+
+/// Moves a table to its next metadata file, only if it still is at `from` (a commit that lost a race gets false).
+pub async fn advance<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    org: &str,
+    id: &str,
+    from: &str,
+    to: &str,
+) -> Result<bool> {
+    let r = sqlx::query(
+        "UPDATE securables SET metadata = $4 WHERE org_id = $1 AND id = $2 AND metadata = $3 AND state = 'active'",
+    )
+    .bind(org)
+    .bind(id)
+    .bind(from)
+    .bind(to)
+    .execute(e)
+    .await?;
+    Ok(r.rows_affected() == 1)
 }

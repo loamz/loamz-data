@@ -51,6 +51,22 @@ pub fn visible(sides: &[Side], grants: &[Grant], target: &Target) -> bool {
     can_see(sides, target, grants)
 }
 
+/// Whether the caller may do this, asked quietly: nothing is recorded (used to decide how much to hand out, not to refuse).
+///
+/// # Errors
+/// The database could not be read.
+pub async fn may(
+    app: &App,
+    identity: &Identity,
+    org: &str,
+    sides: &[Side],
+    need: Privilege,
+    target: &Target,
+) -> Result<bool> {
+    let grants = grants_of(app, org, sides).await?;
+    Ok(within_scope(identity, need, target) && allowed(sides, &grants, need, target))
+}
+
 /// Allows the call or ends it. A caller who may not even see the thing is told it does not exist, so a refusal never reveals
 /// what is there. Every refusal is recorded.
 ///

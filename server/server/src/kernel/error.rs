@@ -96,3 +96,40 @@ impl From<loamz_lake::files::FileError> for Error {
         }
     }
 }
+
+/// An error as the Iceberg REST catalog specification words it, for the routes that Iceberg clients call: they read
+/// `{"error": {"message", "type", "code"}}` and nothing else.
+#[derive(Debug)]
+pub struct Catalog(pub Error);
+
+impl From<Error> for Catalog {
+    fn from(e: Error) -> Self {
+        Self(e)
+    }
+}
+
+impl IntoResponse for Catalog {
+    fn into_response(self) -> Response {
+        let status = self.0.status();
+        let kind = match &self.0 {
+            Error::Invalid(_) => "BadRequestException",
+            Error::Unauthorized => "NotAuthorizedException",
+            Error::NotFound(_) => "NoSuchTableException",
+            Error::Denied(_) => "ForbiddenException",
+            Error::Conflict(_) => "CommitFailedException",
+            Error::TooLarge => "BadRequestException",
+            Error::Unavailable(_) => "ServiceUnavailableException",
+            Error::Internal(_) => "ServiceFailureException",
+        };
+        if let Error::Internal(detail) = &self.0 {
+            tracing::error!(detail, "internal error");
+        }
+        let body = json!({"error": {"message": self.0.to_string(), "type": kind, "code": status.as_u16()}});
+        (
+            status,
+            [(header::CONTENT_TYPE, "application/json")],
+            body.to_string(),
+        )
+            .into_response()
+    }
+}

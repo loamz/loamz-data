@@ -3,7 +3,10 @@
 
 use std::{net::SocketAddr, path::PathBuf};
 
-use loamz_lake::objects::{Bucket, Store};
+use loamz_lake::{
+    grants::Issuer,
+    objects::{Bucket, Store},
+};
 
 #[derive(Clone, Debug)]
 pub struct Settings {
@@ -47,10 +50,37 @@ pub enum Storage {
         name: String,
         key_id_file: PathBuf,
         secret_file: PathBuf,
+        /// A Cloudflare token that can issue short-lived credentials limited to some folders; without it, no machine but this server reads the bucket.
+        issuer_token_file: Option<PathBuf>,
     },
 }
 
 impl Storage {
+    /// The issuer of short-lived folder credentials, if this storage can have one.
+    ///
+    /// # Errors
+    /// A file cannot be read, or the bucket is not an R2 address.
+    pub fn issuer(&self) -> Result<Option<Issuer>, String> {
+        let Self::Bucket {
+            endpoint,
+            name,
+            key_id_file,
+            issuer_token_file: Some(token),
+            ..
+        } = self
+        else {
+            return Ok(None);
+        };
+        let read = |p: &PathBuf| {
+            std::fs::read_to_string(p)
+                .map(|v| v.trim().to_string())
+                .map_err(|e| format!("cannot read {}: {e}", p.display()))
+        };
+        Issuer::new(endpoint, name, &read(key_id_file)?, &read(token)?)
+            .map(Some)
+            .map_err(|e| e.to_string())
+    }
+
     /// # Errors
     /// The secret files cannot be read, or the bucket settings are not usable.
     pub fn open(&self) -> Result<Store, String> {
@@ -61,6 +91,7 @@ impl Storage {
                 name,
                 key_id_file,
                 secret_file,
+                ..
             } => {
                 let read = |p: &PathBuf| {
                     std::fs::read_to_string(p)
@@ -114,6 +145,7 @@ impl Settings {
                     name,
                     key_id_file: need("LOAMZ_DATA_BUCKET_KEY_ID_FILE")?.into(),
                     secret_file: need("LOAMZ_DATA_BUCKET_SECRET_FILE")?.into(),
+                    issuer_token_file: var("LOAMZ_DATA_BUCKET_ISSUER_TOKEN_FILE").map(Into::into),
                 },
                 _ => {
                     return Err(
