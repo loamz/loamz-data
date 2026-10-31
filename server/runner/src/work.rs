@@ -30,6 +30,9 @@ pub struct Lease {
     pub run: RunInfo,
     pub token: String,
     pub limits: Limits,
+    /// How to read the run's tables: credentials limited to their folders, and where each one's current metadata is.
+    #[serde(default)]
+    pub storage: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,6 +90,8 @@ fn safe_join(base: &Path, rel: &str) -> Result<PathBuf, String> {
 /// The most that is fetched or sent, so a mistake cannot fill the disk.
 const MAX_FILE: u64 = 256 << 20;
 const MAX_FILES: usize = 200;
+/// The most one table may weigh on this machine.
+const MAX_TABLE: u64 = 1 << 30;
 const MAX_RESULT: u64 = 4 << 20;
 
 /// The Data API, as one run's token sees it.
@@ -207,6 +212,81 @@ impl Api {
     }
 }
 
+/// Fetches a table's whole folder (its Iceberg metadata and data files) straight from the bucket, with the run's own read-only
+/// credentials, and writes where its current metadata is beside it. The sandbox then reads the folder from disk.
+async fn fetch_table(storage: &Value, id: &str, folder: &Path) -> Result<(), String> {
+    use futures::StreamExt;
+    use object_store::{ObjectStore, aws::AmazonS3Builder, path::Path as Key};
+    let text = |k: &str| {
+        storage[k]
+            .as_str()
+            .ok_or_else(|| format!("the lease has no storage {k}"))
+    };
+    let s3 = AmazonS3Builder::new()
+        .with_endpoint(text("endpoint")?)
+        .with_bucket_name(text("bucket")?)
+        .with_access_key_id(text("key_id")?)
+        .with_secret_access_key(text("secret")?)
+        .with_token(text("session_token")?)
+        .with_region("auto")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let at = &storage["tables"][id];
+    let metadata = at["metadata"]
+        .as_str()
+        .ok_or_else(|| format!("the lease does not say where {id} is"))?;
+    let prefix = Key::from(id);
+    let objects: Vec<_> = s3
+        .list(Some(&prefix))
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("listing the table {id}: {e}"))?;
+    if objects.len() > MAX_FILES {
+        return Err(format!("{id} has too many files for one run"));
+    }
+    if objects.iter().map(|o| o.size).sum::<u64>() > MAX_TABLE {
+        return Err(format!("{id} is too large to read on this machine"));
+    }
+    tokio::fs::create_dir_all(folder)
+        .await
+        .map_err(|e| e.to_string())?;
+    for o in objects {
+        let rel = o
+            .location
+            .as_ref()
+            .strip_prefix(&format!("{id}/"))
+            .ok_or("the bucket listed something outside the table")?;
+        let to = safe_join(folder, rel)?;
+        if let Some(parent) = to.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        let mut stream = s3
+            .get(&o.location)
+            .await
+            .map_err(|e| format!("reading {rel}: {e}"))?
+            .into_stream();
+        let mut file = tokio::fs::File::create(&to)
+            .await
+            .map_err(|e| e.to_string())?;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("reading {rel}: {e}"))?;
+            tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    tokio::fs::write(
+        folder.join("loamz-table.json"),
+        serde_json::json!({"metadata": metadata}).to_string(),
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// Every regular file under `dir` (links are skipped), as paths relative to it.
 async fn files_under(dir: &Path) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
@@ -293,7 +373,8 @@ async fn stage(lease: &Lease, api: &Api, dir: &Path) -> Result<Staged, String> {
         tokio::fs::create_dir_all(&tables).await.map_err(io)?;
         for t in spec["tables"].as_array().into_iter().flatten() {
             let id = t["id"].as_str().ok_or("a table has no id")?;
-            api.fetch("tables", id, &safe_join(&tables, id)?).await?;
+            let storage = lease.storage.as_ref().ok_or("the lease has no storage")?;
+            fetch_table(storage, id, &safe_join(&tables, id)?).await?;
         }
         let run = serde_json::json!({"sql": spec["sql"], "limit": spec["limit"], "tables": spec["tables"], "memory_mb": lease.limits.memory_mb});
         tokio::fs::write(code.join("spec.json"), run.to_string())
@@ -313,13 +394,13 @@ async fn stage(lease: &Lease, api: &Api, dir: &Path) -> Result<Staged, String> {
             i["id"].as_str().ok_or("an input has no id")?,
             i["name"].as_str().ok_or("an input has no name")?,
         );
-        let holder = if i["kind"] == "table" {
-            "tables"
-        } else {
-            "volumes"
-        };
         let folder = dir.join("inputs").join(name);
-        api.fetch(holder, id, &folder).await?;
+        if i["kind"] == "table" {
+            let storage = lease.storage.as_ref().ok_or("the lease has no storage")?;
+            fetch_table(storage, id, &folder).await?;
+        } else {
+            api.fetch("volumes", id, &folder).await?;
+        }
         mounts.push((name.to_owned(), folder));
     }
     tokio::fs::write(

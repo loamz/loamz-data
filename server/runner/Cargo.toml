@@ -11,6 +11,8 @@ name = "loamz-runner"
 path = "src/main.rs"
 
 [dependencies]
+futures = "0.3"
+object_store = { version = "0.12", default-features = false, features = ["aws"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
