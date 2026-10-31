@@ -1,4 +1,4 @@
-import { Bot, Database, FileText, History, Layers, ShieldCheck, Trash2, UsersRound } from "lucide-react";
+import { Bot, ChevronRight, Database, FileText, History, Layers, ShieldCheck, Trash2, UsersRound } from "lucide-react";
 import { useState } from "react";
 import { Badge, Button } from "@/design";
 import { hasOidc, startLogin } from "./auth";
@@ -102,6 +102,36 @@ export function Landing({ notice }: { notice?: string }) {
           </div>
         </section>
 
+        <section id="how-ai" aria-labelledby="how-ai-title" className="-mt-6 grid gap-6">
+          <div className="flex flex-wrap items-center gap-3">
+            <h3 id="how-ai-title" className="text-lg font-semibold">How it will look in code</h3>
+            <Badge tone="neutral">Illustrative: the API is not final</Badge>
+          </div>
+          <div className="grid items-start gap-6 md:grid-cols-[1.1fr_1fr]">
+            <pre className="scroll-area overflow-x-auto rounded-2xl border border-border bg-card p-5 font-mono text-xs leading-relaxed text-foreground shadow-md" aria-label="Example code">
+              <code>
+                <span className="text-muted"># Turn the warehouse on for an agent.</span>{"\n"}
+                agent = Agent({"\n"}
+                {"    "}model=<span className="text-accent">"claude-sonnet-5-5"</span>,{"\n"}
+                {"    "}loamz_data=<span className="text-accent">True</span>,{"\n"}
+                ){"\n\n"}
+                <span className="text-muted"># Pass the signed-in person's token.</span>{"\n"}
+                <span className="text-muted"># The agent acts as them, no more.</span>{"\n"}
+                answer = <span className="text-accent">await</span> agent.run({"\n"}
+                {"    "}<span className="text-accent">"Which region sold the most last month?"</span>,{"\n"}
+                {"    "}user=session.token,{"\n"}
+                )
+              </code>
+            </pre>
+            <ol className="grid gap-2" aria-label="What happens, in order">
+              <Step n={1} title="Your app" note="The person is signed in. You hand over their token." />
+              <Step n={2} title="The agent" note="Turns the question into a SQL statement." />
+              <Step n={3} title="Loamz Data" note="Checks the person's rights and the agent's, takes what both allow, and records the question." />
+              <Step n={4} title="The warehouse" note="Runs it on compute that holds credentials for those tables only, for minutes." last />
+            </ol>
+          </div>
+        </section>
+
         <section id="next" aria-labelledby="next-title">
           <h2 id="next-title" className="mb-3 text-2xl font-semibold">On the way</h2>
           <p className="max-w-3xl text-muted">
@@ -116,6 +146,19 @@ export function Landing({ notice }: { notice?: string }) {
         </p>
       </footer>
     </div>
+  );
+}
+
+function Step({ n, title, note, last }: { n: number; title: string; note: string; last?: boolean }) {
+  return (
+    <li className="flex items-start gap-3 rounded-xl border border-border bg-card px-4 py-3">
+      <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-accent/15 text-xs font-semibold text-accent">{n}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium text-foreground">{title}</span>
+        <span className="block text-xs text-muted">{note}</span>
+      </span>
+      {!last && <ChevronRight className="mt-1 shrink-0 rotate-90 text-muted" aria-hidden />}
+    </li>
   );
 }
 
