@@ -36,7 +36,6 @@ struct Lab {
     ws: String,
     schema: String,
     orders: String,
-    secrets: String,
     out: String,
 }
 
@@ -45,13 +44,12 @@ async fn lab(s: &Server) -> Lab {
     let c = s.make(&ws, &ana(), "catalog", "", "sales").await;
     let sc = s.make(&ws, &ana(), "schema", &c, "raw").await;
     let orders = s.make(&ws, &ana(), "table", &sc, "orders").await;
-    let secrets = s.make(&ws, &ana(), "table", &sc, "secrets").await;
+    s.make(&ws, &ana(), "table", &sc, "secrets").await;
     let out = s.make(&ws, &ana(), "volume", &sc, "out").await;
     Lab {
         ws,
         schema: sc,
         orders,
-        secrets,
         out,
     }
 }
@@ -90,70 +88,133 @@ async fn agent(
     .await
 }
 
-// ---- tables hold files -------------------------------------------------------------------------------------------
+// ---- tables are Iceberg tables, reached through the catalog -----------------------------------------------------
 
-async fn tables_hold_files(s: Server) {
+async fn iceberg_tables_are_governed(s: Server) {
+    async fn pointer(s: &Server, id: String) -> String {
+        sqlx::query_scalar::<_, String>("SELECT metadata FROM securables WHERE id = $1")
+            .bind(id)
+            .fetch_one(s.app.db.pool())
+            .await
+            .unwrap()
+    }
     let l = lab(&s).await;
-    let files = |id: &str| format!("/api/v1/workspaces/{}/tables/{id}/files", l.ws);
-    let put = |id: String, who: Who, bytes: &'static [u8]| {
-        let (s, ws) = (&s, l.ws.clone());
-        async move {
-            s.send(
-                "PUT",
-                &format!("/api/v1/workspaces/{ws}/tables/{id}/files/a.csv"),
-                Some(&token(&who)),
-                Body::from(bytes),
-            )
-            .await
-        }
-    };
-    assert_eq!(
-        put(l.orders.clone(), ana(), b"id,total\n1,10\n2,20\n")
-            .await
-            .status,
-        201
+    let base = format!(
+        "/api/v1/workspaces/{}/iceberg/v1/sales/namespaces/raw/tables",
+        l.ws
     );
-    assert_eq!(
-        s.get(&files(&l.orders), &ana()).await.json()["items"][0]["path"],
-        "a.csv"
+    let load = |who: Who, name: &'static str| {
+        let (s, base) = (&s, base.clone());
+        async move { s.get(&format!("{base}/{name}"), &who).await }
+    };
+    let loaded = load(ana(), "orders").await;
+    assert_eq!(loaded.status, 200, "{}", loaded.text());
+    let meta = loaded.json();
+    assert_eq!(meta["metadata"]["format-version"], 2);
+    assert_eq!(meta["metadata"]["schemas"][0]["fields"][0]["name"], "id");
+    assert!(
+        meta["config"].as_object().unwrap().is_empty(),
+        "a folder store cannot give credentials to anyone"
     );
 
-    // A table is read with SELECT and changed with MODIFY: a reader reads, and cannot change.
+    // A table is read with SELECT and changed with MODIFY: a reader loads it and cannot commit.
     s.assign(&l.ws, &[&bob()]).await;
+    assert_eq!(load(bob(), "orders").await.status, 404, "not theirs yet");
     s.grant(&l.ws, &ana(), &l.orders, "user:bob", "reader")
         .await;
+    assert_eq!(load(bob(), "orders").await.status, 200);
+    let change = json!({"requirements": [], "updates": [{"action": "set-properties", "updates": {"owner": "sales"}}]});
     assert_eq!(
-        s.get(&format!("{}/a.csv", files(&l.orders)), &bob())
+        s.post(&format!("{base}/orders"), &bob(), change.clone())
             .await
-            .bytes,
-        b"id,total\n1,10\n2,20\n"
+            .status,
+        403
     );
-    assert_eq!(put(l.orders.clone(), bob(), b"x").await.status, 403);
     assert_eq!(
-        s.get(&files(&l.secrets), &bob()).await.status,
+        load(bob(), "secrets").await.status,
         404,
         "the other table is not theirs"
     );
 
-    // The two kinds do not answer to each other's addresses.
-    assert_eq!(
-        s.get(
-            &format!("/api/v1/workspaces/{}/volumes/{}/files", l.ws, l.orders),
-            &ana()
-        )
-        .await
-        .status,
-        404
+    // The owner commits; the pointer moves, and a commit that assumed the old table is a conflict.
+    let first = s.post(&format!("{base}/orders"), &ana(), change).await;
+    assert_eq!(first.status, 200, "{}", first.text());
+    assert_eq!(first.json()["metadata"]["properties"]["owner"], "sales");
+    assert!(
+        pointer(&s, l.orders.clone())
+            .await
+            .starts_with("metadata/00001-")
     );
+    let stale = json!({"requirements": [{"type": "assert-table-uuid", "uuid": "someone-else"}], "updates": []});
     assert_eq!(
-        s.get(
-            &format!("/api/v1/workspaces/{}/tables/{}/files", l.ws, l.out),
-            &ana()
-        )
-        .await
-        .status,
-        404
+        s.post(&format!("{base}/orders"), &ana(), stale)
+            .await
+            .status,
+        409
     );
+    assert!(
+        pointer(&s, l.orders.clone())
+            .await
+            .starts_with("metadata/00001-"),
+        "a refused commit changes nothing"
+    );
+
+    // A table made in two steps, the way DuckDB makes one: staged, then committed with everything that makes it.
+    let staged = s
+        .post(
+            &base,
+            &ana(),
+            json!({"name": "events", "stage-create": true, "schema": {"type": "struct", "fields": [{"id": 1, "name": "at", "required": false, "type": "timestamp"}]}}),
+        )
+        .await;
+    assert_eq!(staged.status, 200, "{}", staged.text());
+    assert_eq!(
+        load(ana(), "events").await.status,
+        404,
+        "staging keeps nothing"
+    );
+    let meta = staged.json()["metadata"].clone();
+    let steps = json!({"requirements": [{"type": "assert-create"}], "updates": [
+        {"action": "assign-uuid", "uuid": meta["table-uuid"]},
+        {"action": "upgrade-format-version", "format-version": 2},
+        {"action": "add-schema", "schema": meta["schemas"][0], "last-column-id": 1},
+        {"action": "set-current-schema", "schema-id": -1},
+        {"action": "add-spec", "spec": {"fields": []}}, {"action": "set-default-spec", "spec-id": -1},
+        {"action": "add-sort-order", "sort-order": {"fields": []}}, {"action": "set-default-sort-order", "sort-order-id": -1},
+        {"action": "set-location", "location": meta["location"]},
+    ]});
+    assert_eq!(
+        s.post(&format!("{base}/events"), &ana(), steps.clone())
+            .await
+            .status,
+        200
+    );
+    assert_eq!(load(ana(), "events").await.status, 200);
+    assert_eq!(
+        s.post(&format!("{base}/events"), &ana(), steps.clone())
+            .await
+            .status,
+        409,
+        "it exists now"
+    );
+    let mut elsewhere = steps;
+    elsewhere["updates"][8]["location"] = json!("s3://not-ours/x");
+    assert_eq!(
+        s.post(&format!("{base}/others"), &ana(), elsewhere)
+            .await
+            .status,
+        400,
+        "a location we did not give"
+    );
+
+    // The tables of a schema, as a catalog client lists them; a table with no grant is not listed.
+    let ids: Vec<String> = s.get(&base, &bob()).await.json()["identifiers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(ids, ["orders"]);
 
     // Dropping the catalog takes the table's bytes with it.
     assert!(s.store_dir(&l.orders).exists());
@@ -172,7 +233,7 @@ async fn tables_hold_files(s: Server) {
     s.work().await;
     assert!(!s.store_dir(&l.orders).exists());
 }
-both!(tables_hold_files);
+both!(iceberg_tables_are_governed);
 
 // ---- asking for SQL ----------------------------------------------------------------------------------------------
 
@@ -260,27 +321,8 @@ both!(sql_is_checked_before_it_runs);
 
 // ---- an agent does the work --------------------------------------------------------------------------------------
 
-async fn an_agent_runs_a_statement_with_a_token_that_reaches_only_what_it_declared(s: Server) {
+async fn an_agent_runs_a_statement_and_reports_its_rows(s: Server) {
     let l = lab(&s).await;
-    s.put(
-        &format!(
-            "/api/v1/workspaces/{}/tables/{}/files/a.csv",
-            l.ws, l.orders
-        ),
-        &ana(),
-        json!({}),
-    )
-    .await; // not a file upload: ignored
-    s.send(
-        "PUT",
-        &format!(
-            "/api/v1/workspaces/{}/tables/{}/files/a.csv",
-            l.ws, l.orders
-        ),
-        Some(&token(&ana())),
-        Body::from("id,total\n1,10\n"),
-    )
-    .await;
     let (secret, _) = attach(&s).await;
     let r = s
         .post(
@@ -318,79 +360,15 @@ async fn an_agent_runs_a_statement_with_a_token_that_reaches_only_what_it_declar
         work["run"]["spec"].get("as").is_none(),
         "who it runs as is not handed to the agent"
     );
-    let jt = work["token"].as_str().unwrap().to_owned();
-    assert!(jt.starts_with("jt_"));
-
-    // The token reads the table it declared, and the files of nothing else.
-    let with_jt = |method: &str, path: String, body: &'static str| {
-        let s = &s;
-        let (method, jt) = (method.to_owned(), jt.clone());
-        async move { s.send(&method, &path, Some(&jt), Body::from(body)).await }
-    };
+    assert_eq!(
+        work["token"], "",
+        "a statement has no token: its data comes as credentials for its tables' folders"
+    );
+    assert!(
+        work["storage"].is_null(),
+        "this server's storage is a folder, which no other machine can reach"
+    );
     let ws = &l.ws;
-    assert_eq!(
-        with_jt(
-            "GET",
-            format!("/api/v1/workspaces/{ws}/tables/{}/files/a.csv", l.orders),
-            ""
-        )
-        .await
-        .bytes,
-        b"id,total\n1,10\n"
-    );
-    assert_eq!(
-        with_jt(
-            "GET",
-            format!("/api/v1/workspaces/{ws}/tables/{}/files", l.secrets),
-            ""
-        )
-        .await
-        .status,
-        404,
-        "another table"
-    );
-    assert_eq!(
-        with_jt(
-            "PUT",
-            format!("/api/v1/workspaces/{ws}/tables/{}/files/x.csv", l.orders),
-            "x"
-        )
-        .await
-        .status,
-        403,
-        "it read, it may not write"
-    );
-    assert_eq!(
-        with_jt(
-            "PUT",
-            format!("/api/v1/workspaces/{ws}/volumes/{}/files/x", l.out),
-            "x"
-        )
-        .await
-        .status,
-        404,
-        "a volume it never declared"
-    );
-    // And it is good for files only: not for the catalog, the account, or anything else.
-    for path in [
-        format!("/api/v1/workspaces/{ws}/securables"),
-        format!("/api/v1/orgs/{ACME}/admins"),
-        "/api/v1/me".to_owned(),
-        format!("/api/v1/workspaces/{ws}/runs"),
-    ] {
-        assert_eq!(with_jt("GET", path.clone(), "").await.status, 401, "{path}");
-    }
-    // Rights are the person's, checked each time: take the grant away and the token reads nothing more.
-    assert_eq!(
-        with_jt(
-            "DELETE",
-            format!("/api/v1/workspaces/{ws}/tables/{}/files/a.csv", l.orders),
-            ""
-        )
-        .await
-        .status,
-        403
-    );
 
     // The agent keeps the run alive, then reports.
     let hb = agent(
@@ -425,17 +403,6 @@ async fn an_agent_runs_a_statement_with_a_token_that_reaches_only_what_it_declar
         (run["state"].as_str(), run["result"]["rows"][0][0].clone()),
         (Some("succeeded"), json!(10))
     );
-    assert_eq!(
-        with_jt(
-            "GET",
-            format!("/api/v1/workspaces/{ws}/tables/{}/files", l.orders),
-            ""
-        )
-        .await
-        .status,
-        401,
-        "a finished run's token no longer works"
-    );
     // A run is finished once.
     assert_eq!(
         agent(
@@ -457,7 +424,7 @@ async fn an_agent_runs_a_statement_with_a_token_that_reaches_only_what_it_declar
         "and nothing else is waiting"
     );
 }
-both!(an_agent_runs_a_statement_with_a_token_that_reaches_only_what_it_declared);
+both!(an_agent_runs_a_statement_and_reports_its_rows);
 
 async fn a_job_writes_only_to_its_declared_output(s: Server) {
     let l = lab(&s).await;
@@ -559,31 +526,67 @@ async fn a_token_is_for_one_workspace(s: Server) {
         .as_str()
         .unwrap()
         .to_owned();
+    let put = |ws: String| {
+        let (s, jt, out) = (&s, jt.clone(), l.out.clone());
+        async move {
+            s.send(
+                "PUT",
+                &format!("/api/v1/workspaces/{ws}/volumes/{out}/files/x"),
+                Some(&jt),
+                Body::from("x"),
+            )
+            .await
+            .status
+        }
+    };
     // The same catalog is visible from the other workspace, but this token is not for it.
-    assert_eq!(
-        s.send(
-            "GET",
-            &format!("/api/v1/workspaces/{elsewhere}/tables/{}/files", l.orders),
-            Some(&jt),
-            Body::empty()
-        )
-        .await
-        .status,
-        404
-    );
-    assert_eq!(
-        s.send(
-            "GET",
-            &format!("/api/v1/workspaces/{}/tables/{}/files", l.ws, l.orders),
-            Some(&jt),
-            Body::empty()
-        )
-        .await
-        .status,
-        200
-    );
+    assert_eq!(put(elsewhere).await, 404);
+    assert_eq!(put(l.ws.clone()).await, 201);
 }
 both!(a_token_is_for_one_workspace);
+
+async fn a_runs_token_dies_with_the_run(s: Server) {
+    let l = lab(&s).await;
+    let (secret, _) = attach(&s).await;
+    let r = s
+        .post(
+            &format!("/api/v1/workspaces/{}/runs", l.ws),
+            &ana(),
+            json!({"script": "1", "inputs": [], "output": l.out}),
+        )
+        .await;
+    let id = r.json()["id"].as_str().unwrap().to_owned();
+    let jt = agent(&s, "POST", "/api/v1/agent/lease", &secret, None)
+        .await
+        .json()["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let put = || {
+        let (s, jt, out, ws) = (&s, jt.clone(), l.out.clone(), l.ws.clone());
+        async move {
+            s.send(
+                "PUT",
+                &format!("/api/v1/workspaces/{ws}/volumes/{out}/files/x"),
+                Some(&jt),
+                Body::from("x"),
+            )
+            .await
+            .status
+        }
+    };
+    assert_eq!(put().await, 201);
+    agent(
+        &s,
+        "POST",
+        &format!("/api/v1/agent/runs/{id}/complete"),
+        &secret,
+        Some(json!({"state": "succeeded"})),
+    )
+    .await;
+    assert_eq!(put().await, 401, "a finished run's token no longer works");
+}
+both!(a_runs_token_dies_with_the_run);
 
 // ---- who sees what, stopping, and time ----------------------------------------------------------------------------
 
@@ -756,10 +759,7 @@ async fn work_that_cannot_finish_is_failed_and_says_why(s: Server) {
 
     // The agent takes it and goes silent: past its lease, the run fails, and its token is gone.
     let silent = ask().await;
-    let lease = agent(&s, "POST", "/api/v1/agent/lease", &secret, None)
-        .await
-        .json();
-    let jt = lease["token"].as_str().unwrap().to_owned();
+    agent(&s, "POST", "/api/v1/agent/lease", &secret, None).await;
     sqlx::query("UPDATE runs SET lease_until = 1 WHERE id = $1")
         .bind(&silent)
         .execute(s.app.db.pool())
@@ -773,17 +773,6 @@ async fn work_that_cannot_finish_is_failed_and_says_why(s: Server) {
             r["error"].as_str().unwrap().contains("stopped answering")
         ),
         (json!("failed"), true)
-    );
-    assert_eq!(
-        s.send(
-            "GET",
-            &format!("/api/v1/workspaces/{}/tables/{}/files", l.ws, l.orders),
-            Some(&jt),
-            Body::empty()
-        )
-        .await
-        .status,
-        401
     );
 
     // Nobody takes it for ten minutes: it fails instead of waiting for ever.

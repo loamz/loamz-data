@@ -1,4 +1,4 @@
-//! The Iceberg REST catalog (`/api/v1/workspaces/{ws}/iceberg/v1/…`), the way DuckDB, Spark and PyIceberg speak to a catalog, and the
+//! The Iceberg REST catalog (`/api/v1/workspaces/{ws}/iceberg/v1/…`), the way `DuckDB`, Spark and `PyIceberg` speak to a catalog, and the
 //! calls the screens use. The "warehouse" a client names is a catalog, a "namespace" is a schema.
 
 use std::collections::HashMap;
@@ -141,6 +141,7 @@ async fn create_table(State(app): State<Shared>, c: WsCtx, body: Bytes) -> Out<J
             } else {
                 json!({})
             },
+            classification: String::new(),
             stage: req.stage_create,
         },
     )
@@ -245,6 +246,8 @@ struct MakeTable {
     parent_id: String,
     name: String,
     columns: Vec<Column>,
+    #[serde(default)]
+    classification: String,
 }
 
 async fn make_table(
@@ -269,6 +272,7 @@ async fn make_table(
             spec: None,
             order: None,
             properties: json!({}),
+            classification: req.classification,
             stage: false,
         },
     )

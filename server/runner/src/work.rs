@@ -373,7 +373,9 @@ async fn stage(lease: &Lease, api: &Api, dir: &Path) -> Result<Staged, String> {
         tokio::fs::create_dir_all(&tables).await.map_err(io)?;
         for t in spec["tables"].as_array().into_iter().flatten() {
             let id = t["id"].as_str().ok_or("a table has no id")?;
-            let storage = lease.storage.as_ref().ok_or("the lease has no storage")?;
+            let storage = lease.storage.as_ref().ok_or(
+                "this server cannot give this machine access to data: its storage is not a bucket",
+            )?;
             fetch_table(storage, id, &safe_join(&tables, id)?).await?;
         }
         let run = serde_json::json!({"sql": spec["sql"], "limit": spec["limit"], "tables": spec["tables"], "memory_mb": lease.limits.memory_mb});
@@ -396,7 +398,9 @@ async fn stage(lease: &Lease, api: &Api, dir: &Path) -> Result<Staged, String> {
         );
         let folder = dir.join("inputs").join(name);
         if i["kind"] == "table" {
-            let storage = lease.storage.as_ref().ok_or("the lease has no storage")?;
+            let storage = lease.storage.as_ref().ok_or(
+                "this server cannot give this machine access to data: its storage is not a bucket",
+            )?;
             fetch_table(storage, id, &folder).await?;
         } else {
             api.fetch("volumes", id, &folder).await?;

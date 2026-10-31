@@ -112,12 +112,11 @@ impl IntoResponse for Catalog {
     fn into_response(self) -> Response {
         let status = self.0.status();
         let kind = match &self.0 {
-            Error::Invalid(_) => "BadRequestException",
+            Error::Invalid(_) | Error::TooLarge => "BadRequestException",
             Error::Unauthorized => "NotAuthorizedException",
             Error::NotFound(_) => "NoSuchTableException",
             Error::Denied(_) => "ForbiddenException",
             Error::Conflict(_) => "CommitFailedException",
-            Error::TooLarge => "BadRequestException",
             Error::Unavailable(_) => "ServiceUnavailableException",
             Error::Internal(_) => "ServiceFailureException",
         };

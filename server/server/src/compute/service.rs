@@ -723,7 +723,12 @@ pub struct Lease {
 fn table_ids(run: &Run, spec: &Value) -> Vec<String> {
     let field = |v: &Value| v["id"].as_str().map(str::to_owned);
     if run.kind == "sql" {
-        spec["tables"].as_array().into_iter().flatten().filter_map(field).collect()
+        spec["tables"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(field)
+            .collect()
     } else {
         spec["inputs"]
             .as_array()
@@ -791,24 +796,31 @@ pub async fn lease(app: &App, target: &Target) -> Result<Option<Lease>> {
             vec![spec["output"].as_str().unwrap_or_default().to_owned()],
         )
     };
-    let token = secret("jt_");
-    store::insert_token(
-        app.db.pool(),
-        &hash_secret(&token),
-        &store::TokenRow {
-            run_id: run.id.clone(),
-            org_id: run.org_id.clone(),
-            workspace_id: run.workspace_id.clone(),
-            identity: spec["as"].to_string(),
-            reads: json!(reads).to_string(),
-            writes: json!(writes).to_string(),
-            // It outlives the run's own time limit a little, and is deleted when the run ends.
-            expires_ms: now + (limits.timeout_s + 300) * 1000,
-        },
-    )
-    .await?;
+    // A statement reads its tables with credentials, not with a token; only a job's files go through the API.
+    let token = if run.kind == "sql" {
+        String::new()
+    } else {
+        let token = secret("jt_");
+        store::insert_token(
+            app.db.pool(),
+            &hash_secret(&token),
+            &store::TokenRow {
+                run_id: run.id.clone(),
+                org_id: run.org_id.clone(),
+                workspace_id: run.workspace_id.clone(),
+                identity: spec["as"].to_string(),
+                reads: json!(reads).to_string(),
+                writes: json!(writes).to_string(),
+                // It outlives the run's own time limit a little, and is deleted when the run ends.
+                expires_ms: now + (limits.timeout_s + 300) * 1000,
+            },
+        )
+        .await?;
+        token
+    };
     let ids = table_ids(&run, &spec);
-    let storage = if ids.is_empty() {
+    // A server whose storage is a folder cannot give any machine access to data: the machine says so when it needs it.
+    let storage = if ids.is_empty() || app.issuer.is_none() {
         None
     } else {
         match storage_for(app, &run.org_id, &ids, limits.timeout_s).await {
