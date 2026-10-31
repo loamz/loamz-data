@@ -118,7 +118,7 @@ AccessPolicies both allow it.
    including derived data and old versions, and a test proves the bytes are gone. `export(subject)` is the same walk.
 6. **Derived data is marked derived** (embeddings, indexes, OCR text, thumbnails) and can be rebuilt. It is never the
    only copy.
-7. **Formats are protocols we use, not things we build** (Lance, Parquet over a byte store).
+7. **Formats are protocols we use, not things we build** (Lance, Parquet over a byte store; Iceberg for tables, served through this server as its REST catalog).
 
 ## LAKE_CLIENT: two ways to use it (decided: B)
 
