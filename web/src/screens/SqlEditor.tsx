@@ -67,11 +67,12 @@ export function SqlEditor({ ws }: { ws: string }) {
     set(id, { running: true, run: undefined, error: undefined, since: started, elapsed: undefined });
     setBottom("results");
     try {
-      let r = await api.runStatement(ws, sql, Number(limit), 25);
+      // Asked without waiting, so the screen learns at once that the run is queued, then running, instead of after the wait.
+      let r = await api.runStatement(ws, sql, Number(limit), 0);
       set(id, { run: r });
-      // Still going (a cold sandbox, a slow query): keep asking until it ends.
+      // Keep asking until it ends (a cold start can take ten seconds or more).
       while (api.isRunning(r) && !cancelling.current[id]) {
-        await new Promise((ok) => setTimeout(ok, 1000));
+        await new Promise((ok) => setTimeout(ok, 700));
         r = await api.run(ws, r.id);
         set(id, { run: r });
       }
