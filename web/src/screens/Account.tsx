@@ -315,10 +315,12 @@ function ComputeTab({ org }: { org: string }) {
   const [memory, setMemory] = useState("2048");
   const [cpu, setCpu] = useState("1000");
   const [shown, setShown] = useState<api.Compute | null>(null);
+  const [kind, setKind] = useState<"agent" | "serverless">("agent");
+  const [endpoint, setEndpoint] = useState("");
   const items = list.data ?? [];
 
   // Anyone watching the list sees a machine come online as soon as its agent connects.
-  const waiting = items.some((c) => !c.online);
+  const waiting = items.some((c) => !c.online && c.kind === "agent");
   useEffect(() => {
     if (!waiting) return;
     const t = setInterval(list.reload, 5000);
@@ -346,9 +348,11 @@ function ComputeTab({ org }: { org: string }) {
               <Cpu className="shrink-0 text-muted" aria-hidden />
               <span className="min-w-0 flex-1 basis-48">
                 <span className="block truncate text-sm font-medium text-foreground">{c.name}</span>
-                <span className="block text-xs text-muted">Up to {c.max_memory_mb.toLocaleString()} MB and {c.max_cpu_millis / 1000} CPU per run{c.last_seen_ms ? ` · last heard ${when(c.last_seen_ms)}` : " · its agent has not connected yet"}</span>
+                <span className="block text-xs text-muted">Up to {c.max_memory_mb.toLocaleString()} MB and {c.max_cpu_millis / 1000} CPU per run{c.kind === "serverless" ? " · starts when a statement arrives, stops when idle" : c.last_seen_ms ? ` · last heard ${when(c.last_seen_ms)}` : " · its agent has not connected yet"}</span>
               </span>
-              <Badge tone={c.online ? "success" : "neutral"}>{c.online ? "online" : "offline"}</Badge>
+              <Badge tone="neutral">{c.kind === "serverless" ? "serverless" : "machine"}</Badge>
+              <Badge tone={c.online ? "success" : "neutral"}>{c.online ? (c.kind === "serverless" ? "ready" : "online") : "offline"}</Badge>
+              {c.kind === "agent" && (
               <Button
                 variant="secondary"
                 size="sm"
@@ -364,6 +368,7 @@ function ComputeTab({ org }: { org: string }) {
               >
                 <KeyRound /> New secret
               </Button>
+              )}
               <Button
                 variant="danger"
                 size="icon-sm"
@@ -386,16 +391,17 @@ function ComputeTab({ org }: { org: string }) {
       )}
 
       <Dialog open={adding} onOpenChange={setAdding}>
-        <DialogContent title="Attach compute" description="Name the machine and say how much of it one run may use.">
+        <DialogContent title="Attach compute" description="A machine of yours that connects out, or a serverless endpoint that starts only when a statement arrives.">
           <form
             className="mt-4 space-y-4"
             onSubmit={async (e) => {
               e.preventDefault();
               try {
-                const made = await api.attachCompute(org, { name: name.trim(), max_memory_mb: Number(memory), max_cpu_millis: Number(cpu) });
+                const made = await api.attachCompute(org, { name: name.trim(), kind, endpoint: kind === "serverless" ? endpoint.trim() : undefined, max_memory_mb: Number(memory), max_cpu_millis: Number(cpu) });
                 setAdding(false);
                 setName("");
-                setShown(made);
+                setEndpoint("");
+                if (made.secret) setShown(made);
                 list.reload();
               } catch (err) {
                 toast.error("Could not attach it", (err as Error).message);
@@ -403,9 +409,20 @@ function ComputeTab({ org }: { org: string }) {
             }}
           >
             <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-foreground">Name</span>
-              <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="oracle" />
+              <span className="text-xs font-medium text-foreground">Kind</span>
+              <Select aria-label="Kind" value={kind} onValueChange={(v) => setKind(v as "agent" | "serverless")} options={[{ value: "agent", label: "A machine of yours (it connects out)" }, { value: "serverless", label: "Serverless (started on demand)" }]} />
             </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-foreground">Name</span>
+              <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === "agent" ? "oracle" : "modal"} />
+            </label>
+            {kind === "serverless" && (
+              <label className="block space-y-1.5">
+                <span className="text-xs font-medium text-foreground">Endpoint</span>
+                <Input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="https://your-app.modal.run" spellCheck={false} />
+                <span className="block text-2xs text-muted">Only statements over data classified normal run here. It is given credentials for the tables of one statement, for minutes.</span>
+              </label>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <label className="block space-y-1.5">
                 <span className="text-xs font-medium text-foreground">Memory per run</span>
@@ -417,7 +434,7 @@ function ComputeTab({ org }: { org: string }) {
               </label>
             </div>
             <DialogFooter>
-              <Button type="submit" variant="primary" disabled={!name.trim()}>
+              <Button type="submit" variant="primary" disabled={!name.trim() || (kind === "serverless" && !endpoint.trim().startsWith("https://"))}>
                 Attach
               </Button>
             </DialogFooter>
