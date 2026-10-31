@@ -1,10 +1,9 @@
 import { useState } from "react";
-import { Button, Input, Text } from "@/design";
-import { hasOidc, setToken, startLogin } from "./auth";
+import { Button } from "@/design";
+import { hasOidc, startLogin } from "./auth";
 import { Mark } from "./Mark";
 
 export function SignIn({ notice }: { notice?: string }) {
-  const [token, setPasted] = useState("");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState(notice ?? "");
   return (
@@ -17,37 +16,22 @@ export function SignIn({ notice }: { notice?: string }) {
             <p className="text-xs text-muted">Your data, and who can reach it.</p>
           </div>
         </div>
-        {hasOidc ? (
-          <Button
-            variant="primary"
-            size="lg"
-            className="w-full"
-            disabled={busy}
-            onClick={() => {
-              setBusy(true);
-              startLogin().catch((e: Error) => {
-                setProblem(e.message);
-                setBusy(false);
-              });
-            }}
-          >
-            Continue to sign in
-          </Button>
-        ) : (
-          <form
-            className="space-y-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (token.trim()) setToken(token);
-            }}
-          >
-            <Text className="text-xs text-muted">Sign-in is not set up for this address yet. For development, paste a token from the dev server.</Text>
-            <Input size="lg" placeholder="Paste a token" value={token} onChange={(e) => setPasted(e.target.value)} autoComplete="off" spellCheck={false} aria-label="Token" />
-            <Button variant="primary" size="lg" className="w-full" type="submit" disabled={!token.trim()}>
-              Continue
-            </Button>
-          </form>
-        )}
+        <Button
+          variant="primary"
+          size="lg"
+          className="w-full"
+          disabled={busy || !hasOidc}
+          onClick={() => {
+            setBusy(true);
+            startLogin().catch((e: Error) => {
+              setProblem(e.message);
+              setBusy(false);
+            });
+          }}
+        >
+          Sign in with Loamz
+        </Button>
+        {!hasOidc && <p className="text-xs text-danger">Sign-in is not set up for this address: the app was built without VITE_OIDC_AUTHORITY.</p>}
         {problem && (
           <p role="alert" className="text-xs text-danger">
             {problem}

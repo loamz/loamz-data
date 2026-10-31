@@ -2,33 +2,33 @@ import { Database, MoreHorizontal, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Badge, Button, Menu, MenuContent, MenuItem, MenuTrigger, Page, PageEmpty, SettingGroup, SettingRow, Tabs, TabsContent, TabsList, TabsTrigger, confirmAction, toast } from "@/design";
 import * as api from "@/api";
+import { go } from "@/route";
 import { AccessList } from "@/components/AccessList";
 import { FilesTab } from "@/components/FilesTab";
 import { NewDialog } from "@/components/NewDialog";
 import { Tree } from "@/components/Tree";
+import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
 import { when } from "@/format";
 import { useLoad, useWide } from "@/hooks";
-import { canContain, kindLabel, shortId } from "@/kinds";
+import { Principal } from "@/components/Principal";
+import { canContain, kindLabel } from "@/kinds";
 
-const go = (id: string | null) => {
-  location.hash = id ? `#/catalog/${id}` : "#/catalog";
-};
-
-export function Catalog({ id }: { id: string | null }) {
+export function Catalog({ ws, id, me }: { ws: string; id: string | null; me: api.Me | undefined }) {
+  const open = (to: string | null) => go({ screen: "catalog", ws, id: to });
   const [children, setChildren] = useState<Record<string, api.Securable[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
   const [creating, setCreating] = useState(false);
-  const selected = useLoad(() => (id ? api.get(id) : Promise.resolve(null)), id ?? "none");
+  const selected = useLoad(() => (id ? api.get(ws, id) : Promise.resolve(null)), `${ws}/${id ?? "none"}`);
 
   const load = useCallback(async (parent: string) => {
     try {
-      const items = await api.list(parent);
+      const items = await api.list(ws, parent);
       setChildren((c) => ({ ...c, [parent]: items }));
     } catch (e) {
       toast.error("Could not load the catalog", (e as Error).message);
     }
-  }, []);
+  }, [ws]);
 
   useEffect(() => {
     void load("").then(() => setLoaded(true));
@@ -45,7 +45,7 @@ export function Catalog({ id }: { id: string | null }) {
       while (up && !cancelled) {
         open.push(up);
         await load(up);
-        up = (await api.get(up).catch(() => null))?.parent_id ?? "";
+        up = (await api.get(ws, up).catch(() => null))?.parent_id ?? "";
       }
       if (!cancelled) setExpanded((e) => new Set([...e, ...open]));
     })();
@@ -75,7 +75,7 @@ export function Catalog({ id }: { id: string | null }) {
     <div className="flex h-full min-h-0">
       <aside className={`${id ? "hidden md:flex" : "flex"} w-full shrink-0 flex-col border-border bg-sidebar md:w-80 md:border-r`}>
         <div className="flex items-center gap-2 px-4 pb-2 pt-4">
-          <h1 className="flex-1 text-sm font-semibold text-foreground">Catalog</h1>
+          <div className="min-w-0 flex-1">{me ? <WorkspaceSwitcher current={ws} all={me.workspaces} /> : <h1 className="text-sm font-semibold text-foreground">Catalog</h1>}</div>
           <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
             <Plus /> New
           </Button>
@@ -84,7 +84,7 @@ export function Catalog({ id }: { id: string | null }) {
           {topEmpty ? (
             <p className="px-3 py-6 text-center text-xs text-muted">Nothing here yet. Create a catalog to begin.</p>
           ) : (
-            <Tree byParent={children} expanded={expanded} selected={id} onToggle={toggle} onOpen={(s) => go(s.id)} />
+            <Tree byParent={children} expanded={expanded} selected={id} onToggle={toggle} onOpen={(s) => open(s.id)} />
           )}
         </div>
       </aside>
@@ -97,16 +97,17 @@ export function Catalog({ id }: { id: string | null }) {
             </PageEmpty>
           </Page>
         ) : selected.error ? (
-          <Page title="Not found" onBack={() => go(null)}>
+          <Page title="Not found" onBack={() => open(null)}>
             <PageEmpty icon={Database} title="This isn't here, or you can't see it">{selected.error.message}</PageEmpty>
           </Page>
         ) : selected.data ? (
           <Detail
             key={selected.data.id}
+            ws={ws}
             item={selected.data}
-            onBack={() => go(null)}
+            onBack={() => open(null)}
             onDropped={async (s) => {
-              go(s.parent_id || null);
+              open(s.parent_id || null);
               await load(s.parent_id);
             }}
           />
@@ -114,6 +115,7 @@ export function Catalog({ id }: { id: string | null }) {
       </section>
 
       <NewDialog
+        ws={ws}
         open={creating}
         onOpenChange={setCreating}
         parent={parentOfNew}
@@ -122,20 +124,20 @@ export function Catalog({ id }: { id: string | null }) {
           toast.success(`Created ${made.name}`);
           await load(made.parent_id);
           if (made.parent_id) setExpanded((e) => new Set([...e, made.parent_id]));
-          go(made.id);
+          open(made.id);
         }}
       />
     </div>
   );
 }
 
-function Detail({ item, onBack, onDropped }: { item: api.Securable; onBack: () => void; onDropped: (s: api.Securable) => void }) {
+function Detail({ ws, item, onBack, onDropped }: { ws: string; item: api.Securable; onBack: () => void; onDropped: (s: api.Securable) => void }) {
   const wide = useWide();
   const trail = useLoad(async () => {
     const names: string[] = [];
     let up = item.parent_id;
     while (up) {
-      const p = await api.get(up).catch(() => null);
+      const p = await api.get(ws, up).catch(() => null);
       if (!p) break;
       names.unshift(p.name);
       up = p.parent_id;
@@ -162,7 +164,7 @@ function Detail({ item, onBack, onDropped }: { item: api.Securable; onBack: () =
               onSelect={async () => {
                 if (!(await confirmAction({ title: `Drop ${item.name}?`, description: `${item.name} and everything inside it disappear now. Its files are removed for good in the background.`, confirmLabel: "Drop", danger: true }))) return;
                 try {
-                  await api.drop(item.id);
+                  await api.drop(ws, item.id);
                   toast.success(`Dropping ${item.name}`, "It's gone from view; the files are being removed.");
                   onDropped(item);
                 } catch (e) {
@@ -184,13 +186,13 @@ function Detail({ item, onBack, onDropped }: { item: api.Securable; onBack: () =
         </TabsList>
         {item.kind === "volume" && (
           <TabsContent value="files">
-            <FilesTab volume={item.id} />
+            <FilesTab ws={ws} volume={item.id} />
           </TabsContent>
         )}
         <TabsContent value="about">
           <SettingGroup title="Details">
             <SettingRow label="Owner" description="The one who made it. They manage it.">
-              <span className="font-mono text-xs" title={item.owner}>{shortId(item.owner)}</span>
+              <Principal id={item.owner} />
             </SettingRow>
             <SettingRow label="Classification" description="How carefully the data is handled.">
               <Badge tone={item.classification === "normal" ? "neutral" : "warning"}>{item.classification}</Badge>
@@ -207,7 +209,7 @@ function Detail({ item, onBack, onDropped }: { item: api.Securable; onBack: () =
           </SettingGroup>
         </TabsContent>
         <TabsContent value="access">
-          <AccessList id={item.id} />
+          <AccessList ws={ws} id={item.id} />
         </TabsContent>
       </Tabs>
     </Page>

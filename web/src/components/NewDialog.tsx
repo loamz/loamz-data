@@ -15,7 +15,7 @@ const classNote: Record<string, string> = {
 };
 
 /** Make something inside `parent` (the top of your space when there is none). */
-export function NewDialog({ open, onOpenChange, parent, where, onCreated }: { open: boolean; onOpenChange: (o: boolean) => void; parent: api.Securable | null; where: string; onCreated: (s: api.Securable) => void }) {
+export function NewDialog({ ws, open, onOpenChange, parent, where, onCreated }: { ws: string; open: boolean; onOpenChange: (o: boolean) => void; parent: api.Securable | null; where: string; onCreated: (s: api.Securable) => void }) {
   const kinds = childKinds(parent?.kind ?? null);
   const [kind, setKind] = useState<api.Kind>(kinds[0] ?? "catalog");
   const [name, setName] = useState("");
@@ -41,7 +41,7 @@ export function NewDialog({ open, onOpenChange, parent, where, onCreated }: { op
             if (!validName(name)) return;
             setBusy(true);
             try {
-              const made = await api.create({ kind, parent_id: parent?.id ?? "", name, classification });
+              const made = await api.create(ws, { kind, parent_id: parent?.id ?? "", name, classification });
               onOpenChange(false);
               onCreated(made);
             } catch (err) {
