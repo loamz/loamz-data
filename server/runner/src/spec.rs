@@ -18,10 +18,32 @@ pub struct Sandbox {
     pub pids_max: u64,
     /// Share of one CPU in thousandths (1000 = one full CPU).
     pub cpu_millis: u64,
+    pub user: User,
 }
 
 /// The user the code runs as inside the sandbox. Nobody: no files of its own, no privileges.
 pub const SANDBOX_UID: u32 = 65534;
+
+/// Who the code is inside the sandbox, which depends on what the machine can do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum User {
+    /// `nobody`, an id of its own: needs a machine where the agent is root, so files can be handed to that id.
+    Nobody,
+    /// Without root, gVisor can map only the agent's own user into the sandbox, and it appears there as root of an empty user
+    /// namespace. It has no capabilities and cannot gain any (they are dropped, and `noNewPrivileges` is set), and the sandbox
+    /// has no way to name any other user on the machine.
+    MappedRoot,
+}
+
+impl User {
+    #[must_use]
+    pub fn uid(self) -> u32 {
+        match self {
+            Self::Nobody => SANDBOX_UID,
+            Self::MappedRoot => 0,
+        }
+    }
+}
 
 pub const MAX_MEMORY_BYTES: u64 = 8 << 30;
 pub const MAX_PIDS: u64 = 1024;
@@ -87,7 +109,7 @@ pub fn oci_config(s: &Sandbox) -> Result<Value, String> {
         "ociVersion": "1.0.2",
         "process": {
             "terminal": false,
-            "user": {"uid": SANDBOX_UID, "gid": SANDBOX_UID},
+            "user": {"uid": s.user.uid(), "gid": s.user.uid()},
             "args": s.args,
             "env": ["PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/workspace", "LANG=C.UTF-8"],
             "cwd": "/workspace",
@@ -126,6 +148,7 @@ mod tests {
             memory_bytes: 512 << 20,
             pids_max: 64,
             cpu_millis: 1000,
+            user: User::Nobody,
         }
     }
 

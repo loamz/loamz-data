@@ -3,11 +3,13 @@
 
 use serde_json::Value;
 
+use crate::spec::User;
+
 /// Returns every problem found, so one run of the check says everything that is wrong.
 ///
 /// # Errors
 /// The list of missing or weakened promises.
-pub fn verify(config: &Value) -> Result<(), Vec<String>> {
+pub fn verify(config: &Value, user: User) -> Result<(), Vec<String>> {
     let mut bad = Vec::new();
     let mut need = |ok: bool, why: &str| {
         if !ok {
@@ -42,11 +44,11 @@ pub fn verify(config: &Value) -> Result<(), Vec<String>> {
             .is_some_and(Vec::is_empty),
         "capabilities are not dropped",
     );
+    // The user must be exactly the one this machine promised: `nobody`, or (without root) the agent's own mapped user. Anything else,
+    // above all root on a machine where root is real, is not what was promised.
     need(
-        config["process"]["user"]["uid"]
-            .as_u64()
-            .is_some_and(|u| u != 0),
-        "runs as root",
+        config["process"]["user"]["uid"].as_u64() == Some(u64::from(user.uid())),
+        "runs as a different user than promised",
     );
 
     let namespaces = config["linux"]["namespaces"]
@@ -91,7 +93,7 @@ pub fn verify(config: &Value) -> Result<(), Vec<String>> {
 #[allow(clippy::unwrap_used, clippy::semicolon_if_nothing_returned)]
 mod tests {
     use super::*;
-    use crate::spec::{Sandbox, oci_config};
+    use crate::spec::{Sandbox, User, oci_config};
 
     fn good() -> Value {
         oci_config(&Sandbox {
@@ -102,20 +104,24 @@ mod tests {
             memory_bytes: 1 << 28,
             pids_max: 32,
             cpu_millis: 500,
+            user: User::Nobody,
         })
         .unwrap()
     }
 
     #[test]
     fn what_the_builder_makes_passes() {
-        assert_eq!(verify(&good()), Ok(()));
+        assert_eq!(verify(&good(), User::Nobody), Ok(()));
     }
 
     /// Breaks one promise in a good config and says the check must notice.
     fn caught(what: &str, break_it: impl FnOnce(&mut Value)) {
         let mut c = good();
         break_it(&mut c);
-        assert!(verify(&c).is_err(), "{what} should have been caught");
+        assert!(
+            verify(&c, User::Nobody).is_err(),
+            "{what} should have been caught"
+        );
     }
 
     #[test]

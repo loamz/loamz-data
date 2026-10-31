@@ -1,0 +1,497 @@
+//! One piece of work, from the lease to the report: fetch what it declared through the Data API with the run's own token, run it
+//! in a sandbox, and say how it ended. The token is the person's rights narrowed to what the work declared, so this machine can
+//! read and write nothing else, and the code in the sandbox never sees it (it has no network and no credential).
+
+use std::{
+    future::Future,
+    path::{Component, Path, PathBuf},
+    time::Duration,
+};
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::{
+    check::verify,
+    exec::{Gvisor, prepare_workspace, private_dir, run},
+    spec::{Sandbox, User, oci_config},
+};
+
+/// What the machine has: the sandbox runtime, a root filesystem with Python (and `DuckDB`), and a place to work.
+#[derive(Clone)]
+pub struct Machine {
+    pub gvisor: Gvisor,
+    pub rootfs: PathBuf,
+    pub work: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Lease {
+    pub run: RunInfo,
+    pub token: String,
+    pub limits: Limits,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RunInfo {
+    pub id: String,
+    pub kind: String,
+    pub workspace_id: String,
+    pub spec: Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Limits {
+    pub memory_mb: u64,
+    pub cpu_millis: u64,
+    pub timeout_s: u64,
+}
+
+/// How a run ended, as the Data server wants to hear it.
+#[derive(Debug, Default, Serialize)]
+pub struct Report {
+    pub state: String,
+    pub exit_code: i64,
+    pub stdout: String,
+    pub stderr: String,
+    pub result: String,
+    pub error: String,
+}
+
+impl Report {
+    fn failed(error: impl Into<String>) -> Self {
+        Self {
+            state: "failed".into(),
+            exit_code: -1,
+            error: error.into(),
+            ..Self::default()
+        }
+    }
+}
+
+/// A path from the server, made safe to put under a folder of ours: plain components only.
+fn safe_join(base: &Path, rel: &str) -> Result<PathBuf, String> {
+    let mut out = base.to_path_buf();
+    for c in Path::new(rel).components() {
+        match c {
+            Component::Normal(part) => out.push(part),
+            _ => return Err(format!("the server sent an unsafe path {rel:?}")),
+        }
+    }
+    if out == base {
+        return Err("the server sent an empty path".into());
+    }
+    Ok(out)
+}
+
+/// The most that is fetched or sent, so a mistake cannot fill the disk.
+const MAX_FILE: u64 = 256 << 20;
+const MAX_FILES: usize = 200;
+const MAX_RESULT: u64 = 4 << 20;
+
+/// The Data API, as one run's token sees it.
+struct Api {
+    http: reqwest::Client,
+    base: String,
+    workspace: String,
+    token: String,
+}
+
+impl Api {
+    fn url(&self, holder: &str, id: &str, path: Option<&str>) -> Result<reqwest::Url, String> {
+        let mut url = reqwest::Url::parse(&format!(
+            "{}/api/v1/workspaces/{}/{holder}/{id}/files",
+            self.base.trim_end_matches('/'),
+            self.workspace
+        ))
+        .map_err(|e| format!("the Data address is not valid: {e}"))?;
+        if let Some(p) = path {
+            let mut segs = url
+                .path_segments_mut()
+                .map_err(|()| "the Data address cannot be a base".to_owned())?;
+            segs.extend(p.split('/'));
+        }
+        Ok(url)
+    }
+
+    async fn list(&self, holder: &str, id: &str) -> Result<Vec<String>, String> {
+        let r = self
+            .http
+            .get(self.url(holder, id, None)?)
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !r.status().is_success() {
+            return Err(format!("listing the files of {id}: {}", r.status()));
+        }
+        let v: Value = r.json().await.map_err(|e| e.to_string())?;
+        Ok(v["items"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|i| i["path"].as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    async fn download(&self, holder: &str, id: &str, path: &str, to: &Path) -> Result<(), String> {
+        let mut r = self
+            .http
+            .get(self.url(holder, id, Some(path))?)
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !r.status().is_success() {
+            return Err(format!("reading {path}: {}", r.status()));
+        }
+        if let Some(parent) = to.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        let mut file = tokio::fs::File::create(to)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut total = 0u64;
+        while let Some(chunk) = r.chunk().await.map_err(|e| e.to_string())? {
+            total += chunk.len() as u64;
+            if total > MAX_FILE {
+                return Err(format!("{path} is larger than the limit"));
+            }
+            tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    async fn upload(
+        &self,
+        holder: &str,
+        id: &str,
+        path: &str,
+        bytes: Vec<u8>,
+    ) -> Result<(), String> {
+        let r = self
+            .http
+            .put(self.url(holder, id, Some(path))?)
+            .bearer_auth(&self.token)
+            .body(bytes)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if r.status().is_success() {
+            Ok(())
+        } else {
+            Err(format!("writing {path}: {}", r.status()))
+        }
+    }
+
+    /// Fetches every file of a table or volume into `folder`.
+    async fn fetch(&self, holder: &str, id: &str, folder: &Path) -> Result<(), String> {
+        tokio::fs::create_dir_all(folder)
+            .await
+            .map_err(|e| e.to_string())?;
+        let files = self.list(holder, id).await?;
+        if files.len() > MAX_FILES {
+            return Err(format!("{id} has too many files for one run"));
+        }
+        for path in &files {
+            self.download(holder, id, path, &safe_join(folder, path)?)
+                .await?;
+        }
+        Ok(())
+    }
+}
+
+/// Every regular file under `dir` (links are skipped), as paths relative to it.
+async fn files_under(dir: &Path) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let mut rd = tokio::fs::read_dir(&d).await.map_err(|e| e.to_string())?;
+        while let Some(e) = rd.next_entry().await.map_err(|e| e.to_string())? {
+            let t = e.file_type().await.map_err(|e| e.to_string())?;
+            if t.is_dir() {
+                stack.push(e.path());
+            } else if let (true, Ok(rel)) = (t.is_file(), e.path().strip_prefix(dir)) {
+                out.push(rel.to_string_lossy().into_owned());
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// What runs inside the sandbox to answer a SQL statement. It is part of this program, not something a person supplies.
+pub const RUN_SQL: &str = include_str!("sandbox/run_sql.py");
+
+/// Does the work, whatever happens to it, and says how it ended. The run's folder is removed afterwards.
+pub async fn execute(
+    lease: &Lease,
+    machine: &Machine,
+    data_url: &str,
+    stop: impl Future<Output = ()>,
+) -> Report {
+    let dir = machine.work.join(&lease.run.id);
+    let report = match go(lease, machine, data_url, &dir, stop).await {
+        Ok(r) => r,
+        Err(e) => Report::failed(e),
+    };
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+    report
+}
+
+/// What staging leaves ready to run: the folders to mount, and which script in `/inputs/job` to run.
+struct Staged {
+    mounts: Vec<(String, PathBuf)>,
+    script: &'static str,
+}
+
+async fn go(
+    lease: &Lease,
+    machine: &Machine,
+    data_url: &str,
+    dir: &Path,
+    stop: impl Future<Output = ()>,
+) -> Result<Report, String> {
+    let io = |e: std::io::Error| e.to_string();
+    private_dir(&machine.work).map_err(io)?;
+    private_dir(dir).map_err(io)?;
+    let api = Api {
+        http: reqwest::Client::builder()
+            .timeout(Duration::from_mins(5))
+            .build()
+            .map_err(|e| e.to_string())?,
+        base: data_url.to_owned(),
+        workspace: lease.run.workspace_id.clone(),
+        token: lease.token.clone(),
+    };
+    let staged = stage(lease, &api, dir).await?;
+    let workspace = dir.join("workspace");
+    let report = sandboxed(lease, machine, dir, &workspace, staged, stop).await?;
+    // Only a run that ended well has anything to collect.
+    if report.state == "running" {
+        collect(lease, &api, &workspace, report).await
+    } else {
+        Ok(report)
+    }
+}
+
+/// Fetches what the work declared, through the API with its own token, and writes the code to run beside it.
+async fn stage(lease: &Lease, api: &Api, dir: &Path) -> Result<Staged, String> {
+    let io = |e: std::io::Error| e.to_string();
+    let spec = &lease.run.spec;
+    let code = dir.join("job");
+    tokio::fs::create_dir_all(&code).await.map_err(io)?;
+    let mut mounts = vec![("job".to_owned(), code.clone())];
+    if lease.run.kind == "sql" {
+        let tables = dir.join("tables");
+        tokio::fs::create_dir_all(&tables).await.map_err(io)?;
+        for t in spec["tables"].as_array().into_iter().flatten() {
+            let id = t["id"].as_str().ok_or("a table has no id")?;
+            api.fetch("tables", id, &safe_join(&tables, id)?).await?;
+        }
+        let run = serde_json::json!({"sql": spec["sql"], "limit": spec["limit"], "tables": spec["tables"], "memory_mb": lease.limits.memory_mb});
+        tokio::fs::write(code.join("spec.json"), run.to_string())
+            .await
+            .map_err(io)?;
+        tokio::fs::write(code.join("run_sql.py"), RUN_SQL)
+            .await
+            .map_err(io)?;
+        mounts.push(("tables".to_owned(), tables));
+        return Ok(Staged {
+            mounts,
+            script: "run_sql.py",
+        });
+    }
+    for i in spec["inputs"].as_array().into_iter().flatten() {
+        let (id, name) = (
+            i["id"].as_str().ok_or("an input has no id")?,
+            i["name"].as_str().ok_or("an input has no name")?,
+        );
+        let holder = if i["kind"] == "table" {
+            "tables"
+        } else {
+            "volumes"
+        };
+        let folder = dir.join("inputs").join(name);
+        api.fetch(holder, id, &folder).await?;
+        mounts.push((name.to_owned(), folder));
+    }
+    tokio::fs::write(
+        code.join("main.py"),
+        spec["script"].as_str().ok_or("the job has no script")?,
+    )
+    .await
+    .map_err(io)?;
+    Ok(Staged {
+        mounts,
+        script: "main.py",
+    })
+}
+
+/// Runs the staged work in a sandbox whose limits are written into its own config and checked before anything runs, with a hard
+/// stop on time and on being asked to. A run that exited cleanly comes back as `running`, meaning "its results are still to collect".
+async fn sandboxed(
+    lease: &Lease,
+    machine: &Machine,
+    dir: &Path,
+    workspace: &Path,
+    staged: Staged,
+    stop: impl Future<Output = ()>,
+) -> Result<Report, String> {
+    let io = |e: std::io::Error| e.to_string();
+    let user = if machine.gvisor.rootless {
+        User::MappedRoot
+    } else {
+        User::Nobody
+    };
+    prepare_workspace(workspace, user).map_err(io)?;
+    let sandbox = Sandbox {
+        rootfs: machine.rootfs.clone(),
+        inputs: staged.mounts,
+        workspace: workspace.to_path_buf(),
+        args: vec!["python3".into(), format!("/inputs/job/{}", staged.script)],
+        memory_bytes: lease.limits.memory_mb << 20,
+        pids_max: 256,
+        cpu_millis: lease.limits.cpu_millis,
+        user,
+    };
+    let config = oci_config(&sandbox)?;
+    verify(&config, user)
+        .map_err(|why| format!("the sandbox config is missing promises: {}", why.join("; ")))?;
+    let bundle = dir.join("bundle");
+    tokio::fs::create_dir_all(&bundle).await.map_err(io)?;
+    tokio::fs::write(bundle.join("config.json"), config.to_string())
+        .await
+        .map_err(io)?;
+
+    let (cmd, clean) = machine.gvisor.commands(&bundle, &lease.run.id);
+    let out = run(
+        cmd,
+        Duration::from_secs(lease.limits.timeout_s),
+        stop,
+        Some(clean),
+    )
+    .await
+    .map_err(|e| format!("could not start the sandbox: {e}"))?;
+    let mut report = Report {
+        state: "failed".into(),
+        exit_code: out.exit_code.map_or(-1, i64::from),
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        ..Report::default()
+    };
+    if out.cancelled {
+        "cancelled".clone_into(&mut report.state);
+    } else if out.timed_out {
+        "timed_out".clone_into(&mut report.state);
+        report.error = format!("it did not finish in {} seconds", lease.limits.timeout_s);
+    } else if out.exit_code == Some(0) {
+        "running".clone_into(&mut report.state);
+    } else {
+        report.error = format!(
+            "the program exited with {}",
+            out.exit_code.map_or("a signal".into(), |c| c.to_string())
+        );
+    }
+    Ok(report)
+}
+
+/// A statement's rows come back in the report; a job's files go to its output volume.
+async fn collect(
+    lease: &Lease,
+    api: &Api,
+    workspace: &Path,
+    mut report: Report,
+) -> Result<Report, String> {
+    let io = |e: std::io::Error| e.to_string();
+    if lease.run.kind == "sql" {
+        let path = workspace.join("result.json");
+        let size = tokio::fs::metadata(&path)
+            .await
+            .map_err(|_| "the statement produced no result".to_owned())?
+            .len();
+        if size > MAX_RESULT {
+            "failed".clone_into(&mut report.state);
+            "the result is too large".clone_into(&mut report.error);
+            return Ok(report);
+        }
+        let text = tokio::fs::read_to_string(&path).await.map_err(io)?;
+        let v: Value =
+            serde_json::from_str(&text).map_err(|e| format!("the result is not JSON: {e}"))?;
+        if let Some(e) = v["error"].as_str() {
+            "failed".clone_into(&mut report.state);
+            e.clone_into(&mut report.error);
+        } else {
+            "succeeded".clone_into(&mut report.state);
+            report.result = text;
+        }
+        return Ok(report);
+    }
+    let output = lease.run.spec["output"]
+        .as_str()
+        .ok_or("the job has no output volume")?;
+    for rel in files_under(workspace).await?.into_iter().take(MAX_FILES) {
+        let path = workspace.join(&rel);
+        if tokio::fs::metadata(&path).await.map_err(io)?.len() > MAX_FILE {
+            continue;
+        }
+        api.upload(
+            "volumes",
+            output,
+            &format!("runs/{}/{rel}", lease.run.id),
+            tokio::fs::read(&path).await.map_err(io)?,
+        )
+        .await?;
+    }
+    "succeeded".clone_into(&mut report.state);
+    Ok(report)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paths_from_the_server_stay_under_the_folder() {
+        let base = Path::new("/w/inputs/sales");
+        assert_eq!(
+            safe_join(base, "a/b.csv").unwrap(),
+            Path::new("/w/inputs/sales/a/b.csv")
+        );
+        for bad in ["../x", "a/../../x", "/etc/passwd", "", "."] {
+            assert!(safe_join(base, bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn urls_encode_each_part_of_a_path() {
+        let api = Api {
+            http: reqwest::Client::new(),
+            base: "http://h:1/".into(),
+            workspace: "w".into(),
+            token: String::new(),
+        };
+        assert_eq!(
+            api.url("tables", "t1", Some("a b/c#d.csv"))
+                .unwrap()
+                .as_str(),
+            "http://h:1/api/v1/workspaces/w/tables/t1/files/a%20b/c%23d.csv"
+        );
+    }
+
+    #[test]
+    fn a_lease_is_read_as_the_server_writes_it() {
+        let lease: Lease = serde_json::from_str(r#"{"run":{"id":"r","kind":"sql","org_id":"o","workspace_id":"w","spec":{"sql":"select 1"}},"token":"jt_x","limits":{"memory_mb":512,"cpu_millis":1000,"timeout_s":30}}"#).unwrap();
+        assert_eq!(
+            (lease.run.kind.as_str(), lease.limits.timeout_s),
+            ("sql", 30)
+        );
+    }
+}

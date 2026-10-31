@@ -9,7 +9,7 @@ use std::{path::PathBuf, time::Duration};
 use loamz_runner::{
     check::verify,
     exec::{Gvisor, Outcome, prepare_workspace, run},
-    spec::{Sandbox, oci_config},
+    spec::{Sandbox, User, oci_config},
 };
 
 struct Lab {
@@ -49,7 +49,12 @@ impl Lab {
         seconds: u64,
     ) -> (Outcome, PathBuf) {
         let ws = self.dir.join(format!("{name}-ws"));
-        prepare_workspace(&ws).unwrap();
+        let user = if self.rootless {
+            User::MappedRoot
+        } else {
+            User::Nobody
+        };
+        prepare_workspace(&ws, user).unwrap();
         let sandbox = Sandbox {
             rootfs: self.rootfs.clone(),
             inputs: vec![],
@@ -58,13 +63,10 @@ impl Lab {
             memory_bytes: memory,
             pids_max: pids,
             cpu_millis: 1000,
+            user,
         };
-        let mut config = oci_config(&sandbox).unwrap();
-        verify(&config).expect("the config passes the check before anything runs");
-        if self.rootless {
-            // runsc makes its own user namespace; inside it the code is root of nothing.
-            config["process"]["user"] = serde_json::json!({"uid": 0, "gid": 0});
-        }
+        let config = oci_config(&sandbox).unwrap();
+        verify(&config, user).expect("the config passes the check before anything runs");
         let bundle = self.dir.join(format!("{name}-bundle"));
         std::fs::create_dir_all(&bundle).unwrap();
         std::fs::write(bundle.join("config.json"), config.to_string()).unwrap();
@@ -77,9 +79,14 @@ impl Lab {
         }
         let (cmd, clean) = self.gv.commands(&bundle, name);
         (
-            run(cmd, Duration::from_secs(seconds), Some(clean))
-                .await
-                .unwrap(),
+            run(
+                cmd,
+                Duration::from_secs(seconds),
+                std::future::pending(),
+                Some(clean),
+            )
+            .await
+            .unwrap(),
             ws,
         )
     }
@@ -242,4 +249,58 @@ async fn the_process_limit_stops_a_fork_bomb() {
         !String::from_utf8_lossy(&list.stdout).contains("pids-bomb"),
         "no container left behind"
     );
+}
+
+/// The second layer behind the server's parser: even a statement that got past it cannot reach a file, write one, or unlock `DuckDB`.
+#[tokio::test]
+async fn duckdb_is_locked_down_even_if_a_statement_got_past_the_parser() {
+    let Some(lab) = lab() else { return };
+    let attacks = [
+        "SELECT * FROM read_text('/etc/hosts')",
+        "SELECT * FROM read_csv('/etc/passwd')",
+        "SELECT * FROM glob('/*')",
+        "COPY (SELECT 1) TO '/workspace/stolen.csv'",
+        "ATTACH '/workspace/other.db' AS other",
+        "INSTALL httpfs",
+        "LOAD httpfs",
+        "SET enable_external_access = true",
+        "SET allowed_directories = ['/']",
+        "SET lock_configuration = false",
+        "PRAGMA enable_external_access",
+    ];
+    for (i, sql) in attacks.iter().enumerate() {
+        // The runner's own script, pointed at a spec the test writes into the workspace.
+        let spec = serde_json::json!({"sql": sql, "limit": 10, "tables": [], "memory_mb": 256})
+            .to_string();
+        let script =
+            loamz_runner::work::RUN_SQL.replace("/inputs/job/spec.json", "/workspace/spec.json");
+        let code = format!(
+            "open('/workspace/spec.json','w').write({spec:?})\nexec(compile({script:?}, 'run_sql', 'exec'))"
+        );
+        let (o, ws) = lab
+            .python(&format!("lock-{i}"), &code, 512 << 20, 64, 60)
+            .await;
+        let text = std::fs::read_to_string(ws.join("result.json")).unwrap_or_default();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+        assert!(
+            v["error"].is_string(),
+            "{sql} was not refused: {} {text}",
+            show(&o)
+        );
+        assert!(
+            !ws.join("stolen.csv").exists() && !ws.join("other.db").exists(),
+            "{sql} wrote a file"
+        );
+    }
+    // And a plain statement still works under the same lock.
+    let spec = serde_json::json!({"sql": "SELECT 6 * 7 AS answer", "limit": 10, "tables": [], "memory_mb": 256}).to_string();
+    let script =
+        loamz_runner::work::RUN_SQL.replace("/inputs/job/spec.json", "/workspace/spec.json");
+    let code = format!(
+        "open('/workspace/spec.json','w').write({spec:?})\nexec(compile({script:?}, 'run_sql', 'exec'))"
+    );
+    let (_, ws) = lab.python("lock-ok", &code, 512 << 20, 64, 60).await;
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(ws.join("result.json")).unwrap()).unwrap();
+    assert_eq!(v["rows"][0][0], 42, "{v}");
 }
