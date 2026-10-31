@@ -269,6 +269,7 @@ impl Drop for BucketUpload {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)] // used as `map_err(io)`
 fn io(e: object_store::Error) -> FileError {
     FileError::Io(std::io::Error::other(e.to_string()))
 }
