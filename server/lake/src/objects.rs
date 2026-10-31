@@ -106,17 +106,14 @@ impl Store {
     pub async fn begin_put(&self, volume: &str, rel: &str, max: u64) -> Result<Upload, FileError> {
         match self {
             Self::Folder(v) => Ok(Upload::Folder(v.begin_put(volume, rel, max).await?)),
-            Self::Bucket { s3, .. } => {
-                let up = s3
-                    .put_multipart(&Self::key(volume, rel)?)
-                    .await
-                    .map_err(io)?;
-                Ok(Upload::Bucket(BucketUpload {
-                    write: Some(WriteMultipart::new_with_chunk_size(up, PART)),
-                    size: 0,
-                    max,
-                }))
-            }
+            Self::Bucket { s3, .. } => Ok(Upload::Bucket(BucketUpload {
+                s3: s3.clone(),
+                key: Self::key(volume, rel)?,
+                buffer: Vec::new(),
+                write: None,
+                size: 0,
+                max,
+            })),
         }
     }
 
@@ -250,7 +247,11 @@ pub enum Upload {
     Bucket(BucketUpload),
 }
 
+/// A small file is one request: it is held until it is complete. Only a file larger than one part becomes a multipart upload.
 pub struct BucketUpload {
+    s3: Arc<AmazonS3>,
+    key: Key,
+    buffer: Vec<u8>,
     write: Option<WriteMultipart>,
     size: u64,
     max: u64,
@@ -264,6 +265,17 @@ impl Upload {
                 u.size += chunk.len() as u64;
                 if u.size > u.max {
                     return Err(FileError::TooLarge);
+                }
+                if u.write.is_none() {
+                    u.buffer.extend_from_slice(chunk);
+                    if u.buffer.len() <= PART {
+                        return Ok(());
+                    }
+                    let up = u.s3.put_multipart(&u.key).await.map_err(io)?;
+                    let mut w = WriteMultipart::new_with_chunk_size(up, PART);
+                    w.write(&std::mem::take(&mut u.buffer));
+                    u.write = Some(w);
+                    return Ok(());
                 }
                 let w = u.write.as_mut().ok_or(FileError::NotFound)?;
                 // Waits while too many parts are in flight, so a fast client cannot make the server hold the whole file.
@@ -279,8 +291,12 @@ impl Upload {
         match self {
             Self::Folder(u) => u.commit().await,
             Self::Bucket(mut u) => {
-                let w = u.write.take().ok_or(FileError::NotFound)?;
-                w.finish().await.map_err(io)?;
+                if let Some(w) = u.write.take() {
+                    w.finish().await.map_err(io)?;
+                } else {
+                    let bytes = std::mem::take(&mut u.buffer);
+                    u.s3.put(&u.key, bytes.into()).await.map_err(io)?;
+                }
                 Ok(u.size)
             }
         }

@@ -82,7 +82,8 @@ export function Compute({ ws }: { ws: string }) {
                     <span className="block truncate text-sm font-medium text-foreground">{c.name}</span>
                     <span className="block text-xs text-muted">Up to {c.max_memory_mb.toLocaleString()} MB and {c.max_cpu_millis / 1000} CPU{c.max_cpu_millis === 1000 ? "" : "s"} per run{c.last_seen_ms ? ` · last heard ${when(c.last_seen_ms)}` : " · never connected"}</span>
                   </span>
-                  <Badge tone={c.online ? "success" : "neutral"}>{c.online ? "online" : "offline"}</Badge>
+                  <Badge tone="neutral">{c.kind === "serverless" ? "serverless" : "machine"}</Badge>
+                  <Badge tone={c.online ? "success" : "neutral"}>{c.online ? (c.kind === "serverless" ? "ready" : "online") : "offline"}</Badge>
                 </div>
               ))}
             </div>

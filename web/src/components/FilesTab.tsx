@@ -14,8 +14,8 @@ function save(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-export function FilesTab({ ws, holder, id, hint }: { ws: string; holder: api.Holder; id: string; hint?: string }) {
-  const list = useLoad(() => api.files(ws, holder, id), `${ws}/${id}`);
+export function FilesTab({ ws, id }: { ws: string; id: string }) {
+  const list = useLoad(() => api.files(ws, id), `${ws}/${id}`);
   const [uploading, setUploading] = useState(0);
   const [over, setOver] = useState(false);
 
@@ -23,7 +23,7 @@ export function FilesTab({ ws, holder, id, hint }: { ws: string; holder: api.Hol
     setUploading((n) => n + chosen.length);
     for (const f of chosen) {
       try {
-        await api.upload(ws, holder, id, f.name, f);
+        await api.upload(ws, id, f.name, f);
         toast.success(`Uploaded ${f.name}`);
       } catch (err) {
         toast.error(`Could not upload ${f.name}`, (err as Error).message);
@@ -62,7 +62,7 @@ export function FilesTab({ ws, holder, id, hint }: { ws: string; holder: api.Hol
         </PageEmpty>
       ) : items.length === 0 && !list.loading ? (
         <PageEmpty icon={Upload} title="No files yet">
-          {hint ?? "Drop files here, or use Upload."}
+          Drop files here, or use Upload.
         </PageEmpty>
       ) : (
         <div className={`divide-y divide-border rounded-xl border bg-background/40 transition-colors ${over ? "border-accent" : "border-border"}`}>
@@ -79,7 +79,7 @@ export function FilesTab({ ws, holder, id, hint }: { ws: string; holder: api.Hol
                 aria-label={`Download ${f.path}`}
                 onClick={async () => {
                   try {
-                    save(await api.download(ws, holder, id, f.path), f.path);
+                    save(await api.download(ws, id, f.path), f.path);
                   } catch (err) {
                     toast.error("Could not download", (err as Error).message);
                   }
@@ -94,7 +94,7 @@ export function FilesTab({ ws, holder, id, hint }: { ws: string; holder: api.Hol
                 onClick={async () => {
                   if (!(await confirmAction({ title: `Delete ${f.path}?`, description: "This file is removed for good.", confirmLabel: "Delete", danger: true }))) return;
                   try {
-                    await api.removeFile(ws, holder, id, f.path);
+                    await api.removeFile(ws, id, f.path);
                     list.reload();
                   } catch (err) {
                     toast.error("Could not delete", (err as Error).message);

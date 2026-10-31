@@ -6,6 +6,7 @@ import { go } from "@/route";
 import { openInEditor } from "@/sqlTabs";
 import { AccessList } from "@/components/AccessList";
 import { FilesTab } from "@/components/FilesTab";
+import { TableTab } from "@/components/TableTab";
 import { NewDialog } from "@/components/NewDialog";
 import { Tree } from "@/components/Tree";
 import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
@@ -159,7 +160,8 @@ function Detail({ ws, item, onBack, onDropped }: { ws: string; item: api.Securab
   }, item.id);
 
   const subtitle = [...(trail.data ?? []), kindLabel[item.kind].toLowerCase()].join(" / ");
-  const holdsFiles = item.kind === "volume" || item.kind === "table";
+  const isVolume = item.kind === "volume";
+  const isTable = item.kind === "table";
   // A table is named in full in SQL: catalog.schema.table.
   const fullName = trail.data?.length === 2 ? `${trail.data.join(".")}.${item.name}` : null;
   return (
@@ -201,15 +203,21 @@ function Detail({ ws, item, onBack, onDropped }: { ws: string; item: api.Securab
         </>
       }
     >
-      <Tabs defaultValue={holdsFiles ? "files" : "about"} className="space-y-4">
+      <Tabs defaultValue={isVolume ? "files" : isTable ? "schema" : "about"} className="space-y-4">
         <TabsList>
-          {holdsFiles && <TabsTrigger value="files">Files</TabsTrigger>}
+          {isVolume && <TabsTrigger value="files">Files</TabsTrigger>}
+          {isTable && <TabsTrigger value="schema">Table</TabsTrigger>}
           <TabsTrigger value="about">About</TabsTrigger>
           <TabsTrigger value="access">Access</TabsTrigger>
         </TabsList>
-        {holdsFiles && (
+        {isVolume && (
           <TabsContent value="files">
-            <FilesTab ws={ws} holder={item.kind === "table" ? "tables" : "volumes"} id={item.id} hint={item.kind === "table" ? "Upload CSV or Parquet files. A query reads all of a table's files together, as its rows." : undefined} />
+            <FilesTab ws={ws} id={item.id} />
+          </TabsContent>
+        )}
+        {isTable && (
+          <TabsContent value="schema">
+            <TableTab ws={ws} id={item.id} catalog={trail.data?.[0] ?? ""} />
           </TabsContent>
         )}
         <TabsContent value="about">

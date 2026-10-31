@@ -167,16 +167,34 @@ export const assign = (ws: string, id: string, principal: string, role: Role) =>
 export const revoke = (ws: string, id: string, principal: string) => none(send("DELETE", `${W(ws)}/securables/${enc(id)}/grants/${enc(principal)}`));
 
 /** What holds files: a volume (any files) or a table (CSV or Parquet files a query reads as rows). */
-export type Holder = "volumes" | "tables";
-export const files = async (ws: string, holder: Holder, id: string) => (await json<{ items: FileEntry[] }>(send("GET", `${W(ws)}/${holder}/${enc(id)}/files`))).items;
-export const upload = (ws: string, holder: Holder, id: string, path: string, file: Blob) => none(send("PUT", `${W(ws)}/${holder}/${enc(id)}/files/${seg(path)}`, file, { "Content-Type": "application/octet-stream" }));
-export const download = async (ws: string, holder: Holder, id: string, path: string) => (await send("GET", `${W(ws)}/${holder}/${enc(id)}/files/${seg(path)}`)).blob();
-export const removeFile = (ws: string, holder: Holder, id: string, path: string) => none(send("DELETE", `${W(ws)}/${holder}/${enc(id)}/files/${seg(path)}`));
+export const files = async (ws: string, id: string) => (await json<{ items: FileEntry[] }>(send("GET", `${W(ws)}/volumes/${enc(id)}/files`))).items;
+export const upload = (ws: string, id: string, path: string, file: Blob) => none(send("PUT", `${W(ws)}/volumes/${enc(id)}/files/${seg(path)}`, file, { "Content-Type": "application/octet-stream" }));
+export const download = async (ws: string, id: string, path: string) => (await send("GET", `${W(ws)}/volumes/${enc(id)}/files/${seg(path)}`)).blob();
+export const removeFile = (ws: string, id: string, path: string) => none(send("DELETE", `${W(ws)}/volumes/${enc(id)}/files/${seg(path)}`));
+
+// Tables are Iceberg tables
+export interface Column {
+  name: string;
+  type: string;
+  required?: boolean;
+}
+export interface TableInfo {
+  format: "iceberg";
+  location: string;
+  columns: { id: number; name: string; type: string | object; required: boolean }[];
+  snapshots: { id: string; at_ms: number; operation?: string; records?: string; files?: string }[];
+  current_snapshot: string;
+  properties: Record<string, string>;
+}
+export const createTable = (ws: string, b: { parent_id: string; name: string; columns: Column[]; classification?: string }) => json<{ id: string }>(send("POST", `${W(ws)}/tables`, b));
+export const tableInfo = (ws: string, id: string) => json<TableInfo>(send("GET", `${W(ws)}/tables/${enc(id)}`));
 
 // Compute
 export interface Compute {
   id: string;
   name: string;
+  /** `agent`: a machine that connects out. `serverless`: a provider's endpoint, started when work arrives. */
+  kind: "agent" | "serverless";
   online: boolean;
   max_memory_mb: number;
   max_cpu_millis: number;
@@ -217,6 +235,6 @@ export const cancelRun = (ws: string, id: string) => json<Run>(send("POST", `${W
 
 // Compute, in the account console
 export const attachedCompute = async (org: string) => (await json<{ items: Compute[] }>(send("GET", `/api/v1/orgs/${enc(org)}/compute/targets`))).items;
-export const attachCompute = (org: string, b: { name: string; max_memory_mb: number; max_cpu_millis: number }) => json<Compute>(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets`, b));
+export const attachCompute = (org: string, b: { name: string; kind?: "agent" | "serverless"; endpoint?: string; max_memory_mb: number; max_cpu_millis: number }) => json<Compute>(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets`, b));
 export const newComputeSecret = (org: string, id: string) => json<Compute>(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}/secret`, {}));
 export const detachCompute = (org: string, id: string) => none(send("DELETE", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}`));

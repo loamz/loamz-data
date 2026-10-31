@@ -40,7 +40,8 @@ export function SqlEditor({ ws }: { ws: string }) {
   const tab = state.tabs.find((t) => t.id === state.active) ?? state.tabs[0]!;
   const out = outcomes[tab.id];
   const compute = useLoad(() => api.computeTargets(ws), ws);
-  const online = (compute.data ?? []).filter((c) => c.online);
+  // The organization's own machines come first, as the server picks them; a provider's endpoint when nothing else answers.
+  const online = (compute.data ?? []).filter((c) => c.online).sort((a, b) => Number(a.kind === "serverless") - Number(b.kind === "serverless"));
 
   // The compute list is checked now and then, so the chip is honest without a reload.
   useEffect(() => {
@@ -150,7 +151,7 @@ export function SqlEditor({ ws }: { ws: string }) {
           <span className="flex-1" />
           <Select size="sm" className="w-32" aria-label="Rows to return" value={limit} onValueChange={setLimit} options={LIMITS} />
           <button type="button" onClick={() => go({ screen: "compute", ws })} className="cursor-pointer" title="See the compute">
-            {noCompute ? <Badge tone="warning">No compute answering</Badge> : online[0] ? <Badge tone="success">{online[0].name} · online</Badge> : <Badge>Checking compute…</Badge>}
+            {noCompute ? <Badge tone="warning">No compute answering</Badge> : online[0] ? <Badge tone="success">{online[0].name} · {online[0].kind === "serverless" ? "serverless" : "online"}</Badge> : <Badge>Checking compute…</Badge>}
           </button>
         </div>
 
