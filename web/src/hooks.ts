@@ -27,14 +27,15 @@ export function useLoad<T>(fn: () => Promise<T>, key: string): Loaded<T> {
   return { ...state, reload };
 }
 
-export function useHash(): string {
-  const [hash, setHash] = useState(location.hash);
+/** The address path, kept up to date as the person moves around. */
+export function usePath(): string {
+  const [path, setPath] = useState(location.pathname);
   useEffect(() => {
-    const on = () => setHash(location.hash);
-    addEventListener("hashchange", on);
-    return () => removeEventListener("hashchange", on);
+    const on = () => setPath(location.pathname);
+    addEventListener("popstate", on);
+    return () => removeEventListener("popstate", on);
   }, []);
-  return hash;
+  return path;
 }
 
 /** Whether the screen is at least `px` wide (the list and the detail sit side by side from 768). */

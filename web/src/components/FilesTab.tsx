@@ -14,8 +14,8 @@ function save(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-export function FilesTab({ volume }: { volume: string }) {
-  const list = useLoad(() => api.files(volume), volume);
+export function FilesTab({ ws, volume }: { ws: string; volume: string }) {
+  const list = useLoad(() => api.files(ws, volume), `${ws}/${volume}`);
   const [uploading, setUploading] = useState(0);
   const [over, setOver] = useState(false);
 
@@ -23,7 +23,7 @@ export function FilesTab({ volume }: { volume: string }) {
     setUploading((n) => n + chosen.length);
     for (const f of chosen) {
       try {
-        await api.upload(volume, f.name, f);
+        await api.upload(ws, volume, f.name, f);
         toast.success(`Uploaded ${f.name}`);
       } catch (err) {
         toast.error(`Could not upload ${f.name}`, (err as Error).message);
@@ -79,7 +79,7 @@ export function FilesTab({ volume }: { volume: string }) {
                 aria-label={`Download ${f.path}`}
                 onClick={async () => {
                   try {
-                    save(await api.download(volume, f.path), f.path);
+                    save(await api.download(ws, volume, f.path), f.path);
                   } catch (err) {
                     toast.error("Could not download", (err as Error).message);
                   }
@@ -94,7 +94,7 @@ export function FilesTab({ volume }: { volume: string }) {
                 onClick={async () => {
                   if (!(await confirmAction({ title: `Delete ${f.path}?`, description: "This file is removed for good.", confirmLabel: "Delete", danger: true }))) return;
                   try {
-                    await api.removeFile(volume, f.path);
+                    await api.removeFile(ws, volume, f.path);
                     list.reload();
                   } catch (err) {
                     toast.error("Could not delete", (err as Error).message);
