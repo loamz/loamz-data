@@ -110,22 +110,24 @@ export function Landing({ notice }: { notice?: string }) {
           <div className="grid items-start gap-6 md:grid-cols-[1.1fr_1fr]">
             <pre className="scroll-area overflow-x-auto rounded-2xl border border-border bg-card p-5 font-mono text-xs leading-relaxed text-foreground shadow-md" aria-label="Example code">
               <code>
-                <span className="text-muted"># Give the code interpreter the warehouse,</span>{"\n"}
-                <span className="text-muted"># and the signed-in person's credentials.</span>{"\n"}
+                <span className="text-muted"># Set up once: where the code runs, and that it can reach the warehouse.</span>{"\n"}
                 code = CodeInterpreter({"\n"}
+                {"    "}runtime=K8sRuntime(),{"\n"}
                 {"    "}loamz_data=<span className="text-accent">True</span>,{"\n"}
-                {"    "}credentials=session.token,{"\n"}
-                ){"\n\n"}
-                agent = Agent(model=<span className="text-accent">"claude-sonnet-5-5"</span>, tools=[code]){"\n"}
+                ){"\n"}
+                agent = Agent(model=<span className="text-accent">"claude-sonnet-5-5"</span>, tools=[code]){"\n\n"}
+                <span className="text-muted"># Each question carries whoever is asking. The interpreter</span>{"\n"}
+                <span className="text-muted"># gets that person for this run only, and nothing more.</span>{"\n"}
                 answer = <span className="text-accent">await</span> agent.run({"\n"}
-                {"    "}<span className="text-accent">"Which region sold the most last month?"</span>{"\n"}
+                {"    "}<span className="text-accent">"Which region sold the most last month?"</span>,{"\n"}
+                {"    "}user=session.user,{"\n"}
                 )
               </code>
             </pre>
             <ol className="grid gap-2" aria-label="What happens, in order">
-              <Step n={1} title="Your app" note="The person is signed in. You hand their credentials to the code interpreter." />
+              <Step n={1} title="Your app" note="The person is signed in. Each question says who is asking." />
               <Step n={2} title="The code interpreter" note="Runs the agent's code in a sandbox with no network and no token. It can only ask the host for data." />
-              <Step n={3} title="Loamz Data" note="The host asks as that person. Loamz Data takes what the person and the agent both allow, and records it." />
+              <Step n={3} title="Loamz Data" note="The host asks as that person, for this run only. Loamz Data takes what the person and the agent both allow, and records it." />
               <Step n={4} title="The warehouse" note="Runs it on compute that holds credentials for those tables only, for minutes." last />
             </ol>
           </div>
