@@ -224,7 +224,7 @@ function Detail({ ws, item, onBack, onDropped, onChanged }: { ws: string; item: 
         )}
         {isTable && (
           <TabsContent value="schema">
-            <TableTab ws={ws} id={item.id} catalog={trail.data?.[0] ?? ""} />
+            <TableTab ws={ws} id={item.id} catalog={trail.data?.[0] ?? ""} full={fullName} />
           </TabsContent>
         )}
         <TabsContent value="about">
