@@ -15,6 +15,8 @@ import { canContain, kindLabel } from "@/kinds";
 
 export function Catalog({ ws, id, me }: { ws: string; id: string | null; me: api.Me | undefined }) {
   const open = (to: string | null) => go({ screen: "catalog", ws, id: to });
+  // An address for a workspace you are not part of says so, instead of showing an empty catalog.
+  const here = useLoad(() => api.workspace(ws), ws);
   const [children, setChildren] = useState<Record<string, api.Securable[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
@@ -70,6 +72,16 @@ export function Catalog({ ws, id, me }: { ws: string; id: string | null; me: api
   const parentOfNew = inside;
   const where = parentOfNew ? `Inside ${parentOfNew.name}` : "At the top of your space";
   const topEmpty = loaded && (children[""] ?? []).length === 0;
+
+  if (here.error) {
+    return (
+      <Page title="Workspace not found" onBack={() => go("/")}>
+        <PageEmpty icon={Database} title="This workspace isn't here, or you are not part of it">
+          Go back Home to see the workspaces you can open.
+        </PageEmpty>
+      </Page>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0">
