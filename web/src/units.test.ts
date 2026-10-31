@@ -1,3 +1,4 @@
+import { profileSql } from "@/components/TableTab";
 import { describe, expect, it } from "vitest";
 import { readError } from "./api";
 import { expiryOf } from "./auth";
@@ -162,5 +163,19 @@ describe("results", () => {
     expect(titleOf("SELECT * FROM a.b.c", "Query 1")).toBe("SELECT * FROM a.b.c");
     expect(titleOf("-- note\nSELECT   count(*)\nFROM   shop.main.orders WHERE x", "Query 1")).toBe("SELECT count(*) FROM sho…");
     expect(titleOf("  \n ", "Query 1")).toBe("Query 1");
+  });
+});
+
+describe("profileSql", () => {
+  it("profiles each plain column in one statement and quotes names", () => {
+    const sql = profileSql("shop.main.sales4", [
+      { id: 1, name: "id", type: "long", required: false },
+      { id: 2, name: 'we"ird', type: "string", required: false },
+      { id: 3, name: "blob", type: "binary", required: false },
+    ]);
+    expect(sql.startsWith("SELECT count(*) AS total, count(\"id\") AS n0")).toBe(true);
+    expect(sql).toContain('count("we""ird") AS n1');
+    expect(sql).not.toContain("blob");
+    expect(sql.endsWith("FROM shop.main.sales4")).toBe(true);
   });
 });

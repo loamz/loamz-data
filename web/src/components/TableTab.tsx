@@ -1,14 +1,94 @@
-import { Copy, Database } from "lucide-react";
+import { Copy, Database, Eye, Sigma } from "lucide-react";
 import { Badge, Button, PageEmpty, toast } from "@/design";
 import * as api from "@/api";
 import { useLoad } from "@/hooks";
+import { ResultGrid } from "@/components/ResultGrid";
+import { useStatement } from "@/components/useStatement";
 import { when } from "@/format";
 import { centralOrigin } from "@/site";
 
 const typeText = (t: string | object) => (typeof t === "string" ? t : (t as { type?: string }).type ?? "nested");
 
 /** What a table is: its columns and its history. The data is read with SQL, or by any Iceberg client through this workspace's catalog. */
-export function TableTab({ ws, id, catalog }: { ws: string; id: string; catalog: string }) {
+const quote = (n: string) => `"${n.replace(/"/g, '""')}"`;
+const scalar = (t: string | object) => typeof t === "string" && !/^(binary|fixed)/.test(t);
+
+/** A statement that profiles every plain column in one pass: how many rows have a value, how many differ, the smallest and the largest. */
+export function profileSql(full: string, columns: api.TableInfo["columns"]): string {
+  const cols = columns.filter((c) => scalar(c.type));
+  const parts = cols.flatMap((c, i) => [`count(${quote(c.name)}) AS n${i}`, `approx_count_distinct(${quote(c.name)}) AS d${i}`, `CAST(min(${quote(c.name)}) AS VARCHAR) AS lo${i}`, `CAST(max(${quote(c.name)}) AS VARCHAR) AS hi${i}`]);
+  return `SELECT count(*) AS total${parts.length ? ", " + parts.join(", ") : ""} FROM ${full}`;
+}
+
+function Peek({ ws, full }: { ws: string; full: string }) {
+  const s = useStatement(ws);
+  const result = s.run?.state === "succeeded" ? s.run.result : undefined;
+  return (
+    <section>
+      <div className="mb-2 flex items-center gap-2">
+        <h3 className="flex-1 text-xs font-medium text-foreground">Sample rows</h3>
+        <Button variant="secondary" size="sm" disabled={s.running} onClick={() => void s.start(`SELECT * FROM ${full} LIMIT 100`)}>
+          <Eye /> {s.running ? "Reading…" : result ? "Read again" : "Preview"}
+        </Button>
+      </div>
+      {s.error && <p className="text-xs text-danger">{s.error}</p>}
+      {result && (
+        <div className="h-72 overflow-hidden rounded-xl border border-border">
+          <ResultGrid result={result} />
+        </div>
+      )}
+      {!result && !s.error && <p className="text-xs text-muted">{s.running ? "Running on the compute…" : "Reads up to 100 rows on your compute."}</p>}
+    </section>
+  );
+}
+
+function Profile({ ws, full, columns }: { ws: string; full: string; columns: api.TableInfo["columns"] }) {
+  const s = useStatement(ws);
+  const cols = columns.filter((c) => scalar(c.type));
+  const row = s.run?.state === "succeeded" ? s.run.result?.rows[0] : undefined;
+  return (
+    <section>
+      <div className="mb-2 flex items-center gap-2">
+        <h3 className="flex-1 text-xs font-medium text-foreground">Profile</h3>
+        <Button variant="secondary" size="sm" disabled={s.running} onClick={() => void s.start(profileSql(full, columns), 1)}>
+          <Sigma /> {s.running ? "Reading…" : row ? "Profile again" : "Profile columns"}
+        </Button>
+      </div>
+      {s.error && <p className="text-xs text-danger">{s.error}</p>}
+      {row ? (
+        <div className="overflow-hidden rounded-xl border border-border">
+          <p className="border-b border-border px-4 py-2 text-xs text-muted">{Number(row[0]).toLocaleString()} rows</p>
+          <table className="w-full text-left text-xs">
+            <thead className="text-muted">
+              <tr>
+                <th className="px-4 py-1.5 font-medium">Column</th>
+                <th className="px-2 py-1.5 text-right font-medium">With a value</th>
+                <th className="px-2 py-1.5 text-right font-medium">Different (about)</th>
+                <th className="px-2 py-1.5 font-medium">Smallest</th>
+                <th className="px-2 py-1.5 font-medium">Largest</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {cols.map((c, i) => (
+                <tr key={c.id}>
+                  <td className="px-4 py-1.5 font-mono text-foreground">{c.name}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{Number(row[1 + i * 4]).toLocaleString()}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{Number(row[2 + i * 4]).toLocaleString()}</td>
+                  <td className="max-w-40 truncate px-2 py-1.5">{String(row[3 + i * 4] ?? "")}</td>
+                  <td className="max-w-40 truncate px-2 py-1.5">{String(row[4 + i * 4] ?? "")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        !s.error && <p className="text-xs text-muted">{s.running ? "Running on the compute…" : "Counts, distinct values and the range of each column, in one pass."}</p>
+      )}
+    </section>
+  );
+}
+
+export function TableTab({ ws, id, catalog, full }: { ws: string; id: string; catalog: string; full: string | null }) {
   const info = useLoad(() => api.tableInfo(ws, id), `${ws}/${id}`);
   if (info.error && !info.data) {
     return (
@@ -35,6 +115,8 @@ ATTACH '${catalog}' AS ${catalog} (TYPE iceberg, ENDPOINT '${centralOrigin}/api/
           ))}
         </div>
       </section>
+      {full && <Peek ws={ws} full={full} />}
+      {full && <Profile ws={ws} full={full} columns={t.columns} />}
       <section>
         <h3 className="mb-2 text-xs font-medium text-foreground">History</h3>
         {t.snapshots.length === 0 ? (
