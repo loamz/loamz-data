@@ -1,4 +1,4 @@
-import { Database, FileText, History, Layers, ShieldCheck, Trash2, UsersRound } from "lucide-react";
+import { Bot, Database, FileText, History, Layers, ShieldCheck, Trash2, UsersRound } from "lucide-react";
 import { useState } from "react";
 import { Badge, Button } from "@/design";
 import { hasOidc, startLogin } from "./auth";
@@ -23,6 +23,7 @@ export function Landing({ notice }: { notice?: string }) {
         </a>
         <nav aria-label="Main" className="hidden gap-6 text-sm sm:flex">
           <a href="#features" className="text-foreground hover:underline">Features</a>
+          <a href="#ai" className="text-foreground hover:underline">AI</a>
           <a href="#next" className="text-foreground hover:underline">On the way</a>
         </nav>
         <Button variant="secondary" size="lg" onClick={signIn} disabled={busy || !hasOidc}>
@@ -40,7 +41,7 @@ export function Landing({ notice }: { notice?: string }) {
             </p>
             <div className="flex flex-wrap items-center gap-3">
               <Button variant="primary" size="lg" className="px-6" onClick={signIn} disabled={busy || !hasOidc}>
-                Sign in with Loamz
+                Sign in
               </Button>
               <a href="#features" className="text-sm font-medium text-foreground hover:underline">See how it works</a>
             </div>
@@ -78,6 +79,27 @@ export function Landing({ notice }: { notice?: string }) {
               One sign-in with the rest of Loamz. An organization has workspaces, each with its own members, and decides which catalogs show where.
             </Feature>
           </ul>
+        </section>
+
+        <section id="ai" aria-labelledby="ai-title" className="grid items-center gap-8 md:grid-cols-[1fr_1.1fr]">
+          <div className="grid justify-items-start gap-3">
+            <Badge tone="neutral">On the way</Badge>
+            <h2 id="ai-title" className="text-2xl font-semibold">Ask your data in plain words, with the same rules</h2>
+            <p className="max-w-xl text-muted">
+              An AI agent can query your warehouse for you, and it acts as you: it sees only the tables you were given, every question it runs is recorded next to yours, and what it may not read is simply not there. We are building it step by step; this is where it is going.
+            </p>
+          </div>
+          <div className="w-full rounded-2xl border border-border bg-card p-5 shadow-md" aria-hidden="true">
+            <p className="flex items-start gap-2 text-sm text-foreground">
+              <Bot className="mt-0.5 shrink-0 text-accent" /> <span>Which region sold the most last month?</span>
+            </p>
+            <pre className="mt-3 overflow-x-auto rounded-md border border-border bg-background/50 p-3 font-mono text-xs text-foreground">{"SELECT region, sum(amount) AS total\nFROM sales.raw.orders\nGROUP BY region ORDER BY total DESC"}</pre>
+            <div className="mt-3 space-y-2 border-t border-border pt-3 text-xs">
+              <p className="flex items-center gap-2 text-foreground"><ShieldCheck className="text-muted" /> <span>Ran as <b>ana</b>'s agent: only what <b>ana</b> may read</span> <Badge tone="success">Allowed</Badge></p>
+              <p className="flex items-center gap-2 text-foreground"><ShieldCheck className="text-muted" /> <span>Tried <b>hr.payroll.salaries</b>: not there for this agent</span> <Badge tone="danger">Refused</Badge></p>
+              <p className="flex items-center gap-2 text-foreground"><History className="text-muted" /> <span>Both are in the record, with who asked</span></p>
+            </div>
+          </div>
         </section>
 
         <section id="next" aria-labelledby="next-title">

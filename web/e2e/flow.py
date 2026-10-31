@@ -21,7 +21,7 @@ def step(name):
 
 def sign_in(page, who):
     page.goto(SITE + "/")
-    page.get_by_role("button", name="Sign in with Loamz").click()
+    page.get_by_role("button", name="Sign in", exact=True).first.click()
     page.wait_for_selector("input[name=username]")
     page.fill("input[name=username]", who)
     if page.locator("input[name=password]").count() == 0:
@@ -242,9 +242,9 @@ with sync_playwright() as p:
     evil.close()
     cyd.get_by_label("Account menu").click(); cyd.get_by_role("menuitem", name="Sign out").click()
     cyd.wait_for_url(re.compile(r"^http://localhost:5180/"), timeout=30000)
-    expect(cyd.get_by_role("button", name="Sign in with Loamz").first).to_be_visible(); step("signing out of a workspace lands on the account site's front page")
+    expect(cyd.get_by_role("button", name="Sign in", exact=True).first).to_be_visible(); step("signing out of a workspace lands on the account site's front page")
     cyd.goto(cyd.url)  # the account site: still no session
-    expect(cyd.get_by_role("button", name="Sign in with Loamz").first).to_be_visible()
+    expect(cyd.get_by_role("button", name="Sign in", exact=True).first).to_be_visible()
 
     # -- bob: in the organization, not assigned anywhere
     bob = person("bob", viewport={"width": 1360, "height": 820})
@@ -260,7 +260,7 @@ with sync_playwright() as p:
     shot(ana, "dark")
     ana.get_by_label("Account menu").click(); ana.get_by_role("menuitem", name="Sign out").click()
     ana.wait_for_url(re.compile(r".*(localhost:5180|127\.0\.0\.1:8082).*"))
-    ana.goto(SITE + "/"); expect(ana.get_by_role("button", name="Sign in with Loamz")).to_be_visible(); step("signing out ends the session")
+    ana.goto(SITE + "/"); expect(ana.get_by_role("button", name="Sign in", exact=True).first).to_be_visible(); step("signing out ends the session")
     browser.close()
 
 if agent:
