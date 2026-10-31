@@ -10,7 +10,8 @@ The governed data platform of Loamz, in Rust. Design: `docs/charter.md`. Plan: `
   - `governance/{audit,iam,catalogs,lifecycle}/`: each has `model.rs` (pure), `service.rs` (use cases), `store.rs` (SQL), `api.rs` (HTTP).
   - `storage/volumes/`: files in a volume, reached only through governance.
 - `server/runner` (`loamz-runner`): the sandbox runner (`loamz-runner run-job` runs one job on a compute machine, reaching Data only through its API).
-- `web/`: the web app (React, Tailwind, Radix). `web/src/design/` is the shared Loamz design system, copied from loamz-chat by `web/scripts/sync-design.sh`: never edit it here. Screens in `web/src/screens`, one file per screen; see `web/src/design/DESIGN.md` for the rules (primitives, tokens, orange = action, violet = selected).
+- `web/`: the web app, served as two kinds of site from one build (`web/src/site.ts`): the account site (`data.loamz.com`: product page, sign-in, Home, account console) and one site per workspace (`w-<id>.data.loamz.com`: overview, catalog, settings, nothing linking out, only Sign out). Sign-in on a workspace site comes back through the account site's `/relay`, and the server does the Keycloak token exchange (`/api/v1/auth/token`) because Keycloak cannot allow wildcard origins. Production needs wildcard DNS and TLS for `*.data.loamz.com`.
+- `web/` (continued): (React, Tailwind, Radix). `web/src/design/` is the shared Loamz design system, copied from loamz-chat by `web/scripts/sync-design.sh`: never edit it here. Screens in `web/src/screens`, one file per screen; see `web/src/design/DESIGN.md` for the rules (primitives, tokens, orange = action, violet = selected).
 - `server/engine`: the Python `loamz-engine` package, kept because Agents builds against it (`uv build --package loamz-engine`).
 
 ## Rules

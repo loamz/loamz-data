@@ -7,6 +7,7 @@ import { PrincipalField } from "@/components/PrincipalField";
 import { describe, shortTarget, when } from "@/format";
 import { useLoad } from "@/hooks";
 import { useNames } from "@/names";
+import { openWorkspace } from "@/site";
 import { go, type AccountTab } from "@/route";
 
 const tabs: { id: AccountTab; label: string; icon: typeof Layers }[] = [
@@ -93,10 +94,10 @@ function Workspaces({ org }: { org: string }) {
               <span className="block truncate text-sm font-medium text-foreground">{w.name}</span>
               <span className="block text-xs text-muted">Created {when(w.created_ms)}</span>
             </span>
-            <Button variant="secondary" onClick={() => go({ screen: "settings", ws: w.id })}>
+            <Button variant="secondary" onClick={() => openWorkspace(w.id, "/settings")}>
               Settings
             </Button>
-            <Button variant="secondary" onClick={() => go({ screen: "workspace", ws: w.id })}>
+            <Button variant="secondary" onClick={() => openWorkspace(w.id)}>
               Open
             </Button>
           </div>

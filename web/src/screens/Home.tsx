@@ -1,6 +1,7 @@
 import { Building2, ChevronRight, Layers } from "lucide-react";
 import { Badge, Button, Page, PageEmpty, Section, toast } from "@/design";
 import * as api from "@/api";
+import { openWorkspace } from "@/site";
 import { go } from "@/route";
 
 /** Where sign-in lands: who you are, the workspaces you can open, the organizations you belong to. */
@@ -17,7 +18,7 @@ export function Home({ me, reload }: { me: api.Me | undefined; reload: () => voi
         ) : (
           <div className="-m-1 divide-y divide-border">
             {me.workspaces.map((w) => (
-              <button key={w.id} type="button" onClick={() => go({ screen: "workspace", ws: w.id })} className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors hover:bg-card-hover">
+              <button key={w.id} type="button" onClick={() => openWorkspace(w.id)} className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors hover:bg-card-hover">
                 <Layers className="shrink-0 text-muted" aria-hidden />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-foreground">{w.name}</span>

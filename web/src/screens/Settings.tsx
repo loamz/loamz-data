@@ -6,7 +6,7 @@ import { Principal } from "@/components/Principal";
 import { PrincipalField } from "@/components/PrincipalField";
 import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
 import { useLoad } from "@/hooks";
-import { go } from "@/route";
+import { centralOrigin } from "@/site";
 
 /** A workspace's members, what they are entitled to, and which catalogs it can see. For the workspace's admins. */
 export function Settings({ ws, me }: { ws: string; me: api.Me | undefined }) {
@@ -24,7 +24,7 @@ export function Settings({ ws, me }: { ws: string; me: api.Me | undefined }) {
     <Page
       title={here.name}
       subtitle={here.admin ? "Who works here, what they may do, and which catalogs they can see." : "You are a user of this workspace. Admins manage who works here."}
-      actions={me && <WorkspaceSwitcher current={ws} all={me.workspaces} where="settings" />}
+      actions={me && <WorkspaceSwitcher current={ws} all={me.workspaces} />}
     >
       {here.admin ? (
         <>
@@ -236,8 +236,8 @@ function Danger({ ws, workspace }: { ws: string; workspace: api.Workspace }) {
             if (!(await confirmAction({ title: `Delete ${workspace.name}?`, description: "People lose access to this workspace. The catalogs and files are not touched.", confirmLabel: "Delete", danger: true }))) return;
             try {
               await api.deleteWorkspace(ws);
-              go("/");
-              location.reload();
+              // The workspace is gone, so there is nothing here to stay on: go to the account site.
+              location.assign(centralOrigin);
             } catch (e) {
               toast.error("Could not delete it", (e as Error).message);
             }

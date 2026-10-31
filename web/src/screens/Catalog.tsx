@@ -75,9 +75,9 @@ export function Catalog({ ws, id, me }: { ws: string; id: string | null; me: api
 
   if (here.error) {
     return (
-      <Page title="Workspace not found" onBack={() => go("/")}>
+      <Page title="Workspace not found">
         <PageEmpty icon={Database} title="This workspace isn't here, or you are not part of it">
-          Go back Home to see the workspaces you can open.
+          Check the address.
         </PageEmpty>
       </Page>
     );
