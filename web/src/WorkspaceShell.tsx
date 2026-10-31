@@ -1,4 +1,5 @@
-import { Database, LayoutDashboard, LockKeyhole, Settings as Gear, type LucideIcon } from "lucide-react";
+import { Cpu, Database, LayoutDashboard, LockKeyhole, Settings as Gear, TerminalSquare, type LucideIcon } from "lucide-react";
+import { Suspense, lazy } from "react";
 import { Button, PageEmpty, Page, Tooltip, cn } from "@/design";
 import * as api from "./api";
 import { Link, ThemeButton, UserMenu } from "./components/RailParts";
@@ -8,6 +9,10 @@ import { parseRoute, type Route } from "./route";
 import { Catalog } from "./screens/Catalog";
 import { Settings } from "./screens/Settings";
 import { Workspace } from "./screens/Workspace";
+
+// The code editor is the heaviest part of the app and only two screens use it, so they are loaded when first opened.
+const SqlEditor = lazy(() => import("./screens/SqlEditor").then((m) => ({ default: m.SqlEditor })));
+const Compute = lazy(() => import("./screens/Compute").then((m) => ({ default: m.Compute })));
 
 /**
  * One workspace, as a website of its own. Everything in it belongs to this workspace, and nothing links back out: not to Home, not to the
@@ -22,6 +27,8 @@ export function WorkspaceShell({ ws }: { ws: string }) {
   const places: { to: Route; label: string; icon: LucideIcon; active: boolean; show: boolean }[] = [
     { to: { screen: "workspace", ws }, label: "Workspace overview", icon: LayoutDashboard, active: route.screen === "workspace", show: true },
     { to: { screen: "catalog", ws, id: null }, label: "Catalog", icon: Database, active: route.screen === "catalog", show: true },
+    { to: { screen: "sql", ws }, label: "SQL editor", icon: TerminalSquare, active: route.screen === "sql", show: true },
+    { to: { screen: "compute", ws }, label: "Compute", icon: Cpu, active: route.screen === "compute", show: true },
     { to: { screen: "settings", ws }, label: "Workspace settings", icon: Gear, active: route.screen === "settings", show: Boolean(mine?.admin) },
   ];
 
@@ -57,6 +64,10 @@ export function WorkspaceShell({ ws }: { ws: string }) {
           <>
             {route.screen === "workspace" && <Workspace ws={ws} me={me} />}
             {route.screen === "catalog" && <Catalog ws={ws} id={route.id} me={me} />}
+            <Suspense fallback={null}>
+              {route.screen === "sql" && <SqlEditor ws={ws} />}
+            {route.screen === "compute" && <Compute ws={ws} />}
+            </Suspense>
             {route.screen === "settings" && <Settings ws={ws} me={me} />}
           </>
         )}

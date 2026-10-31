@@ -158,6 +158,25 @@ pub fn mount_names(names: &[String]) -> Vec<String> {
     out
 }
 
+/// What a job is called when nobody named it: the script's leading comment if it opens with one, else "Untitled job".
+#[must_use]
+pub fn job_title(given: &str, script: &str) -> String {
+    if !given.trim().is_empty() {
+        return cap(given.trim(), 200);
+    }
+    let first = script
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    match first.strip_prefix('#') {
+        Some(comment) if !comment.trim().is_empty() => {
+            cap(comment.trim_start_matches('#').trim(), 80)
+        }
+        _ => "Untitled job".into(),
+    }
+}
+
 /// Cuts text to at most `max` bytes, on a character boundary.
 #[must_use]
 pub fn cap(text: &str, max: usize) -> String {
@@ -252,6 +271,18 @@ mod tests {
         );
         assert_eq!(cap("héllo", 2), "h…");
         assert_eq!(cap("short", 10), "short");
+    }
+
+    #[test]
+    fn a_job_is_named_by_its_comment_or_nothing() {
+        assert_eq!(job_title("Daily summary", "print(1)"), "Daily summary");
+        assert_eq!(
+            job_title("  ", "\n# Totals by region\nimport csv"),
+            "Totals by region"
+        );
+        assert_eq!(job_title("", "import csv\n# later"), "Untitled job");
+        assert_eq!(job_title("", "#"), "Untitled job");
+        assert_eq!(job_title("", ""), "Untitled job");
     }
 
     #[test]

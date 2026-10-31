@@ -13,7 +13,8 @@ use serde_json::{Value, json};
 use super::{
     model::{
         DEFAULT_ROWS, LEASE_MS, Limits, MAX_OUTPUT, MAX_RESULT, MAX_ROWS, QUEUE_MS, Run, Target,
-        cap, hash_secret, is_final_report, is_terminal, limits_for, mount_names, valid_target_name,
+        cap, hash_secret, is_final_report, is_terminal, job_title, limits_for, mount_names,
+        valid_target_name,
     },
     sql, store,
 };
@@ -491,11 +492,7 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
     .await?;
     let limits = limits_for(&target, req.memory_mb, req.cpu_millis, req.timeout_s, 600)
         .map_err(Error::Invalid)?;
-    let title = if req.title.trim().is_empty() {
-        cap(req.script.lines().next().unwrap_or("job"), 80)
-    } else {
-        req.title.clone()
-    };
+    let title = job_title(&req.title, &req.script);
     let spec = json!({"as": As::of(ctx.identity), "script": req.script, "inputs": inputs, "output": out.id, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
     let run = new_run(ctx, "job", &title, &target, &spec);
     queue(app, ctx, &run, "job.submit").await?;

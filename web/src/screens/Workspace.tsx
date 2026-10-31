@@ -55,21 +55,21 @@ export function Workspace({ ws, me }: { ws: string; me: api.Me | undefined }) {
         </div>
       </Section>
 
-      <Section title="Run and query" description="Work that runs on compute attached to this workspace. Not available yet; they will appear here, with the same access rules as the data.">
+      <Section title="Run and query" description="Statements and jobs run on compute your organization attached, each in a sandbox of its own, under the same access rules as the data.">
         <div className="-m-1 divide-y divide-border">
           {[
-            { icon: Briefcase, name: "Jobs and ETL", note: "Daily pipelines, run history" },
-            { icon: TerminalSquare, name: "SQL editor", note: "Ad-hoc queries on a serverless warehouse" },
-            { icon: Cpu, name: "Compute", note: "Warehouses, job compute and agent sandboxes" },
-          ].map(({ icon: Icon, name, note }) => (
-            <div key={name} className="flex items-center gap-3 px-3 py-3">
+            { icon: TerminalSquare, name: "SQL editor", note: "Ask a table a question and see the rows", to: { screen: "sql", ws } as const },
+            { icon: Briefcase, name: "Jobs and runs", note: "Python scripts over your data, with a history of every run", to: { screen: "compute", ws } as const },
+            { icon: Cpu, name: "Compute", note: "The machines work runs on, and whether they are answering", to: { screen: "compute", ws } as const },
+          ].map(({ icon: Icon, name, note, to }) => (
+            <button key={name} type="button" onClick={() => go(to)} className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors hover:bg-card-hover">
               <Icon className="shrink-0 text-muted" aria-hidden />
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-medium text-foreground">{name}</span>
                 <span className="block text-xs text-muted">{note}</span>
               </span>
-              <Badge>On the way</Badge>
-            </div>
+              <ChevronRight className="shrink-0 text-muted" aria-hidden />
+            </button>
           ))}
         </div>
       </Section>

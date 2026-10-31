@@ -1,27 +1,33 @@
 // The address is the screen. Real paths, so a link can be shared and the server can serve the page at any of them. There are
 // two sites (see site.ts), each with its own paths:
 //   account site    /                        Home
-//                   /account/<org>[/<tab>]   the account console of an organization (tabs: workspaces, admins, activity, erase)
+//                   /account/<org>[/<tab>]   the account console of an organization (tabs: workspaces, compute, admins, activity, erase)
 //   workspace site  /                        the workspace's overview: what you can do in it
 //                   /catalog[/<id>]          its Catalog Explorer
+//                   /sql                     the SQL editor
+//                   /compute                 jobs and runs, and the compute they run on
 //                   /settings                its members, entitlements, bound catalogs
 
-export type AccountTab = "workspaces" | "admins" | "activity" | "erase";
+export type AccountTab = "workspaces" | "compute" | "admins" | "activity" | "erase";
 
 export type Route =
   | { screen: "home" }
   | { screen: "workspace"; ws: string }
+  | { screen: "sql"; ws: string }
+  | { screen: "compute"; ws: string }
   | { screen: "catalog"; ws: string; id: string | null }
   | { screen: "settings"; ws: string }
   | { screen: "account"; org: string; tab: AccountTab };
 
-const TABS: AccountTab[] = ["workspaces", "admins", "activity", "erase"];
+const TABS: AccountTab[] = ["workspaces", "compute", "admins", "activity", "erase"];
 const WS = /^[0-9a-f-]{8,64}$/;
 
 export function parseRoute(path: string, kind: "account" | "workspace", ws = ""): Route {
   const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
   if (kind === "workspace") {
     if (parts[0] === "settings") return { screen: "settings", ws };
+    if (parts[0] === "sql") return { screen: "sql", ws };
+    if (parts[0] === "compute") return { screen: "compute", ws };
     if (parts[0] === "catalog") return { screen: "catalog", ws, id: parts[1] && WS.test(parts[1]) ? parts[1] : null };
     return { screen: "workspace", ws };
   }
@@ -42,6 +48,10 @@ export function hrefOf(r: Route): string {
       return `/catalog${r.id ? `/${r.id}` : ""}`;
     case "settings":
       return "/settings";
+    case "sql":
+      return "/sql";
+    case "compute":
+      return "/compute";
     case "account":
       return `/account/${encodeURIComponent(r.org)}/${r.tab}`;
   }

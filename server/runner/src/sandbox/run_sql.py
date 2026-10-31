@@ -91,9 +91,9 @@ con.execute("SET enable_external_access = false")
 con.execute("SET lock_configuration = true")
 
 try:
-    cur = con.execute(spec["sql"])
-    columns = [{"name": d[0], "type": str(d[1])} for d in (cur.description or [])]
-    rows = cur.fetchmany(limit + 1)
+    relation = con.sql(spec["sql"])
+    columns = [{"name": n, "type": str(t)} for n, t in zip(relation.columns, relation.types)]
+    rows = relation.fetchmany(limit + 1)
 except Exception as e:  # noqa: BLE001
     fail(str(e))
 

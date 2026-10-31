@@ -1,6 +1,6 @@
 """Drives the web app as real people would, against a real empty server and the real local Keycloak (web/scripts/e2e.sh).
 Everyone signs in on Keycloak's own page. People come from .dev/accounts.json (deploy/dev/seed.py)."""
-import json, os, re, sys, tempfile
+import json, os, re, subprocess, sys, tempfile
 from playwright.sync_api import sync_playwright, expect
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
@@ -9,6 +9,8 @@ SITE = "http://localhost:5180"
 WS_HOST = re.compile(r"^http://w-[0-9a-f-]{36}\.localhost:5180/")
 shots = os.environ.get("SHOTS")
 problems, steps = [], 0
+agent = None  # the compute agent this test starts, from the secret the console shows
+CACHE = os.path.expanduser("~/.cache/loamz")
 
 
 def step(name):
@@ -69,8 +71,8 @@ with sync_playwright() as p:
     ana.get_by_role("button", name="Open").click()
     ana.wait_for_url(WS_HOST, timeout=30000)
     expect(ana.get_by_role("heading", name="Finance")).to_be_visible(); step("opening a workspace goes to the workspace's own site, signed in without asking again")
-    expect(ana.get_by_text("Jobs and ETL")).to_be_visible(); expect(ana.get_by_text("SQL editor")).to_be_visible()
-    step("its overview shows what is and is not there yet")
+    expect(ana.get_by_text("Jobs and runs")).to_be_visible(); expect(ana.get_by_text("SQL editor")).to_be_visible()
+    step("its overview lists what can be done there")
     expect(ana.get_by_label("Main").get_by_label("Catalog")).to_be_visible(); step("and the rail has the workspace's own things")
     for out in ("Home", "All workspaces", "Account console"):
         expect(ana.get_by_label("Main").get_by_label(out)).to_have_count(0)
@@ -133,6 +135,70 @@ with sync_playwright() as p:
     expect(ana.get_by_text(re.compile(r"Intact · \d+ entries"))).to_be_visible(); step("the organization's record is intact")
     shot(ana, "account-activity")
 
+    # -- compute: attached in the account console, with a real agent started from the secret it shows
+    ana.goto(SITE + "/")
+    ana.get_by_label("Account menu").click(); ana.get_by_role("menuitem", name="Account console").click()
+    ana.get_by_role("button", name="Compute", exact=True).click()
+    expect(ana.get_by_text("No compute attached").first).to_be_visible(); step("an organization starts with no compute, and the console says so")
+    ana.get_by_role("button", name="Attach compute").first.click()
+    ana.get_by_placeholder("oracle").fill("this-machine"); ana.get_by_role("button", name="Attach", exact=True).click()
+    expect(ana.get_by_text("Start the agent on this-machine")).to_be_visible()
+    secret = re.search(r"agt_[0-9a-f]+", ana.locator("pre").first.inner_text()).group(0)
+    secret_file = os.path.join(tempfile.mkdtemp(), "agent.secret"); open(secret_file, "w").write(secret); os.chmod(secret_file, 0o600)
+    step("attaching compute shows its secret once, with the command to start the agent")
+    env = {**os.environ, "LOAMZ_DATA_URL": "http://127.0.0.1:8020", "LOAMZ_AGENT_SECRET_FILE": secret_file, "LOAMZ_RUNSC": f"{CACHE}/runsc",
+           "LOAMZ_ROOTFS": f"{CACHE}/rootfs", "LOAMZ_WORK": tempfile.mkdtemp(), "LOAMZ_PLATFORM": os.environ.get("LOAMZ_PLATFORM", "ptrace")}
+    agent = subprocess.Popen([os.path.join(ROOT, "target/release/loamz-runner"), "agent"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    ana.keyboard.press("Escape")
+    expect(ana.get_by_text("online", exact=True).first).to_be_visible(timeout=30000); step("the machine shows as online once its agent connects out")
+    ana.reload(); expect(ana.get_by_text("this-machine")).to_be_visible()
+    expect(ana.get_by_text(secret)).to_have_count(0); step("and the secret is not shown again")
+
+    # -- a table, with a few rows, and a query on it
+    ana.goto(SITE + "/"); ana.get_by_role("button", name=re.compile("Finance")).first.click(); ana.wait_for_url(WS_HOST, timeout=30000)
+    ana.get_by_label("Main").get_by_label("Catalog").click()
+    ana.get_by_label("Expand sales").click(); ana.get_by_role("button", name="raw", exact=True).click()
+    ana.get_by_role("button", name="New", exact=True).click()
+    ana.get_by_label("Kind").click(); ana.get_by_role("option", name="Table").click()
+    ana.get_by_placeholder("sales_2026").fill("orders"); ana.get_by_role("button", name="Create").click()
+    expect(ana.get_by_role("heading", name="orders")).to_be_visible(); step("a table is created")
+    rows = tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode="w"); rows.write("order,region,amount\n1,north,120\n2,south,80\n3,north,200\n4,east,50\n5,south,300\n"); rows.close()
+    ana.locator("input[type=file]").set_input_files(rows.name)
+    expect(ana.get_by_text(os.path.basename(rows.name), exact=True)).to_be_visible(); step("a CSV of five rows is uploaded to it")
+    ana.get_by_role("button", name="Query").click()
+    expect(ana.locator(".cm-content")).to_contain_text("SELECT * FROM sales.raw.orders LIMIT 100"); step("Query opens the SQL editor with a statement ready")
+    ana.get_by_role("button", name="Run", exact=True).click()
+    expect(ana.get_by_text("5 rows")).to_be_visible(timeout=60000); expect(ana.get_by_role("cell", name="north").first).to_be_visible(); step("running it shows the table's five rows")
+    shot(ana, "sql-results")
+
+    ana.locator(".cm-content").click(); ana.keyboard.press("Control+A")
+    ana.keyboard.type("SELECT region, sum(amount) AS total FROM sales.raw.orders GROUP BY region ORDER BY total DESC")
+    ana.keyboard.press("Control+Enter")
+    expect(ana.get_by_text("3 rows")).to_be_visible(timeout=60000)
+    assert ana.locator("tbody tr").first.inner_text().split() == ["1", "south", "380"]; step("Ctrl+Enter runs what was typed, and the sums are right")
+    ana.locator(".cm-content").click(); ana.keyboard.press("Control+A"); ana.keyboard.type("SELECT * FROM read_csv('/etc/passwd')"); ana.keyboard.press("Control+Enter")
+    expect(ana.get_by_text("table functions are not allowed")).to_be_visible(); step("a statement that reads a file is refused, in words")
+    ana.locator(".cm-content").click(); ana.keyboard.press("Control+A"); ana.keyboard.type("SELECT nope FROM sales.raw.orders"); ana.keyboard.press("Control+Enter")
+    expect(ana.get_by_text("The statement failed")).to_be_visible(timeout=60000); expect(ana.get_by_text("nope").first).to_be_visible(); step("a mistake in the SQL is shown as the database's own message")
+    ana.get_by_role("button", name="History").click()
+    expect(ana.get_by_text("SELECT region, sum(amount)").first).to_be_visible(); step("history lists what was run, newest first")
+    ana.reload(); expect(ana.locator(".cm-content")).to_contain_text("SELECT nope"); step("the open tabs survive a reload")
+
+    # -- a job: a script that reads the table and writes a file to a volume
+    ana.get_by_label("Main").get_by_label("Compute").click()
+    ana.get_by_role("button", name="New job").first.click()
+    ana.get_by_label("Writes to").click() if False else None
+    ana.locator("input[type=checkbox]").first.check()
+    ana.get_by_role("combobox", name="Output volume").click(); ana.get_by_role("option").first.click()
+    ana.locator(".cm-content").last.click(); ana.keyboard.press("Control+A")
+    ana.keyboard.type("import csv, json\nrows = list(csv.DictReader(open('/inputs/orders/' + __import__('os').listdir('/inputs/orders')[0])))\nprint('total', sum(int(r['amount']) for r in rows))\nopen('/workspace/total.json', 'w').write(json.dumps({'rows': len(rows)}))")
+    ana.get_by_role("button", name="Run job").click()
+    expect(ana.get_by_text("succeeded").first).to_be_visible(timeout=90000)
+    expect(ana.get_by_text("total 750")).to_be_visible(); step("a job reads the table in its own sandbox and its output is shown")
+    expect(ana.get_by_text(re.compile(r"runs/[0-9a-f-]+/"))).to_be_visible(); step("and says where its files went")
+    shot(ana, "job-detail")
+    ana.keyboard.press("Escape")
+
     # -- cyd: in the group /finance/analysts, no organization role
     cyd = person("cyd", viewport={"width": 1360, "height": 820})
     expect(cyd.get_by_text("Finance", exact=True).first).to_be_visible(); step("a member of the assigned group sees the workspace on Home")
@@ -153,6 +219,11 @@ with sync_playwright() as p:
     cyd.goto(cyd.evaluate("location.origin") + "/settings")
     expect(cyd.get_by_text("Only admins can change this")).to_be_visible(); step("and typing the settings address gives them a plain refusal")
     shot(cyd, "reader-view")
+
+    cyd.get_by_label("Main").get_by_label("SQL editor").click()
+    cyd.locator(".cm-content").click(); cyd.keyboard.type("SELECT * FROM sales.raw.orders")
+    cyd.keyboard.press("Control+Enter")
+    expect(cyd.get_by_text("This could not be run")).to_be_visible(); expect(cyd.get_by_text("permission").first).to_be_visible(); step("someone without the SQL entitlement is refused, even though they can read the table")
 
     # -- the sign-in relay hands a code only to a workspace site of this account site
     evil = cyd.context.new_page()
@@ -182,6 +253,8 @@ with sync_playwright() as p:
     ana.goto(SITE + "/"); expect(ana.get_by_role("button", name="Sign in with Loamz")).to_be_visible(); step("signing out ends the session")
     browser.close()
 
-real = [x for x in problems if "favicon" not in x and not re.search(r"\b(401|403|404|413)\b", x)]
+if agent:
+    agent.terminate()
+real = [x for x in problems if "favicon" not in x and not re.search(r"\b(400|401|403|404|413)\b", x)]
 print(f"\n{steps} steps passed; browser errors: {real or 'none'}")
 sys.exit(1 if real else 0)
