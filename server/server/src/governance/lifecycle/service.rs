@@ -8,13 +8,15 @@ use super::{
 };
 use crate::{
     governance::{
-        audit::{model::Who, service as audit},
+        audit::{model::Who, service::Uow},
         catalogs::{model::Kind, service as catalogs},
         iam::service as iam,
+        orgs::{model::valid_principal, service as orgs},
+        workspaces::service as workspaces,
     },
     kernel::{
-        auth::Caller,
-        authz::{Privilege, root},
+        auth::Identity,
+        authz::{Privilege, Side},
         error::{Error, Result},
         new_id, now_ms,
         state::App,
@@ -22,11 +24,11 @@ use crate::{
     storage::volumes::service as volumes,
 };
 
-async fn enqueue(app: &App, caller: &Caller, kind: TaskKind, subject: &str) -> Result<Task> {
-    let who = Who::of(caller);
-    let task = Task {
+fn new_task(org: &str, identity: &Identity, kind: TaskKind, subject: &str) -> Task {
+    let who = Who::of(identity);
+    Task {
         id: new_id(),
-        tenant: caller.tenant.clone(),
+        org_id: org.to_owned(),
         kind: kind.as_str().into(),
         subject: subject.to_owned(),
         requested_by: who.actor,
@@ -36,76 +38,98 @@ async fn enqueue(app: &App, caller: &Caller, kind: TaskKind, subject: &str) -> R
         lease_until: 0,
         created_ms: now_ms(),
         last_error: String::new(),
-    };
-    store::insert(&app.db, &task).await?;
-    Ok(task)
+    }
 }
 
 /// Starts dropping an entry and everything inside it. It disappears from view at once; the bytes go when the task runs.
 ///
 /// # Errors
-/// Not found or not allowed (`manage` is needed).
-pub async fn request_drop(app: &App, caller: &Caller, id: &str) -> Result<Task> {
-    let (entry, target) = catalogs::target(app, &caller.tenant, id).await?;
-    iam::require(app, caller, Privilege::Manage, &target).await?;
-    catalogs::mark_dropping(app, &caller.tenant, &entry.id).await?;
-    let task = enqueue(app, caller, TaskKind::Drop, &entry.id).await?;
-    audit::record(
-        app,
-        &caller.tenant,
-        &Who::of(caller),
+/// Not found or not allowed (`MANAGE` is needed).
+pub async fn request_drop(
+    app: &App,
+    identity: &Identity,
+    workspace: &str,
+    org: &str,
+    sides: &[Side],
+    id: &str,
+) -> Result<Task> {
+    let (entry, target) = catalogs::target_in(app, workspace, org, id).await?;
+    iam::require(app, identity, org, sides, Privilege::Manage, &target).await?;
+    let task = new_task(org, identity, TaskKind::Drop, &entry.id);
+    let mut uow = Uow::begin(app).await?;
+    catalogs::mark_dropping(&mut uow, org, &entry.id).await?;
+    store::insert(&mut *uow.tx, &task).await?;
+    uow.audit(
+        org,
+        &Who::of(identity),
         "drop.requested",
         &target.label,
         "ok",
     )
     .await?;
+    uow.commit().await?;
     Ok(task)
 }
 
-/// Starts erasing everything a person owns in this tenant, and every grant they hold. Needs `manage` on the tenant.
+/// Starts erasing everything a principal owns in this organization, and every grant, assignment and admin right they hold. Needs
+/// an account admin.
 ///
 /// # Errors
-/// Not allowed or no subject.
-pub async fn request_erase(app: &App, caller: &Caller, subject: &str) -> Result<Task> {
-    if subject.is_empty() {
-        return Err(Error::Invalid("subject is required".into()));
+/// Not allowed, or not a valid principal.
+pub async fn request_erase(
+    app: &App,
+    identity: &Identity,
+    org: &str,
+    subject: &str,
+) -> Result<Task> {
+    orgs::require_admin(app, identity, org).await?;
+    if !valid_principal(subject) {
+        return Err(Error::Invalid(
+            "subject must be a principal such as user:<id>".into(),
+        ));
     }
-    iam::require(app, caller, Privilege::Manage, &root(&caller.tenant)).await?;
-    let task = enqueue(app, caller, TaskKind::Erase, subject).await?;
-    audit::record(
-        app,
-        &caller.tenant,
-        &Who::of(caller),
+    let task = new_task(org, identity, TaskKind::Erase, subject);
+    let mut uow = Uow::begin(app).await?;
+    store::insert(&mut *uow.tx, &task).await?;
+    uow.audit(
+        org,
+        &Who::of(identity),
         "erase.requested",
         &format!("subject {subject}"),
         "ok",
     )
     .await?;
+    uow.commit().await?;
     Ok(task)
 }
 
 /// # Errors
-/// Not found, or not allowed (`manage` on the tenant).
-pub async fn task(app: &App, caller: &Caller, id: &str) -> Result<Task> {
-    iam::require(app, caller, Privilege::Manage, &root(&caller.tenant)).await?;
-    store::get(&app.db, &caller.tenant, id)
+/// Not found, or not an account admin.
+pub async fn task(app: &App, identity: &Identity, org: &str, id: &str) -> Result<Task> {
+    orgs::require_admin(app, identity, org).await?;
+    store::get(app.db.pool(), org, id)
         .await?
         .ok_or_else(|| Error::NotFound("no such task".into()))
 }
 
 /// Removes one entry's files, grants and row. Every step can be run again.
-async fn remove_subtree(app: &App, tenant: &str, id: &str) -> Result<()> {
-    let entries = catalogs::subtree(app, tenant, id).await?;
+async fn remove_subtree(app: &App, org: &str, id: &str) -> Result<()> {
+    let entries = catalogs::subtree(app, org, id).await?;
     for entry in entries.iter().rev() {
         if entry.kind == Kind::Volume {
             volumes::erase_files(app, &entry.id).await?;
         }
-        iam::forget_securable(app, tenant, &entry.id).await?;
-        catalogs::remove_row(app, tenant, &entry.id).await?;
+        let mut uow = Uow::begin(app).await?;
+        iam::forget_securable(&mut uow, org, &entry.id).await?;
+        if entry.kind == Kind::Catalog {
+            workspaces::forget_catalog(&mut uow, &entry.id).await?;
+        }
+        catalogs::remove_row(&mut uow, org, &entry.id).await?;
+        uow.commit().await?;
     }
     // The check: nothing of it may remain.
     for entry in &entries {
-        if catalogs::exists(app, tenant, &entry.id).await?
+        if catalogs::exists(app, org, &entry.id).await?
             || (entry.kind == Kind::Volume && volumes::has_files(app, &entry.id).await?)
         {
             return Err(Error::Internal(format!(
@@ -118,17 +142,24 @@ async fn remove_subtree(app: &App, tenant: &str, id: &str) -> Result<()> {
 }
 
 async fn run(app: &App, task: &Task) -> Result<()> {
+    let org = &task.org_id;
     match TaskKind::parse(&task.kind) {
-        Some(TaskKind::Drop) => remove_subtree(app, &task.tenant, &task.subject).await,
+        Some(TaskKind::Drop) => remove_subtree(app, org, &task.subject).await,
         Some(TaskKind::Erase) => {
-            for entry in catalogs::owned_by(app, &task.tenant, &task.subject).await? {
-                remove_subtree(app, &task.tenant, &entry.id).await?;
+            for entry in catalogs::owned_by(app, org, &task.subject).await? {
+                remove_subtree(app, org, &entry.id).await?;
             }
-            iam::forget_principal(app, &task.tenant, &task.subject).await?;
-            if !catalogs::owned_by(app, &task.tenant, &task.subject)
+            let mut uow = Uow::begin(app).await?;
+            iam::forget_principal(&mut uow, org, &task.subject).await?;
+            workspaces::forget_principal(&mut uow, org, &task.subject).await?;
+            orgs::forget_principal(&mut uow, org, &task.subject).await?;
+            uow.commit().await?;
+            if !catalogs::owned_by(app, org, &task.subject)
                 .await?
                 .is_empty()
-                || iam::count_for(app, &task.tenant, &task.subject).await? != 0
+                || iam::count_for(app, org, &task.subject).await? != 0
+                || workspaces::count_assignments(app, org, &task.subject).await? != 0
+                || orgs::still_admin(app, org, &task.subject).await?
             {
                 return Err(Error::Internal(
                     "something of the subject remains after the erase".into(),
@@ -145,12 +176,14 @@ async fn run(app: &App, task: &Task) -> Result<()> {
 /// # Errors
 /// The database could not be reached; a task that fails is retried, not returned.
 pub async fn run_once(app: &App, now: i64) -> Result<bool> {
-    let Some(task) = store::lease(&app.db, now, now + LEASE_MS).await? else {
-        return Ok(false);
+    let leased = {
+        let mut conn = app.db.pool().acquire().await?;
+        store::lease(&mut conn, now, now + LEASE_MS).await?
     };
+    let Some(task) = leased else { return Ok(false) };
+    let org = task.org_id.clone();
     match run(app, &task).await {
         Ok(()) => {
-            store::finish(&app.db, &task.id).await?;
             let what = format!(
                 "{} {}",
                 task.kind,
@@ -160,21 +193,24 @@ pub async fn run_once(app: &App, now: i64) -> Result<bool> {
                     task.subject.clone()
                 }
             );
-            audit::record(
-                app,
-                &task.tenant,
+            let mut uow = Uow::begin(app).await?;
+            store::finish(&mut *uow.tx, &task.id).await?;
+            uow.audit(
+                &org,
                 &Who::system(&task.on_behalf_of),
                 &format!("{}.done", task.kind),
                 &what,
                 "ok",
             )
             .await?;
+            uow.commit().await?;
         }
         Err(e) => {
             let give_up = task.attempts >= MAX_ATTEMPTS;
             tracing::warn!(task = task.id, attempts = task.attempts, error = %e, "task failed");
+            let mut uow = Uow::begin(app).await?;
             store::fail(
-                &app.db,
+                &mut *uow.tx,
                 &task.id,
                 &e.to_string(),
                 now + retry_after_ms(task.attempts),
@@ -182,9 +218,8 @@ pub async fn run_once(app: &App, now: i64) -> Result<bool> {
             )
             .await?;
             if give_up {
-                audit::record(
-                    app,
-                    &task.tenant,
+                uow.audit(
+                    &org,
                     &Who::system(&task.on_behalf_of),
                     &format!("{}.failed", task.kind),
                     &task.subject,
@@ -192,6 +227,7 @@ pub async fn run_once(app: &App, now: i64) -> Result<bool> {
                 )
                 .await?;
             }
+            uow.commit().await?;
         }
     }
     Ok(true)

@@ -27,6 +27,9 @@ pub enum Error {
     Conflict(String),
     #[error("the file is larger than the limit")]
     TooLarge,
+    /// A part of the system this call depends on is not connected (for example, the directory of people).
+    #[error("{0}")]
+    Unavailable(String),
     /// The detail is logged, never sent: it may name tables or paths.
     #[error("something went wrong on our side")]
     Internal(String),
@@ -43,6 +46,7 @@ impl Error {
             Self::Denied(_) => StatusCode::FORBIDDEN,
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }

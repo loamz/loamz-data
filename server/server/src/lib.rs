@@ -16,6 +16,8 @@ pub static MIGRATIONS: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 #[must_use]
 pub fn routes() -> Routes {
     kernel::system::routes()
+        .merge(governance::orgs::api::routes())
+        .merge(governance::workspaces::api::routes())
         .merge(governance::catalogs::api::routes())
         .merge(governance::iam::api::routes())
         .merge(governance::audit::api::routes())

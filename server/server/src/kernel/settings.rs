@@ -1,25 +1,19 @@
-//! Settings come from the environment (`LOAMZ_DATA_*`). Nothing is guessed about identity: the issuer and the keys
-//! must be given, because a wrong default there would let the wrong people in.
+//! Deployment settings, read once at start and checked. Everything that identifies who may do what lives in the identity
+//! provider and in the database, never here: these settings say only where things are.
 
-use std::{collections::HashSet, net::SocketAddr, path::PathBuf};
-
-#[derive(Clone, Debug)]
-pub enum KeySource {
-    Url(String),
-    File(PathBuf),
-}
+use std::{net::SocketAddr, path::PathBuf};
 
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub listen: SocketAddr,
     pub database_url: String,
-    pub volumes_dir: PathBuf,
+    /// Where the bytes of volumes and tables live (a local folder, or any folder the infrastructure has mounted).
+    pub stores_dir: PathBuf,
+    /// The Keycloak realm that signs people in, such as `https://auth.loamz.com/realms/loamz`.
     pub issuer: String,
-    pub audience: String,
-    pub keys: KeySource,
-    /// People who own an organization's whole catalog space (a personal account always owns its own).
-    pub admins: HashSet<String>,
     pub max_upload_bytes: u64,
+    /// The built web app, served by this server when set.
+    pub web_dir: Option<PathBuf>,
 }
 
 fn var(name: &str) -> Option<String> {
@@ -31,43 +25,29 @@ impl Settings {
     /// A required setting is missing or malformed.
     pub fn from_env() -> Result<Self, String> {
         let need = |name: &str| var(name).ok_or_else(|| format!("{name} is not set"));
-        let keys = match (var("LOAMZ_DATA_JWKS_URL"), var("LOAMZ_DATA_JWKS_FILE")) {
-            (Some(url), None) => KeySource::Url(url),
-            (None, Some(file)) => KeySource::File(file.into()),
-            (None, None) => {
-                return Err(
-                    "set LOAMZ_DATA_JWKS_URL (or LOAMZ_DATA_JWKS_FILE for development)".into(),
-                );
-            }
-            (Some(_), Some(_)) => {
-                return Err("set only one of LOAMZ_DATA_JWKS_URL and LOAMZ_DATA_JWKS_FILE".into());
-            }
+        let issuer = need("LOAMZ_DATA_OIDC_ISSUER")?;
+        if !(issuer.starts_with("https://")
+            || issuer.starts_with("http://127.0.0.1")
+            || issuer.starts_with("http://localhost"))
+        {
+            return Err("LOAMZ_DATA_OIDC_ISSUER must be an https address".into());
+        }
+        let max_mb = match var("LOAMZ_DATA_MAX_UPLOAD_MB") {
+            Some(v) => v
+                .parse::<u64>()
+                .map_err(|_| "LOAMZ_DATA_MAX_UPLOAD_MB is not a number")?,
+            None => 1024,
         };
         Ok(Self {
             listen: var("LOAMZ_DATA_LISTEN")
                 .unwrap_or_else(|| "127.0.0.1:8020".into())
                 .parse()
                 .map_err(|_| "LOAMZ_DATA_LISTEN is not an address like 127.0.0.1:8020")?,
-            database_url: var("LOAMZ_DATA_DATABASE_URL")
-                .unwrap_or_else(|| "sqlite:loamz-data.db?mode=rwc".into()),
-            volumes_dir: var("LOAMZ_DATA_VOLUMES_DIR")
-                .unwrap_or_else(|| "volumes".into())
-                .into(),
-            issuer: need("LOAMZ_DATA_OIDC_ISSUER")?,
-            audience: var("LOAMZ_DATA_OIDC_AUDIENCE").unwrap_or_else(|| "loamz-data".into()),
-            keys,
-            admins: var("LOAMZ_DATA_ADMINS")
-                .map(|v| {
-                    v.split(',')
-                        .map(|s| s.trim().to_owned())
-                        .filter(|s| !s.is_empty())
-                        .collect()
-                })
-                .unwrap_or_default(),
-            max_upload_bytes: var("LOAMZ_DATA_MAX_UPLOAD_MB")
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(1024)
-                .saturating_mul(1024 * 1024),
+            database_url: need("LOAMZ_DATA_DATABASE_URL")?,
+            stores_dir: need("LOAMZ_DATA_STORES_DIR")?.into(),
+            issuer,
+            max_upload_bytes: max_mb.saturating_mul(1024 * 1024),
+            web_dir: var("LOAMZ_DATA_WEB_DIR").map(Into::into),
         })
     }
 }

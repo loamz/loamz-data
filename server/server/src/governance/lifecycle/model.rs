@@ -34,7 +34,7 @@ impl TaskKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Task {
     pub id: String,
-    pub tenant: String,
+    pub org_id: String,
     pub kind: String,
     pub subject: String,
     pub requested_by: String,

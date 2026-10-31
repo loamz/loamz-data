@@ -1,5 +1,8 @@
 //! Who is calling. People and services sign in through Keycloak; this checks the token and says who the caller is.
-//! Every feature past the edge sees only a [`Caller`].
+//! Every feature past the edge sees only an [`Identity`].
+//!
+//! Keys come from the issuer itself: its `OpenID` discovery document names the key set, and the set is refreshed when a
+//! token names a key we have not seen (rate limited). There is no other way to give the server keys.
 //!
 //! An agent acting for a person arrives with a token-exchange token: the `sub` is the person and the `act` claim names
 //! the agent. Both are kept, because what such a call may do is only what both are allowed to do.
@@ -13,7 +16,11 @@ use std::{
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use serde::Deserialize;
 
-use super::settings::KeySource;
+/// The audience every token for this service must carry. It is a protocol constant, not a setting: a token for another
+/// Loamz service must never work here.
+pub const AUDIENCE: &str = "loamz-data";
+/// The Keycloak client role that may create an organization's Data account.
+pub const ACCOUNT_ADMIN_ROLE: &str = "account-admin";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -21,16 +28,61 @@ pub enum Kind {
     Service,
 }
 
+/// An organization named in the token. The id is Keycloak's and never changes; the alias is what people read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OrgRef {
+    pub id: String,
+    pub alias: String,
+}
+
 /// The verified identity behind a request.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Caller {
-    /// Whose data this is: the person, or the service itself when nobody is delegating.
+pub struct Identity {
+    /// The person (or service account) the request is for.
     pub subject: String,
     pub kind: Kind,
-    /// `u-<subject>` for a personal account, `o-<organization>` for an organization.
-    pub tenant: String,
+    /// The client the token was issued to (`azp`): for a service account, its client id.
+    pub client: String,
+    pub name: String,
+    pub email: String,
+    /// Group paths from Keycloak, such as `/finance/analysts`.
+    pub groups: Vec<String>,
+    /// Organizations the person belongs to (empty for a person with none, and for service accounts).
+    pub orgs: Vec<OrgRef>,
+    /// Client roles on `loamz-data`.
+    pub roles: Vec<String>,
     /// The agent or service acting for the subject, if any.
     pub actor: Option<String>,
+}
+
+impl Identity {
+    /// The ids that grants may name for this identity: the person, then their groups.
+    #[must_use]
+    pub fn principals(&self) -> Vec<String> {
+        let own = match self.kind {
+            Kind::Person => format!("user:{}", self.subject),
+            Kind::Service => format!("sp:{}", self.subject),
+        };
+        std::iter::once(own)
+            .chain(self.groups.iter().map(|g| format!("group:{g}")))
+            .collect()
+    }
+
+    /// The ids of the agent acting for the subject, if there is one. It has no groups of its own in the token.
+    #[must_use]
+    pub fn actor_principals(&self) -> Option<Vec<String>> {
+        self.actor.as_ref().map(|a| vec![format!("sp:{a}")])
+    }
+
+    #[must_use]
+    pub fn has_role(&self, role: &str) -> bool {
+        self.roles.iter().any(|r| r == role)
+    }
+
+    #[must_use]
+    pub fn member_of(&self, org: &str) -> bool {
+        self.orgs.iter().any(|o| o.id == org)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -39,30 +91,38 @@ pub enum AuthError {
     Invalid,
     #[error("the token was signed by a key we do not know")]
     UnknownKey,
-    #[error("the token names several organizations; request exactly one")]
-    AmbiguousOrganization,
 }
 
 #[derive(Deserialize)]
 struct Claims {
     sub: String,
-    organization: Option<Organizations>,
+    azp: Option<String>,
+    name: Option<String>,
+    preferred_username: Option<String>,
+    email: Option<String>,
+    #[serde(default)]
+    groups: Vec<String>,
+    organization: Option<HashMap<String, OrgClaim>>,
+    resource_access: Option<HashMap<String, ClientAccess>>,
     /// `"agent"` or `"service"` on a service account's token (set by a mapper on its Keycloak client); absent for people.
     loamz_kind: Option<String>,
     act: Option<Act>,
 }
 
 #[derive(Deserialize)]
-struct Act {
-    sub: String,
+struct OrgClaim {
+    id: Option<String>,
 }
 
-/// Keycloak lists a person's organizations as `{alias: {...}}` or as a list of aliases.
 #[derive(Deserialize)]
-#[serde(untagged)]
-enum Organizations {
-    Map(std::collections::BTreeMap<String, serde_json::Value>),
-    List(Vec<String>),
+struct ClientAccess {
+    #[serde(default)]
+    roles: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct Act {
+    sub: String,
 }
 
 #[derive(Deserialize)]
@@ -80,23 +140,25 @@ struct RawKey {
     e: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct Discovery {
+    issuer: String,
+    jwks_uri: String,
+}
+
 pub struct Verifier {
     keys: RwLock<HashMap<String, (String, String)>>,
     issuer: String,
-    audience: String,
-    source: KeySource,
     last_fetch: Mutex<Option<Instant>>,
     http: reqwest::Client,
 }
 
 impl Verifier {
     #[must_use]
-    pub fn new(issuer: &str, audience: &str, source: KeySource) -> Self {
+    pub fn new(issuer: &str) -> Self {
         Self {
             keys: RwLock::new(HashMap::new()),
-            issuer: issuer.to_owned(),
-            audience: audience.to_owned(),
-            source,
+            issuer: issuer.trim_end_matches('/').to_owned(),
             last_fetch: Mutex::new(None),
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
@@ -106,6 +168,9 @@ impl Verifier {
     }
 
     /// Installs a key set as the identity provider publishes it. Only RSA signing keys are kept.
+    ///
+    /// # Errors
+    /// The document is not a key set.
     pub fn set_keys(&self, json: &str) -> Result<(), AuthError> {
         let raw: RawSet = serde_json::from_str(json).map_err(|_| AuthError::Invalid)?;
         let keys = raw
@@ -120,32 +185,44 @@ impl Verifier {
         Ok(())
     }
 
-    /// Loads the keys from their source. From a URL it is rate limited, so a flood of tokens with unknown key ids cannot
-    /// turn into a flood of requests to the identity provider.
+    /// Loads the keys the issuer publishes. Rate limited, so a flood of tokens with unknown key ids cannot turn into a
+    /// flood of requests to the identity provider. The discovery document must name the same issuer we were given.
+    ///
+    /// # Errors
+    /// The issuer could not be reached, or does not say what we expect.
     pub async fn refresh(&self) -> Result<(), String> {
-        if matches!(self.source, KeySource::Url(_)) {
+        {
             let mut last = self.last_fetch.lock().map_err(|_| "lock".to_owned())?;
             if last.is_some_and(|t| t.elapsed() < Duration::from_secs(30)) {
                 return Ok(());
             }
             *last = Some(Instant::now());
         }
-        let json = match &self.source {
-            KeySource::File(path) => tokio::fs::read_to_string(path)
-                .await
-                .map_err(|e| e.to_string())?,
-            KeySource::Url(url) => self
-                .http
+        let get = |url: String| async {
+            self.http
                 .get(url)
                 .send()
                 .await
                 .and_then(reqwest::Response::error_for_status)
-                .map_err(|e| e.to_string())?
-                .text()
-                .await
-                .map_err(|e| e.to_string())?,
+                .map_err(|e| e.to_string())
         };
-        self.set_keys(&json).map_err(|e| e.to_string())
+        let doc: Discovery = get(format!("{}/.well-known/openid-configuration", self.issuer))
+            .await?
+            .json()
+            .await
+            .map_err(|e| e.to_string())?;
+        if doc.issuer.trim_end_matches('/') != self.issuer {
+            return Err(format!(
+                "the issuer says it is {}, not {}",
+                doc.issuer, self.issuer
+            ));
+        }
+        let keys = get(doc.jwks_uri)
+            .await?
+            .text()
+            .await
+            .map_err(|e| e.to_string())?;
+        self.set_keys(&keys).map_err(|e| e.to_string())
     }
 
     fn key(&self, kid: &str) -> Option<DecodingKey> {
@@ -156,7 +233,7 @@ impl Verifier {
 
     /// # Errors
     /// The token is not valid for this service.
-    pub fn verify(&self, token: &str) -> Result<Caller, AuthError> {
+    pub fn verify(&self, token: &str) -> Result<Identity, AuthError> {
         let header = decode_header(token).map_err(|_| AuthError::Invalid)?;
         // Exactly RS256: never the algorithm the token asks for, which is how forged tokens get accepted.
         if header.alg != Algorithm::RS256 {
@@ -167,35 +244,51 @@ impl Verifier {
             .ok_or(AuthError::UnknownKey)?;
         let mut rules = Validation::new(Algorithm::RS256);
         rules.set_issuer(&[&self.issuer]);
-        rules.set_audience(&[&self.audience]);
+        rules.set_audience(&[AUDIENCE]);
         rules.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
-        let claims = decode::<Claims>(token, &key, &rules)
+        let c = decode::<Claims>(token, &key, &rules)
             .map_err(|_| AuthError::Invalid)?
             .claims;
-        if claims.sub.is_empty() || claims.sub.len() > 128 {
+        if c.sub.is_empty() || c.sub.len() > 128 {
             return Err(AuthError::Invalid);
         }
-        let mut orgs: Vec<String> = match claims.organization {
-            Some(Organizations::Map(m)) => m.into_keys().collect(),
-            Some(Organizations::List(l)) => l,
-            None => vec![],
+        let mut orgs: Vec<OrgRef> = c
+            .organization
+            .unwrap_or_default()
+            .into_iter()
+            // An organization without an id cannot be told apart from a renamed one, so it is not used.
+            .filter_map(|(alias, o)| {
+                o.id.filter(|i| !i.is_empty())
+                    .map(|id| OrgRef { id, alias })
+            })
+            .collect();
+        orgs.sort_by(|a, b| a.id.cmp(&b.id));
+        let mut groups: Vec<String> = c
+            .groups
+            .into_iter()
+            .filter(|g| !g.is_empty() && g.len() <= 256)
+            .collect();
+        groups.sort();
+        groups.dedup();
+        let kind = if matches!(c.loamz_kind.as_deref(), Some("agent" | "service")) {
+            Kind::Service
+        } else {
+            Kind::Person
         };
-        orgs.sort();
-        orgs.dedup();
-        let tenant = match orgs.len() {
-            0 => format!("u-{}", claims.sub),
-            1 => format!("o-{}", orgs.remove(0)),
-            _ => return Err(AuthError::AmbiguousOrganization),
-        };
-        let kind = match claims.loamz_kind.as_deref() {
-            Some("agent" | "service") => Kind::Service,
-            _ => Kind::Person,
-        };
-        Ok(Caller {
-            subject: claims.sub,
+        Ok(Identity {
+            name: c.name.or(c.preferred_username).unwrap_or_default(),
+            email: c.email.unwrap_or_default(),
+            client: c.azp.unwrap_or_default(),
+            subject: c.sub,
             kind,
-            tenant,
-            actor: claims.act.map(|a| a.sub).filter(|s| !s.is_empty()),
+            groups,
+            orgs,
+            roles: c
+                .resource_access
+                .and_then(|mut m| m.remove(AUDIENCE))
+                .map(|a| a.roles)
+                .unwrap_or_default(),
+            actor: c.act.map(|a| a.sub).filter(|s| !s.is_empty()),
         })
     }
 }

@@ -52,7 +52,7 @@ pub const CONSISTENCIES: [&str; 2] = ["transaction", "snapshot"];
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Securable {
     pub id: String,
-    pub tenant: String,
+    pub org_id: String,
     pub kind: Kind,
     pub parent_id: String,
     pub name: String,

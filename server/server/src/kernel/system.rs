@@ -1,10 +1,9 @@
-//! The routes that belong to no feature: health, readiness, and who am I.
+//! The routes that belong to no feature: health and readiness.
 
 use axum::{Json, extract::State};
 use serde_json::{Value, json};
 
 use super::{
-    auth::{Caller, Kind},
     error::{Error, Result},
     http::Routes,
     state::Shared,
@@ -23,21 +22,9 @@ async fn readyz(State(app): State<Shared>) -> Result<Json<Value>> {
     Ok(Json(json!({"status": "ready"})))
 }
 
-async fn me(State(app): State<Shared>, caller: Caller) -> Json<Value> {
-    Json(json!({
-        "subject": caller.subject,
-        "kind": match caller.kind { Kind::Person => "person", Kind::Service => "service" },
-        "tenant": caller.tenant,
-        "acting_for": caller.actor.as_ref().map(|_| &caller.subject),
-        "agent": caller.actor,
-        "tenant_owner": app.owns_root(&caller),
-    }))
-}
-
 #[must_use]
 pub fn routes() -> Routes {
     Routes::new()
         .get("/healthz", healthz)
         .get("/readyz", readyz)
-        .get("/api/v1/me", me)
 }
