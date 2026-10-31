@@ -34,6 +34,20 @@ pub struct Volumes {
     root: PathBuf,
 }
 
+/// A volume id is ours (a UUID), but it is checked anyway: it becomes a folder or a key prefix.
+pub(crate) fn check_volume(volume: &str) -> Result<(), FileError> {
+    let ok = !volume.is_empty()
+        && volume.len() <= 64
+        && volume
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    if ok {
+        Ok(())
+    } else {
+        Err(FileError::BadPath("volume id"))
+    }
+}
+
 /// Uploads are written to a hidden temporary file and renamed into place, so a reader never sees half a file.
 const TEMP: &str = ".upload-";
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -47,19 +61,12 @@ impl Volumes {
     /// The folder of one volume. Volume ids are ours (UUIDs), but they are checked anyway: this is the one place that
     /// turns a name into a path.
     fn dir(&self, volume: &str) -> Result<PathBuf, FileError> {
-        let ok = !volume.is_empty()
-            && volume.len() <= 64
-            && volume
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-');
-        if !ok {
-            return Err(FileError::BadPath("volume id"));
-        }
+        check_volume(volume)?;
         Ok(self.root.join(volume))
     }
 
     /// Splits a caller's path into safe components. No empty parts, no `.` or `..`, no backslashes or control characters.
-    fn components(rel: &str) -> Result<Vec<&str>, FileError> {
+    pub(crate) fn components(rel: &str) -> Result<Vec<&str>, FileError> {
         if rel.is_empty() || rel.len() > 1024 {
             return Err(FileError::BadPath("length"));
         }

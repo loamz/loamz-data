@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use loamz_lake::{files::Volumes, sql::Db};
+use loamz_lake::{objects::Store, sql::Db};
 use tokio::sync::Mutex;
 
 use super::{auth::Verifier, settings::Settings};
 
 pub struct App {
     pub db: Db,
-    /// The bytes of volumes and tables: one folder per securable, named by its id.
-    pub stores: Volumes,
+    /// The bytes of volumes and tables: one prefix per securable, named by its id.
+    pub stores: Store,
     pub verifier: Verifier,
     pub max_upload: u64,
     /// One writer per organization's audit chain at a time within this process. A change and its audit entry are written in
@@ -19,14 +19,15 @@ pub struct App {
 pub type Shared = Arc<App>;
 
 impl App {
-    #[must_use]
-    pub fn new(settings: &Settings, db: Db) -> Self {
-        Self {
+    /// # Errors
+    /// The storage cannot be opened.
+    pub fn new(settings: &Settings, db: Db) -> Result<Self, String> {
+        Ok(Self {
             db,
-            stores: Volumes::new(&settings.stores_dir),
+            stores: settings.storage.open()?,
             verifier: Verifier::new(&settings.issuer),
             max_upload: settings.max_upload_bytes,
             write: Mutex::new(()),
-        }
+        })
     }
 }

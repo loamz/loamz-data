@@ -3,7 +3,6 @@
 use axum::body::Body;
 use futures_util::StreamExt;
 use loamz_lake::files::Entry;
-use tokio_util::io::ReaderStream;
 
 use crate::{
     governance::{
@@ -149,7 +148,7 @@ pub async fn get(
         "ok",
     )
     .await?;
-    Ok((Body::from_stream(ReaderStream::new(file)), size))
+    Ok((Body::from_stream(file), size))
 }
 
 /// # Errors
