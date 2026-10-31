@@ -1,6 +1,6 @@
-import { Database, MoreHorizontal, Plus, TerminalSquare, Trash2 } from "lucide-react";
+import { Database, MoreHorizontal, Plus, TerminalSquare, Trash2, UserCog } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { Badge, Button, Menu, MenuContent, MenuItem, MenuTrigger, Page, PageEmpty, SettingGroup, SettingRow, Tabs, TabsContent, TabsList, TabsTrigger, confirmAction, toast } from "@/design";
+import { Badge, Button, Dialog, DialogContent, DialogFooter, Menu, MenuContent, MenuItem, MenuTrigger, Page, PageEmpty, SettingGroup, SettingRow, Tabs, TabsContent, TabsList, TabsTrigger, confirmAction, toast } from "@/design";
 import * as api from "@/api";
 import { go } from "@/route";
 import { openInEditor } from "@/sqlTabs";
@@ -8,6 +8,7 @@ import { AccessList } from "@/components/AccessList";
 import { FilesTab } from "@/components/FilesTab";
 import { TableTab } from "@/components/TableTab";
 import { NewDialog } from "@/components/NewDialog";
+import { PrincipalField } from "@/components/PrincipalField";
 import { Tree } from "@/components/Tree";
 import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
 import { when } from "@/format";
@@ -120,6 +121,7 @@ export function Catalog({ ws, id, me }: { ws: string; id: string | null; me: api
             ws={ws}
             item={selected.data}
             onBack={() => open(null)}
+            onChanged={selected.reload}
             onDropped={async (s) => {
               open(s.parent_id || null);
               await load(s.parent_id);
@@ -145,8 +147,10 @@ export function Catalog({ ws, id, me }: { ws: string; id: string | null; me: api
   );
 }
 
-function Detail({ ws, item, onBack, onDropped }: { ws: string; item: api.Securable; onBack: () => void; onDropped: (s: api.Securable) => void }) {
+function Detail({ ws, item, onBack, onDropped, onChanged }: { ws: string; item: api.Securable; onBack: () => void; onDropped: (s: api.Securable) => void; onChanged: () => void }) {
   const wide = useWide();
+  const [handing, setHanding] = useState(false);
+  const [heir, setHeir] = useState("");
   const trail = useLoad(async () => {
     const names: string[] = [];
     let up = item.parent_id;
@@ -183,6 +187,9 @@ function Detail({ ws, item, onBack, onDropped }: { ws: string; item: api.Securab
             </Button>
           </MenuTrigger>
           <MenuContent align="end">
+            <MenuItem onSelect={() => setHanding(true)}>
+              <UserCog /> Change owner…
+            </MenuItem>
             <MenuItem
               className="text-danger"
               onSelect={async () => {
@@ -243,6 +250,32 @@ function Detail({ ws, item, onBack, onDropped }: { ws: string; item: api.Securab
           <AccessList ws={ws} id={item.id} />
         </TabsContent>
       </Tabs>
+      <Dialog open={handing} onOpenChange={setHanding}>
+        <DialogContent title={`Change the owner of ${item.name}`} description="The owner manages it and everything inside it. You keep any access you were given separately.">
+          <div className="mt-4 space-y-4">
+            <PrincipalField onChange={setHeir} />
+            <DialogFooter>
+              <Button
+                variant="primary"
+                disabled={!heir}
+                onClick={async () => {
+                  try {
+                    await api.transfer(ws, item.id, heir);
+                    setHanding(false);
+                    setHeir("");
+                    toast.success("The owner was changed");
+                    onChanged();
+                  } catch (e) {
+                    toast.error("Could not change the owner", (e as Error).message);
+                  }
+                }}
+              >
+                Change owner
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Page>
   );
 }
