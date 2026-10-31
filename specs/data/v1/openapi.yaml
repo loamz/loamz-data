@@ -692,18 +692,17 @@ paths:
           $ref: '#/components/responses/Problem'
         '503':
           $ref: '#/components/responses/Problem'
-  /api/v1/workspaces/{ws}/tables/{id}/files:
+  /api/v1/workspaces/{ws}/iceberg/v1/config:
     get:
+      summary: The Iceberg REST catalog's configuration. The warehouse is the name of a catalog.
       parameters:
-      - description: A workspace id.
+      - name: ws
         in: path
-        name: ws
         required: true
         schema:
           type: string
-      - description: A securable id, or `metastore` where grants are concerned.
-        in: path
-        name: id
+      - name: warehouse
+        in: query
         required: true
         schema:
           type: string
@@ -714,47 +713,17 @@ paths:
           $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
-      summary: List the files of a table. Needs READ VOLUME.
-  /api/v1/workspaces/{ws}/tables/{id}/files/{path}:
-    delete:
-      parameters:
-      - &id005
-        description: A workspace id.
-        in: path
-        name: ws
-        required: true
-        schema:
-          type: string
-      - &id006
-        description: A securable id, or `metastore` where grants are concerned.
-        in: path
-        name: id
-        required: true
-        schema:
-          type: string
-      - allowReserved: true
-        in: path
-        name: path
-        required: true
-        schema:
-          type: string
-      responses:
-        '204':
-          description: Deleted
-        '401':
-          $ref: '#/components/responses/Problem'
-        '403':
-          $ref: '#/components/responses/Problem'
-        '404':
-          $ref: '#/components/responses/Problem'
-      summary: Delete one file. Needs WRITE VOLUME.
+  /api/v1/workspaces/{ws}/iceberg/v1/{prefix}/namespaces:
     get:
+      summary: List the schemas of a catalog (Iceberg namespaces).
       parameters:
-      - *id005
-      - *id006
-      - allowReserved: true
+      - name: ws
         in: path
-        name: path
+        required: true
+        schema:
+          type: string
+      - name: prefix
+        in: path
         required: true
         schema:
           type: string
@@ -765,31 +734,222 @@ paths:
           $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
-      summary: Download a file, always as an attachment. Needs READ VOLUME.
-    put:
+    post:
+      summary: Create a schema. Needs CREATE SCHEMA.
       parameters:
-      - *id005
-      - *id006
-      - allowReserved: true
+      - name: ws
         in: path
-        name: path
+        required: true
+        schema:
+          type: string
+      - name: prefix
+        in: path
         required: true
         schema:
           type: string
       responses:
-        '201':
-          description: Stored
-        '400':
-          $ref: '#/components/responses/Problem'
+        '200':
+          description: OK
         '401':
-          $ref: '#/components/responses/Problem'
-        '403':
           $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
-        '413':
+  /api/v1/workspaces/{ws}/iceberg/v1/{prefix}/namespaces/{ns}:
+    get:
+      summary: Whether a schema is there for the caller.
+      parameters:
+      - name: ws
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: prefix
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: ns
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+        '401':
           $ref: '#/components/responses/Problem'
-      summary: Upload a file (the request body is its bytes). Needs WRITE VOLUME.
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/iceberg/v1/{prefix}/namespaces/{ns}/tables:
+    get:
+      summary: List the tables of a schema.
+      parameters:
+      - name: ws
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: prefix
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: ns
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+    post:
+      summary: Create an Iceberg table, or stage one (stage-create) for a commit that completes it. Needs CREATE TABLE.
+      parameters:
+      - name: ws
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: prefix
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: ns
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/iceberg/v1/{prefix}/namespaces/{ns}/tables/{t}:
+    get:
+      summary: Load a table, with its metadata and credentials for its folder only (read-only unless the caller has MODIFY). Needs SELECT.
+      parameters:
+      - name: ws
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: prefix
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: ns
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: t
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+    post:
+      summary: Commit a change to a table (or finish creating it). Needs MODIFY. A change made on an older version is a 409.
+      parameters:
+      - name: ws
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: prefix
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: ns
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: t
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/iceberg/v1/{prefix}/transactions/commit:
+    post:
+      summary: Commit one table's change, as Iceberg clients send it.
+      parameters:
+      - name: ws
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: prefix
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/tables:
+    post:
+      summary: Create an Iceberg table from a list of columns. Needs CREATE TABLE.
+      parameters:
+      - name: ws
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/tables/{id}:
+    get:
+      summary: A table's columns and snapshots. Needs only that the caller can see it.
+      parameters:
+      - name: ws
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
   /api/v1/workspaces/{ws}/compute/targets:
     get:
       summary: The compute attached to the workspace's organization, and whether each is answering.

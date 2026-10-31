@@ -148,8 +148,8 @@ pub fn new_metadata(
     mut schema: Value,
     spec: Option<Value>,
     order: Option<Value>,
-    properties: Value,
-    now_ms: i64,
+    properties: &Value,
+    at_ms: i64,
 ) -> Result<Value, String> {
     check_schema(&schema)?;
     schema["schema-id"] = json!(0);
@@ -172,7 +172,7 @@ pub fn new_metadata(
         "table-uuid": uuid,
         "location": location,
         "last-sequence-number": 0,
-        "last-updated-ms": now_ms,
+        "last-updated-ms": at_ms,
         "last-column-id": last_column,
         "current-schema-id": 0,
         "schemas": [schema],
@@ -255,7 +255,8 @@ fn push(meta: &mut Value, key: &str, v: Value) {
 ///
 /// # Errors
 /// An update this server does not support, or one that makes the metadata wrong.
-pub fn apply(meta: &Value, updates: &[Value], now_ms: i64) -> Result<Value, String> {
+#[allow(clippy::too_many_lines)] // one flat match over the update actions of the specification
+pub fn apply(meta: &Value, updates: &[Value], at_ms: i64) -> Result<Value, String> {
     let mut m = meta.clone();
     let mut last_schema: Option<i64> = None;
     let mut last_spec: Option<i64> = None;
@@ -421,7 +422,7 @@ pub fn apply(meta: &Value, updates: &[Value], now_ms: i64) -> Result<Value, Stri
                     push(
                         &mut m,
                         "snapshot-log",
-                        json!({"timestamp-ms": now_ms, "snapshot-id": id}),
+                        json!({"timestamp-ms": at_ms, "snapshot-id": id}),
                     );
                 }
             }
@@ -457,7 +458,7 @@ pub fn apply(meta: &Value, updates: &[Value], now_ms: i64) -> Result<Value, Stri
             other => return Err(format!("the update {other} is not supported")),
         }
     }
-    m["last-updated-ms"] = json!(now_ms);
+    m["last-updated-ms"] = json!(at_ms);
     Ok(m)
 }
 
@@ -502,7 +503,7 @@ mod tests {
             ("city".into(), "string".into(), false),
         ])
         .unwrap();
-        new_metadata("s3://b/t1", "u-1", s, None, None, json!({}), 10).unwrap()
+        new_metadata("s3://b/t1", "u-1", s, None, None, &json!({}), 10).unwrap()
     }
 
     fn snapshot(id: i64, seq: i64) -> Value {

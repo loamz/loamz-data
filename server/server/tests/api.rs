@@ -510,7 +510,7 @@ async fn catalog_rules(s: Server) {
         "a volume cannot promise transactions"
     );
     assert_eq!(
-        make(json!({"kind": "table", "parent_id": sc, "name": "t", "placement": "s3"}))
+        make(json!({"kind": "volume", "parent_id": sc, "name": "t", "placement": "s3"}))
             .await
             .status,
         400,
@@ -528,12 +528,18 @@ async fn catalog_rules(s: Server) {
         400
     );
 
-    let table = make(
-        json!({"kind": "table", "parent_id": sc, "name": "orders", "classification": "personal"}),
-    )
-    .await;
-    assert_eq!(table.status, 201);
-    let t = table.json();
+    // A table is made with its columns, not as a bare entry.
+    assert_eq!(
+        make(json!({"kind": "table", "parent_id": sc, "name": "bare"}))
+            .await
+            .status,
+        400
+    );
+    let id = s.table(&ws, &ana(), &sc, "orders", "personal").await;
+    let t = s
+        .get(&format!("{}/{id}", securables(&ws)), &ana())
+        .await
+        .json();
     assert_eq!(
         (
             t["classification"].as_str(),

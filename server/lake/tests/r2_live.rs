@@ -1,3 +1,8 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::doc_markdown,
+    clippy::duration_suboptimal_units
+)]
 //! Against the real bucket, only when LOAMZ_TEST_R2_DIR names a folder with endpoint, key-id, secret and api-token files
 //! (`~/.config/loamz/r2`). Proves a machine given issued credentials can read one volume and nothing else.
 

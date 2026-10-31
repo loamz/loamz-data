@@ -355,6 +355,9 @@ impl Server {
 
     /// Creates something and returns its id, failing the test if it is refused.
     pub async fn make(&self, ws: &str, who: &Who, kind: &str, parent: &str, name: &str) -> String {
+        if kind == "table" {
+            return self.table(ws, who, parent, name, "").await;
+        }
         let r = self
             .post(
                 &format!("/api/v1/workspaces/{ws}/securables"),
@@ -363,6 +366,26 @@ impl Server {
             )
             .await;
         assert_eq!(r.status, 201, "creating {kind} {name}: {}", r.text());
+        r.json()["id"].as_str().unwrap().to_owned()
+    }
+
+    /// An Iceberg table with one column, made the way a screen makes one.
+    pub async fn table(
+        &self,
+        ws: &str,
+        who: &Who,
+        schema: &str,
+        name: &str,
+        class: &str,
+    ) -> String {
+        let r = self
+            .post(
+                &format!("/api/v1/workspaces/{ws}/tables"),
+                who,
+                json!({"parent_id": schema, "name": name, "classification": class, "columns": [{"name": "id", "type": "long"}]}),
+            )
+            .await;
+        assert_eq!(r.status, 201, "creating table {name}: {}", r.text());
         r.json()["id"].as_str().unwrap().to_owned()
     }
 

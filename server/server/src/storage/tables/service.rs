@@ -31,7 +31,7 @@ use crate::{
 /// Metadata files stay small; one bigger than this is refused rather than read into memory.
 const MAX_METADATA: u64 = 16 * 1024 * 1024;
 /// How long vended credentials last for a person's client.
-const CLIENT_TTL: Duration = Duration::from_secs(900);
+const CLIENT_TTL: Duration = Duration::from_mins(15);
 
 fn nope() -> Error {
     Error::NotFound("not found".into())
@@ -300,6 +300,7 @@ pub struct NewTable {
     pub spec: Option<Value>,
     pub order: Option<Value>,
     pub properties: Value,
+    pub classification: String,
     /// The client will commit what makes the table in a second step: nothing is kept until then.
     pub stage: bool,
 }
@@ -353,7 +354,7 @@ async fn create_in(app: &App, ask: &Ask<'_>, parent: Securable, new: NewTable) -
         new.schema,
         new.spec,
         new.order,
-        new.properties,
+        &new.properties,
         now_ms(),
     )
     .map_err(Error::Invalid)?;
@@ -378,7 +379,7 @@ async fn create_in(app: &App, ask: &Ask<'_>, parent: Securable, new: NewTable) -
             kind: Kind::Table,
             parent_id: parent.id,
             name: new.name,
-            classification: String::new(),
+            classification: new.classification,
             placement: String::new(),
             consistency: String::new(),
             table: Some((id.clone(), rel.clone())),
