@@ -1,0 +1,308 @@
+use std::time::Duration;
+
+use axum::{
+    Json,
+    body::Bytes,
+    extract::{FromRequestParts, Path, Query, State},
+    http::{StatusCode, header::AUTHORIZATION, request::Parts},
+    response::{IntoResponse, Response},
+};
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+use super::{
+    model::{Run, Target, is_terminal},
+    service::{self, Ctx, JobRequest, Report, SqlRequest},
+};
+use crate::{
+    governance::context::{OrgCtx, WsCtx},
+    kernel::{
+        error::{Error, Result},
+        http::{Routes, json as body_json},
+        now_ms,
+        state::Shared,
+    },
+};
+
+fn ctx(c: &WsCtx) -> Ctx<'_> {
+    Ctx {
+        identity: &c.identity,
+        workspace: &c.workspace,
+        standing: c.standing,
+        sides: &c.sides,
+    }
+}
+
+fn param(params: &std::collections::HashMap<String, String>, name: &str) -> Result<String> {
+    params
+        .get(name)
+        .cloned()
+        .ok_or_else(|| Error::Internal(format!("the route has no {name}")))
+}
+
+fn json_of(text: &str) -> Value {
+    serde_json::from_str(text).unwrap_or(Value::Null)
+}
+
+/// A run as people see it. A list leaves out what can be large; the one run has everything. Who it runs as is never shown.
+fn run_view(r: &Run, detail: bool) -> Value {
+    let mut v = json!({
+        "id": r.id, "kind": r.kind, "state": r.state, "title": r.title,
+        "requested_by": r.requested_by, "on_behalf_of": r.on_behalf_of, "target_id": r.target_id,
+        "created_ms": r.created_ms, "started_ms": r.started_ms, "finished_ms": r.finished_ms,
+        "error": r.error, "exit_code": r.exit_code, "cancelling": r.cancel && !is_terminal(&r.state),
+    });
+    if detail {
+        let mut spec = json_of(&r.spec);
+        if let Some(o) = spec.as_object_mut() {
+            o.remove("as");
+        }
+        v["spec"] = spec;
+        v["stdout"] = json!(r.stdout);
+        v["stderr"] = json!(r.stderr);
+        v["result"] = json_of(&r.result);
+    }
+    v
+}
+
+fn target_view(t: &Target, now: i64) -> Value {
+    json!({"id": t.id, "name": t.name, "online": t.online(now), "max_memory_mb": t.max_memory_mb, "max_cpu_millis": t.max_cpu_millis, "last_seen_ms": t.last_seen_ms, "created_ms": t.created_ms})
+}
+
+// ---- people ------------------------------------------------------------------------------------------------------
+
+async fn list_targets(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
+    let now = now_ms();
+    let items: Vec<Value> = service::targets(&app, &c.identity, c.org())
+        .await?
+        .iter()
+        .map(|t| target_view(t, now))
+        .collect();
+    Ok(Json(json!({"items": items})))
+}
+
+#[derive(Deserialize)]
+struct StatementBody {
+    sql: String,
+    limit: Option<i64>,
+    target: Option<String>,
+    /// How long to wait for the answer, in seconds, before getting the run back to ask about later.
+    wait_s: Option<u64>,
+}
+
+/// Runs a statement and waits a while for its rows. It comes back finished (200), or still running (202) with the id to ask about.
+async fn statement(State(app): State<Shared>, c: WsCtx, body: Bytes) -> Result<Response> {
+    let req: StatementBody = body_json(&body)?;
+    let k = ctx(&c);
+    let run = service::submit_sql(
+        &app,
+        &k,
+        SqlRequest {
+            sql: req.sql,
+            limit: req.limit,
+            target: req.target,
+        },
+    )
+    .await?;
+    let run = service::wait(
+        &app,
+        &k,
+        run,
+        Duration::from_secs(req.wait_s.unwrap_or(30).min(60)),
+    )
+    .await?;
+    let code = if is_terminal(&run.state) {
+        StatusCode::OK
+    } else {
+        StatusCode::ACCEPTED
+    };
+    Ok((code, Json(run_view(&run, true))).into_response())
+}
+
+async fn submit_job(
+    State(app): State<Shared>,
+    c: WsCtx,
+    body: Bytes,
+) -> Result<(StatusCode, Json<Value>)> {
+    let req: JobRequest = body_json(&body)?;
+    let run = service::submit_job(&app, &ctx(&c), req).await?;
+    Ok((StatusCode::ACCEPTED, Json(run_view(&run, false))))
+}
+
+#[derive(Deserialize)]
+struct ListParams {
+    kind: Option<String>,
+    limit: Option<i64>,
+}
+
+async fn list_runs(
+    State(app): State<Shared>,
+    c: WsCtx,
+    Query(p): Query<ListParams>,
+) -> Result<Json<Value>> {
+    if p.kind.as_deref().is_some_and(|k| k != "sql" && k != "job") {
+        return Err(Error::Invalid("kind must be sql or job".into()));
+    }
+    let runs = service::list(&app, &ctx(&c), p.kind.as_deref(), p.limit.unwrap_or(50)).await?;
+    Ok(Json(
+        json!({"items": runs.iter().map(|r| run_view(r, false)).collect::<Vec<_>>()}),
+    ))
+}
+
+async fn get_run(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
+    Ok(Json(run_view(
+        &service::get(&app, &ctx(&c), &param(&c.params, "id")?).await?,
+        true,
+    )))
+}
+
+async fn cancel_run(State(app): State<Shared>, c: WsCtx) -> Result<(StatusCode, Json<Value>)> {
+    let run = service::cancel(&app, &ctx(&c), &param(&c.params, "id")?).await?;
+    Ok((StatusCode::ACCEPTED, Json(run_view(&run, false))))
+}
+
+// ---- the account's -----------------------------------------------------------------------------------------------
+
+async fn account_targets(State(app): State<Shared>, c: OrgCtx) -> Result<Json<Value>> {
+    crate::governance::orgs::service::require_admin(&app, &c.identity, &c.org).await?;
+    let now = now_ms();
+    let items: Vec<Value> = service::targets(&app, &c.identity, &c.org)
+        .await?
+        .iter()
+        .map(|t| target_view(t, now))
+        .collect();
+    Ok(Json(json!({"items": items})))
+}
+
+#[derive(Deserialize)]
+struct NewTarget {
+    name: String,
+    max_memory_mb: Option<i64>,
+    max_cpu_millis: Option<i64>,
+}
+
+/// The secret is in this answer and nowhere else, ever again.
+async fn attach(
+    State(app): State<Shared>,
+    c: OrgCtx,
+    body: Bytes,
+) -> Result<(StatusCode, Json<Value>)> {
+    let req: NewTarget = body_json(&body)?;
+    let e = service::add_target(
+        &app,
+        &c.identity,
+        &c.org,
+        &req.name,
+        req.max_memory_mb.unwrap_or(2048),
+        req.max_cpu_millis.unwrap_or(1000),
+    )
+    .await?;
+    let mut v = target_view(&e.target, now_ms());
+    v["secret"] = json!(e.secret);
+    Ok((StatusCode::CREATED, Json(v)))
+}
+
+async fn rotate(State(app): State<Shared>, c: OrgCtx) -> Result<Json<Value>> {
+    let e = service::new_secret(&app, &c.identity, &c.org, &param(&c.params, "id")?).await?;
+    let mut v = target_view(&e.target, now_ms());
+    v["secret"] = json!(e.secret);
+    Ok(Json(v))
+}
+
+async fn detach(State(app): State<Shared>, c: OrgCtx) -> Result<StatusCode> {
+    service::remove_target(&app, &c.identity, &c.org, &param(&c.params, "id")?).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---- the agent's -------------------------------------------------------------------------------------------------
+
+/// A compute agent, known by its secret.
+pub struct Agent(pub Target);
+
+impl FromRequestParts<Shared> for Agent {
+    type Rejection = Error;
+
+    async fn from_request_parts(parts: &mut Parts, app: &Shared) -> Result<Self> {
+        let secret = parts
+            .headers
+            .get(AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(Error::Unauthorized)?;
+        service::authenticate_agent(app, secret).await.map(Agent)
+    }
+}
+
+#[derive(Deserialize)]
+struct LeaseParams {
+    wait_s: Option<u64>,
+}
+
+/// Waits up to twenty seconds for work (or as long as `wait_s` says, at most twenty-five), so an idle agent costs one request every
+/// twenty seconds and hears of new work at once.
+async fn lease(
+    State(app): State<Shared>,
+    Agent(target): Agent,
+    Query(p): Query<LeaseParams>,
+) -> Result<Response> {
+    let deadline =
+        tokio::time::Instant::now() + Duration::from_secs(p.wait_s.unwrap_or(20).min(25));
+    loop {
+        if let Some(l) = service::lease(&app, &target).await? {
+            let mut spec = json_of(&l.run.spec);
+            if let Some(o) = spec.as_object_mut() {
+                o.remove("as");
+            }
+            let body = json!({
+                "run": {"id": l.run.id, "kind": l.run.kind, "org_id": l.run.org_id, "workspace_id": l.run.workspace_id, "spec": spec},
+                "token": l.token,
+                "limits": {"memory_mb": l.limits.memory_mb, "cpu_millis": l.limits.cpu_millis, "timeout_s": l.limits.timeout_s},
+            });
+            return Ok(Json(body).into_response());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Ok(StatusCode::NO_CONTENT.into_response());
+        }
+        tokio::time::sleep(Duration::from_millis(400)).await;
+    }
+}
+
+async fn heartbeat(
+    State(app): State<Shared>,
+    Agent(target): Agent,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    match service::heartbeat(&app, &target, &id).await? {
+        Some(cancel) => Ok(Json(json!({"cancel": cancel}))),
+        None => Err(Error::NotFound("this run is not yours any more".into())),
+    }
+}
+
+async fn complete(
+    State(app): State<Shared>,
+    Agent(target): Agent,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<StatusCode> {
+    let report: Report = body_json(&body)?;
+    service::complete(&app, &target, &id, report).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[must_use]
+pub fn routes() -> Routes {
+    Routes::new()
+        .get("/api/v1/workspaces/{ws}/compute/targets", list_targets)
+        .post("/api/v1/workspaces/{ws}/sql/statements", statement)
+        .post("/api/v1/workspaces/{ws}/runs", submit_job)
+        .get("/api/v1/workspaces/{ws}/runs", list_runs)
+        .get("/api/v1/workspaces/{ws}/runs/{id}", get_run)
+        .post("/api/v1/workspaces/{ws}/runs/{id}/cancel", cancel_run)
+        .get("/api/v1/orgs/{org}/compute/targets", account_targets)
+        .post("/api/v1/orgs/{org}/compute/targets", attach)
+        .post("/api/v1/orgs/{org}/compute/targets/{id}/secret", rotate)
+        .delete("/api/v1/orgs/{org}/compute/targets/{id}", detach)
+        .post("/api/v1/agent/lease", lease)
+        .post("/api/v1/agent/runs/{id}/heartbeat", heartbeat)
+        .post("/api/v1/agent/runs/{id}/complete", complete)
+}

@@ -36,6 +36,15 @@ pub struct OrgRef {
     pub alias: String,
 }
 
+/// What a running job may touch, on top of what the person it runs for may touch: it reads the securables in `reads` and writes
+/// the ones in `writes`, and nothing else. A request carries one only when it came with a job's own token.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Scope {
+    pub run: String,
+    pub reads: Vec<String>,
+    pub writes: Vec<String>,
+}
+
 /// The verified identity behind a request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identity {
@@ -54,6 +63,8 @@ pub struct Identity {
     pub roles: Vec<String>,
     /// The agent or service acting for the subject, if any.
     pub actor: Option<String>,
+    /// Set only for a job running on someone's behalf: the person's rights, narrowed to what the job declared.
+    pub scope: Option<Scope>,
 }
 
 impl Identity {
@@ -333,6 +344,7 @@ impl Verifier {
                 .map(|a| a.roles)
                 .unwrap_or_default(),
             actor: c.act.map(|a| a.sub).filter(|s| !s.is_empty()),
+            scope: None,
         })
     }
 }

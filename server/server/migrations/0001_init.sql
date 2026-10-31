@@ -116,3 +116,59 @@ CREATE TABLE tasks (
     last_error   TEXT NOT NULL
 );
 CREATE INDEX tasks_due ON tasks (state, lease_until);
+
+-- Compute an organization has attached. A target is one compute agent (a machine running `loamz-runner agent`) that connects out to
+-- this server and asks for work; it never accepts connections. Its secret is shown once and kept only as a hash.
+CREATE TABLE compute_targets (
+    id               TEXT PRIMARY KEY,
+    org_id           TEXT NOT NULL,
+    name             TEXT NOT NULL,
+    secret_hash      TEXT NOT NULL,
+    max_memory_mb    BIGINT NOT NULL,
+    max_cpu_millis   BIGINT NOT NULL,
+    created_by       TEXT NOT NULL,
+    created_ms       BIGINT NOT NULL,
+    last_seen_ms     BIGINT NOT NULL,
+    UNIQUE (org_id, name)
+);
+CREATE UNIQUE INDEX compute_targets_secret ON compute_targets (secret_hash);
+
+-- One piece of work: a SQL statement or a job. `spec` says what to run and with what; `result` is a statement's rows (capped).
+CREATE TABLE runs (
+    id            TEXT PRIMARY KEY,
+    org_id        TEXT NOT NULL,
+    workspace_id  TEXT NOT NULL,
+    kind          TEXT NOT NULL,
+    requested_by  TEXT NOT NULL,
+    on_behalf_of  TEXT NOT NULL,
+    target_id     TEXT NOT NULL,
+    state         TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    spec          TEXT NOT NULL,
+    result        TEXT NOT NULL,
+    stdout        TEXT NOT NULL,
+    stderr        TEXT NOT NULL,
+    exit_code     BIGINT NOT NULL,
+    error         TEXT NOT NULL,
+    cancel        BIGINT NOT NULL,
+    lease_until   BIGINT NOT NULL,
+    created_ms    BIGINT NOT NULL,
+    started_ms    BIGINT NOT NULL,
+    finished_ms   BIGINT NOT NULL
+);
+CREATE INDEX runs_workspace ON runs (workspace_id, created_ms);
+CREATE INDEX runs_due ON runs (state, target_id, created_ms);
+
+-- The token a running job carries instead of anyone's own: the person it runs for, narrowed to the securables it declared. It
+-- stops working when the run ends or expires, and only a hash of it is kept.
+CREATE TABLE run_tokens (
+    token_hash    TEXT PRIMARY KEY,
+    run_id        TEXT NOT NULL,
+    org_id        TEXT NOT NULL,
+    workspace_id  TEXT NOT NULL,
+    identity      TEXT NOT NULL,
+    reads         TEXT NOT NULL,
+    writes        TEXT NOT NULL,
+    expires_ms    BIGINT NOT NULL
+);
+CREATE INDEX run_tokens_run ON run_tokens (run_id);

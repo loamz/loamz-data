@@ -25,6 +25,21 @@ pub async fn grants_of(app: &App, org: &str, sides: &[Side]) -> Result<Vec<Grant
     Ok(out)
 }
 
+/// A job's own token narrows the person it runs for: it may read only what it declared to read and write only what it declared to
+/// write, and may do nothing else (create, manage, drop). A request without such a token is not narrowed.
+#[must_use]
+pub fn within_scope(identity: &Identity, need: Privilege, target: &Target) -> bool {
+    let Some(scope) = &identity.scope else {
+        return true;
+    };
+    let list = match need {
+        Privilege::Select | Privilege::ReadVolume => &scope.reads,
+        Privilege::Modify | Privilege::WriteVolume => &scope.writes,
+        _ => return false,
+    };
+    list.iter().any(|id| id == target.id())
+}
+
 /// The same decision as [`require`], from grants already loaded (for filtering a list).
 #[must_use]
 pub fn allowed(sides: &[Side], grants: &[Grant], need: Privilege, target: &Target) -> bool {
@@ -50,7 +65,7 @@ pub async fn require(
     target: &Target,
 ) -> Result<()> {
     let grants = grants_of(app, org, sides).await?;
-    if allowed(sides, &grants, need, target) {
+    if within_scope(identity, need, target) && allowed(sides, &grants, need, target) {
         return Ok(());
     }
     audit::record(
@@ -62,7 +77,12 @@ pub async fn require(
         "denied",
     )
     .await?;
-    if visible(sides, &grants, target) {
+    // A running job knows only what it declared: anything else is not there for it, whatever the person behind it may see.
+    let known = identity
+        .scope
+        .as_ref()
+        .is_none_or(|s| s.reads.iter().chain(&s.writes).any(|id| id == target.id()));
+    if known && visible(sides, &grants, target) {
         Err(Error::Denied(Denied {
             action: need.as_str(),
             target: target.label.clone(),

@@ -3,7 +3,7 @@
 use std::process::ExitCode;
 
 use loamz_data_server::{
-    MIGRATIONS,
+    MIGRATIONS, compute,
     governance::lifecycle::service as lifecycle,
     kernel::{settings::Settings, state::App},
     router, shared,
@@ -47,6 +47,7 @@ async fn run(command: &str) -> Result<(), String> {
         .await
         .map_err(|e| format!("could not load the signing keys: {e}"))?;
     tokio::spawn(lifecycle::work_forever(app.clone()));
+    tokio::spawn(compute::service::work_forever(app.clone()));
     let (router, _) = router(app);
     let listener = tokio::net::TcpListener::bind(settings.listen)
         .await

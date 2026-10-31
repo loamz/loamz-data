@@ -1,5 +1,6 @@
 //! Loamz Data server. `kernel` is what everything shares; `governance` is the only door; `storage` is what it opens.
 
+pub mod compute;
 pub mod governance;
 pub mod kernel;
 pub mod storage;
@@ -23,6 +24,7 @@ pub fn routes() -> Routes {
         .merge(governance::audit::api::routes())
         .merge(governance::lifecycle::api::routes())
         .merge(storage::volumes::api::routes())
+        .merge(compute::api::routes())
 }
 
 /// The router, and the `(method, path)` pairs it serves.
