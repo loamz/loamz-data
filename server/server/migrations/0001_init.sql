@@ -124,6 +124,9 @@ CREATE TABLE compute_targets (
     org_id           TEXT NOT NULL,
     name             TEXT NOT NULL,
     secret_hash      TEXT NOT NULL,
+    -- 'agent' (a machine that connects out) or 'serverless' (a provider endpoint the server calls, started on demand)
+    kind             TEXT NOT NULL,
+    endpoint         TEXT NOT NULL,
     max_memory_mb    BIGINT NOT NULL,
     max_cpu_millis   BIGINT NOT NULL,
     created_by       TEXT NOT NULL,

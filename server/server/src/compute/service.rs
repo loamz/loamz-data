@@ -12,9 +12,9 @@ use serde_json::{Value, json};
 
 use super::{
     model::{
-        DEFAULT_ROWS, LEASE_MS, Limits, MAX_OUTPUT, MAX_RESULT, MAX_ROWS, QUEUE_MS, Run, Target,
-        cap, hash_secret, is_final_report, is_terminal, job_title, limits_for, mount_names,
-        valid_target_name,
+        AGENT, DEFAULT_ROWS, LEASE_MS, Limits, MAX_OUTPUT, MAX_RESULT, MAX_ROWS, QUEUE_MS, Run,
+        SERVERLESS, Target, cap, hash_secret, is_final_report, is_terminal, job_title, limits_for,
+        mount_names, valid_target_name,
     },
     sql, store,
 };
@@ -79,6 +79,8 @@ pub async fn add_target(
         id: new_id(),
         org_id: org.to_owned(),
         name: name.to_owned(),
+        kind: AGENT.into(),
+        endpoint: String::new(),
         max_memory_mb,
         max_cpu_millis,
         created_by: identity.subject.clone(),
@@ -103,6 +105,84 @@ pub async fn add_target(
     .await?;
     uow.commit().await?;
     Ok(Enrolled { target, secret })
+}
+
+/// Registers a provider endpoint that starts when work arrives and stops when idle. The server calls it (outbound, https); it
+/// never reaches back, and it is given only short-lived addresses for the files of one run.
+///
+/// # Errors
+/// Not an account admin, a bad name or address, or the server has no token for serverless compute.
+pub async fn add_serverless(
+    app: &App,
+    identity: &Identity,
+    org: &str,
+    name: &str,
+    endpoint: &str,
+    max_memory_mb: i64,
+    max_cpu_millis: i64,
+) -> Result<Target> {
+    orgs::require_admin(app, identity, org).await?;
+    if app.serverless_token.is_none() {
+        return Err(Error::Invalid(
+            "this server has no serverless token configured (LOAMZ_DATA_SERVERLESS_TOKEN_FILE)"
+                .into(),
+        ));
+    }
+    if !valid_target_name(name) {
+        return Err(Error::Invalid(
+            "a name is words, digits, spaces and dashes, up to 64 characters".into(),
+        ));
+    }
+    let url = reqwest::Url::parse(endpoint)
+        .map_err(|_| Error::Invalid("the address is not a URL".into()))?;
+    if url.scheme() != "https" || url.host_str().is_none() || !url.username().is_empty() {
+        return Err(Error::Invalid(
+            "the address must be an https URL without credentials".into(),
+        ));
+    }
+    if !(256..=262_144).contains(&max_memory_mb) || !(100..=64_000).contains(&max_cpu_millis) {
+        return Err(Error::Invalid(
+            "memory must be 256 MB to 256 GB, and cpu 100 to 64000 thousandths of a CPU".into(),
+        ));
+    }
+    let target = Target {
+        id: new_id(),
+        org_id: org.to_owned(),
+        name: name.to_owned(),
+        kind: SERVERLESS.into(),
+        endpoint: url.to_string(),
+        max_memory_mb,
+        max_cpu_millis,
+        created_by: identity.subject.clone(),
+        created_ms: now_ms(),
+        last_seen_ms: 0,
+    };
+    let mut uow = Uow::begin(app).await?;
+    if store::name_taken(&mut *uow.tx, org, name).await? {
+        return Err(Error::Conflict(format!(
+            "there is already compute called {name}"
+        )));
+    }
+    // Nothing connects out with a secret here, so the stored one is random and never given to anyone.
+    store::insert_target(&mut *uow.tx, &target, &hash_secret(&secret("none_"))).await?;
+    uow.audit(
+        org,
+        &Who::of(identity),
+        "compute.attach",
+        &format!("compute {}", target.id),
+        "ok",
+    )
+    .await?;
+    uow.commit().await?;
+    Ok(target)
+}
+
+/// Every serverless target (for the provider worker).
+///
+/// # Errors
+/// The database could not be read.
+pub async fn serverless_targets(app: &App) -> Result<Vec<Target>> {
+    store::serverless_targets(app.db.pool()).await
 }
 
 /// Gives a target a new secret; the agent using the old one is turned away.
@@ -290,9 +370,12 @@ async fn pick(
     asked: Option<&str>,
     memory: Option<i64>,
     cpu: Option<i64>,
+    own_only: bool,
 ) -> Result<Target> {
     let now = now_ms();
-    let all = store::targets_in(app.db.pool(), org).await?;
+    let mut all = store::targets_in(app.db.pool(), org).await?;
+    // The organization's own machines come first; a provider's is used when asked for or when nothing else answers.
+    all.sort_by_key(Target::serverless);
     let big_enough = |t: &Target| {
         memory.is_none_or(|m| m <= t.max_memory_mb) && cpu.is_none_or(|c| c <= t.max_cpu_millis)
     };
@@ -312,13 +395,22 @@ async fn pick(
         if !t.online(now) {
             return Err(Error::Conflict(format!("{} is not answering", t.name)));
         }
+        if own_only && t.serverless() {
+            return Err(Error::Invalid(format!(
+                "{} is run by a provider, which only takes statements over data classified normal",
+                t.name
+            )));
+        }
         return if big_enough(t) {
             Ok(t.clone())
         } else {
             Err(too_big(&[t]))
         };
     }
-    let online: Vec<&Target> = all.iter().filter(|t| t.online(now)).collect();
+    let online: Vec<&Target> = all
+        .iter()
+        .filter(|t| t.online(now) && !(own_only && t.serverless()))
+        .collect();
     if online.is_empty() {
         return Err(Error::Conflict(
             "no compute is answering. Attach a machine in the account console, and start its agent"
@@ -373,7 +465,11 @@ async fn queue(app: &App, ctx: &Ctx<'_>, run: &Run, action: &str) -> Result<()> 
 }
 
 /// Reads a table the statement names, if the person may. Anything else, missing or not theirs to read, is the same answer.
-async fn readable_table(app: &App, ctx: &Ctx<'_>, rel: &sql::Relation) -> Result<(String, String)> {
+async fn readable_table(
+    app: &App,
+    ctx: &Ctx<'_>,
+    rel: &sql::Relation,
+) -> Result<(String, String, String)> {
     let nope = || {
         Error::NotFound(format!(
             "table {} was not found, or you may not read it",
@@ -396,7 +492,7 @@ async fn readable_table(app: &App, ctx: &Ctx<'_>, rel: &sql::Relation) -> Result
     )
     .await
     .map_err(|_| nope())?;
-    Ok((entry.id, rel.join(".")))
+    Ok((entry.id, rel.join("."), entry.classification))
 }
 
 /// Asks for a SQL statement to be run. Everything it reads is checked now, against the person's rights.
@@ -410,8 +506,11 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
     }
     let analysis = sql::analyze(&req.sql).map_err(Error::Invalid)?;
     let mut tables = Vec::new();
+    // Data classified above normal never leaves the organization's own machines.
+    let mut private = false;
     for rel in &analysis.relations {
-        let (id, name) = readable_table(app, ctx, rel).await?;
+        let (id, name, class) = readable_table(app, ctx, rel).await?;
+        private |= class != "normal";
         tables.push(json!({"id": id, "name": name}));
     }
     let limit = req.limit.unwrap_or(DEFAULT_ROWS).clamp(1, MAX_ROWS);
@@ -421,6 +520,7 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
         req.target.as_deref(),
         None,
         None,
+        private,
     )
     .await?;
     let limits = limits_for(&target, None, None, None, 120).map_err(Error::Invalid)?;
@@ -488,6 +588,8 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
         req.target.as_deref(),
         req.memory_mb,
         req.cpu_millis,
+        // A job runs code, and only SQL goes to a provider.
+        true,
     )
     .await?;
     let limits = limits_for(&target, req.memory_mb, req.cpu_millis, req.timeout_s, 600)

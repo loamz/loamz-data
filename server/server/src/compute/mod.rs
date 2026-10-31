@@ -4,6 +4,7 @@
 
 pub mod api;
 pub mod model;
+pub mod serverless;
 pub mod service;
 pub mod sql;
 mod store;

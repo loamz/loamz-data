@@ -5,8 +5,7 @@ use sqlx::{Any, Executor, Row};
 use super::model::{Run, Target};
 use crate::kernel::error::Result;
 
-const TARGET: &str =
-    "id, org_id, name, max_memory_mb, max_cpu_millis, created_by, created_ms, last_seen_ms";
+const TARGET: &str = "id, org_id, name, kind, endpoint, max_memory_mb, max_cpu_millis, created_by, created_ms, last_seen_ms";
 const RUN: &str = "id, org_id, workspace_id, kind, requested_by, on_behalf_of, target_id, state, title, spec, result, stdout, stderr, exit_code, error, cancel, lease_until, created_ms, started_ms, finished_ms";
 
 fn target(r: &sqlx::any::AnyRow) -> std::result::Result<Target, sqlx::Error> {
@@ -14,6 +13,8 @@ fn target(r: &sqlx::any::AnyRow) -> std::result::Result<Target, sqlx::Error> {
         id: r.try_get("id")?,
         org_id: r.try_get("org_id")?,
         name: r.try_get("name")?,
+        kind: r.try_get("kind")?,
+        endpoint: r.try_get("endpoint")?,
         max_memory_mb: r.try_get("max_memory_mb")?,
         max_cpu_millis: r.try_get("max_cpu_millis")?,
         created_by: r.try_get("created_by")?,
@@ -55,11 +56,13 @@ pub async fn insert_target<'e, E: Executor<'e, Database = Any>>(
     secret_hash: &str,
 ) -> Result<()> {
     sqlx::query(&format!(
-        "INSERT INTO compute_targets ({TARGET}, secret_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"
+        "INSERT INTO compute_targets ({TARGET}, secret_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
     ))
     .bind(&t.id)
     .bind(&t.org_id)
     .bind(&t.name)
+    .bind(&t.kind)
+    .bind(&t.endpoint)
     .bind(t.max_memory_mb)
     .bind(t.max_cpu_millis)
     .bind(&t.created_by)
@@ -449,4 +452,17 @@ pub async fn tokens_delete_expired<'e, E: Executor<'e, Database = Any>>(
         .execute(e)
         .await?;
     Ok(())
+}
+
+/// Every serverless target of every organization (the provider worker serves them all).
+pub async fn serverless_targets<'e, E: Executor<'e, Database = Any>>(e: E) -> Result<Vec<Target>> {
+    let rows = sqlx::query(&format!(
+        "SELECT {TARGET} FROM compute_targets WHERE kind = 'serverless'"
+    ))
+    .fetch_all(e)
+    .await?;
+    rows.iter()
+        .map(target)
+        .collect::<std::result::Result<_, _>>()
+        .map_err(Into::into)
 }
