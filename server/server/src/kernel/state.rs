@@ -15,6 +15,8 @@ pub struct App {
     pub max_upload: u64,
     /// The bearer token serverless endpoints accept, read from a mounted file. None: serverless compute is off.
     pub serverless_token: Option<String>,
+    /// Where the serverless SQL endpoint is (https); with the token, it makes serverless compute creatable.
+    pub serverless_endpoint: Option<String>,
     /// One writer per organization's audit chain at a time within this process. A change and its audit entry are written in
     /// one database transaction; the chain's primary key refuses a second server writing the same entry.
     pub write: Mutex<()>,
@@ -34,6 +36,7 @@ impl App {
             issuer: settings.storage.issuer()?,
             max_upload: settings.max_upload_bytes,
             serverless_token: settings.serverless_token()?,
+            serverless_endpoint: settings.serverless_endpoint.clone(),
             write: Mutex::new(()),
         })
     }

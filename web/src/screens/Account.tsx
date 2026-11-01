@@ -1,7 +1,9 @@
-import { CheckCircle2, Copy, Cpu, KeyRound, Layers, Plus, ScrollText, ShieldAlert, ShieldCheck, Trash2, UserMinus, UserX, UsersRound } from "lucide-react";
+import { CheckCircle2, Cpu, KeyRound, Layers, Plus, ScrollText, ShieldAlert, ShieldCheck, Trash2, UserMinus, UserX, UsersRound } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Badge, Button, Dialog, DialogContent, DialogFooter, Input, NavItem, Page, PageEmpty, Section, Segmented, Select, confirmAction, toast } from "@/design";
+import { Badge, Button, Dialog, DialogContent, DialogFooter, Input, NavItem, Page, PageEmpty, Section, Segmented, confirmAction, toast } from "@/design";
 import * as api from "@/api";
+import { AgentCommand } from "@/components/AgentCommand";
+import { CreateCompute } from "@/components/CreateCompute";
 import { Principal } from "@/components/Principal";
 import { PrincipalField } from "@/components/PrincipalField";
 import { describe, shortTarget, when } from "@/format";
@@ -9,7 +11,6 @@ import { useLoad } from "@/hooks";
 import { useNames } from "@/names";
 import { openWorkspace } from "@/site";
 import { go, type AccountTab } from "@/route";
-import { centralOrigin } from "@/site";
 
 const tabs: { id: AccountTab; label: string; icon: typeof Layers }[] = [
   { id: "workspaces", label: "Workspaces", icon: Layers },
@@ -293,30 +294,12 @@ function Erase({ org }: { org: string }) {
   );
 }
 
-const MEMORY = [
-  { value: "1024", label: "1 GB" },
-  { value: "2048", label: "2 GB" },
-  { value: "4096", label: "4 GB" },
-  { value: "8192", label: "8 GB" },
-  { value: "16384", label: "16 GB" },
-];
-const CPU = [
-  { value: "500", label: "½ CPU" },
-  { value: "1000", label: "1 CPU" },
-  { value: "2000", label: "2 CPUs" },
-  { value: "4000", label: "4 CPUs" },
-];
 
 /** Compute an organization has attached. A machine connects out to this server and asks for work, so nothing is opened on it. */
 function ComputeTab({ org }: { org: string }) {
   const list = useLoad(() => api.attachedCompute(org), org);
   const [adding, setAdding] = useState(false);
-  const [name, setName] = useState("");
-  const [memory, setMemory] = useState("2048");
-  const [cpu, setCpu] = useState("1000");
   const [shown, setShown] = useState<api.Compute | null>(null);
-  const [kind, setKind] = useState<"agent" | "serverless">("agent");
-  const [endpoint, setEndpoint] = useState("");
   const items = list.data ?? [];
 
   // Anyone watching the list sees a machine come online as soon as its agent connects.
@@ -390,94 +373,12 @@ function ComputeTab({ org }: { org: string }) {
         </div>
       )}
 
-      <Dialog open={adding} onOpenChange={setAdding}>
-        <DialogContent title="Attach compute" description="A machine of yours that connects out, or a serverless endpoint that starts only when a statement arrives.">
-          <form
-            className="mt-4 space-y-4"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              try {
-                const made = await api.attachCompute(org, { name: name.trim(), kind, endpoint: kind === "serverless" ? endpoint.trim() : undefined, max_memory_mb: Number(memory), max_cpu_millis: Number(cpu) });
-                setAdding(false);
-                setName("");
-                setEndpoint("");
-                if (made.secret) setShown(made);
-                list.reload();
-              } catch (err) {
-                toast.error("Could not attach it", (err as Error).message);
-              }
-            }}
-          >
-            <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-foreground">Kind</span>
-              <Select aria-label="Kind" value={kind} onValueChange={(v) => setKind(v as "agent" | "serverless")} options={[{ value: "agent", label: "A machine of yours (it connects out)" }, { value: "serverless", label: "Serverless (started on demand)" }]} />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-xs font-medium text-foreground">Name</span>
-              <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === "agent" ? "oracle" : "modal"} />
-            </label>
-            {kind === "serverless" && (
-              <label className="block space-y-1.5">
-                <span className="text-xs font-medium text-foreground">Endpoint</span>
-                <Input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="https://your-app.modal.run" spellCheck={false} />
-                <span className="block text-2xs text-muted">Only statements over data classified normal run here. It is given credentials for the tables of one statement, for minutes.</span>
-              </label>
-            )}
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block space-y-1.5">
-                <span className="text-xs font-medium text-foreground">Memory per run</span>
-                <Select aria-label="Memory per run" value={memory} onValueChange={setMemory} options={MEMORY} />
-              </label>
-              <label className="block space-y-1.5">
-                <span className="text-xs font-medium text-foreground">CPU per run</span>
-                <Select aria-label="CPU per run" value={cpu} onValueChange={setCpu} options={CPU} />
-              </label>
-            </div>
-            <DialogFooter>
-              <Button type="submit" variant="primary" disabled={!name.trim() || (kind === "serverless" && !endpoint.trim().startsWith("https://"))}>
-                Attach
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
+      <CreateCompute org={org} open={adding} onOpenChange={setAdding} onCreated={list.reload} />
       <Dialog open={shown !== null} onOpenChange={(o) => !o && setShown(null)}>
         <DialogContent title={`Start the agent on ${shown?.name ?? ""}`} description="This secret is shown once. Keep it in a file only the agent's user can read." className="max-w-xl">
-          {shown?.secret && <Secret compute={shown} />}
+          {shown?.secret && <AgentCommand secret={shown.secret} />}
         </DialogContent>
       </Dialog>
     </Page>
-  );
-}
-
-function Secret({ compute }: { compute: api.Compute }) {
-  const secret = compute.secret ?? "";
-  const command = `umask 077 && printf '%s' '${secret}' > ~/.loamz-agent.secret
-
-LOAMZ_DATA_URL=${centralOrigin} \\
-LOAMZ_AGENT_SECRET_FILE=~/.loamz-agent.secret \\
-LOAMZ_RUNSC=~/.cache/loamz/runsc \\
-LOAMZ_ROOTFS=~/.cache/loamz/rootfs \\
-loamz-runner agent`;
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(command);
-      toast.success("Copied");
-    } catch {
-      toast.error("Could not copy", "Select the text and copy it.");
-    }
-  };
-  return (
-    <div className="mt-4 space-y-3">
-      <p className="text-xs text-muted">On the machine, in a shell (it needs <span className="font-mono">runsc</span> and the sandbox filesystem; <span className="font-mono">scripts/fetch-runsc.sh</span> and <span className="font-mono">server/runner/rootfs/build.sh</span> make them):</p>
-      <pre className="scroll-area whitespace-pre-wrap break-all rounded-md border border-border bg-background/50 p-3 font-mono text-xs text-foreground">{command}</pre>
-      <div className="flex justify-end">
-        <Button variant="secondary" onClick={() => void copy()}>
-          <Copy /> Copy
-        </Button>
-      </div>
-      <p className="text-xs text-muted">When the agent connects, the machine shows as online here within a few seconds.</p>
-    </div>
   );
 }

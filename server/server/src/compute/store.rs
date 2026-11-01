@@ -466,3 +466,25 @@ pub async fn serverless_targets<'e, E: Executor<'e, Database = Any>>(e: E) -> Re
         .collect::<std::result::Result<_, _>>()
         .map_err(Into::into)
 }
+
+/// When each target of an organization last finished a run (0 for none), by target id.
+pub async fn last_used<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    org: &str,
+) -> Result<std::collections::HashMap<String, i64>> {
+    let rows = sqlx::query(
+        "SELECT target_id, MAX(finished_ms) AS at FROM runs WHERE org_id = $1 AND finished_ms > 0 GROUP BY target_id",
+    )
+    .bind(org)
+    .fetch_all(e)
+    .await?;
+    rows.iter()
+        .map(|r| {
+            Ok((
+                r.try_get::<String, _>("target_id")?,
+                r.try_get::<i64, _>("at")?,
+            ))
+        })
+        .collect::<std::result::Result<_, sqlx::Error>>()
+        .map_err(Into::into)
+}

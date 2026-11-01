@@ -235,6 +235,7 @@ pub async fn server_with(db: Db, max_upload: u64) -> Server {
         max_upload_bytes: max_upload,
         web_dir: None,
         serverless_token_file: None,
+        serverless_endpoint: Some("https://sql.example.test/run".into()),
         agent_clients: vec!["loamz-agents".into()],
     };
     db.migrate(&MIGRATIONS).await.unwrap();

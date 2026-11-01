@@ -32,6 +32,8 @@ export function SqlEditor({ ws }: { ws: string }) {
   const [state, setState] = useState(() => load(ws));
   const [names, setNames] = useState<string[]>([]);
   const [limit, setLimit] = useState("1000");
+  // Which compute to run on; "auto" lets the server choose (your own machines first, a serverless warehouse when nothing else answers).
+  const [target, setTarget] = useState("auto");
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
   const [bottom, setBottom] = useState<"results" | "history">("results");
   const handle = useRef<CodeEditorHandle | null>(null);
@@ -68,7 +70,7 @@ export function SqlEditor({ ws }: { ws: string }) {
     setBottom("results");
     try {
       // Asked without waiting, so the screen learns at once that the run is queued, then running, instead of after the wait.
-      let r = await api.runStatement(ws, sql, Number(limit), 0);
+      let r = await api.runStatement(ws, sql, Number(limit), 0, target === "auto" ? undefined : target);
       set(id, { run: r });
       // Keep asking until it ends (a cold start can take ten seconds or more).
       while (api.isRunning(r) && !cancelling.current[id]) {
@@ -151,9 +153,19 @@ export function SqlEditor({ ws }: { ws: string }) {
           <span className="hidden text-2xs text-muted-foreground sm:inline">Ctrl+Enter · runs the selection if there is one</span>
           <span className="flex-1" />
           <Select size="sm" className="w-32" aria-label="Rows to return" value={limit} onValueChange={setLimit} options={LIMITS} />
-          <button type="button" onClick={() => go({ screen: "compute", ws })} className="cursor-pointer" title="See the compute">
-            {noCompute ? <Badge tone="warning">No compute answering</Badge> : online[0] ? <Badge tone="success">{online[0].name} · {online[0].kind === "serverless" ? "serverless" : "online"}</Badge> : <Badge>Checking compute…</Badge>}
-          </button>
+          <Select
+            size="sm"
+            className="w-48"
+            aria-label="Compute"
+            value={target}
+            onValueChange={setTarget}
+            options={[{ value: "auto", label: online[0] ? `Auto · ${online[0].name}` : "Auto" }, ...online.map((c) => ({ value: c.id, label: `${c.name} · ${c.kind === "serverless" ? "serverless" : "machine"}` }))]}
+          />
+          {noCompute && (
+            <button type="button" onClick={() => go({ screen: "compute", ws })} className="cursor-pointer" title="Create compute">
+              <Badge tone="warning">No compute · create one</Badge>
+            </button>
+          )}
         </div>
 
         <div className="h-[38%] min-h-32 shrink-0 border-b border-border">

@@ -692,6 +692,38 @@ paths:
           $ref: '#/components/responses/Problem'
         '503':
           $ref: '#/components/responses/Problem'
+  /api/v1/orgs/{org}/compute/providers:
+    get:
+      summary: The kinds of compute this server can create for an organization.
+      parameters:
+      - name: org
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/compute/providers:
+    get:
+      summary: The kinds of compute this server can create (a serverless SQL warehouse, a machine of your own) and whether each is available.
+      parameters:
+      - name: ws
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
   /api/v1/workspaces/{ws}/iceberg/v1/config:
     get:
       summary: The Iceberg REST catalog's configuration. The warehouse is the name of a catalog.

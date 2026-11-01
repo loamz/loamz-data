@@ -199,6 +199,8 @@ export interface Compute {
   max_memory_mb: number;
   max_cpu_millis: number;
   last_seen_ms: number;
+  /** When it last finished some work (0 for never): a serverless warehouse is running for a minute after this. */
+  last_used_ms: number;
   created_ms: number;
   /** Only in the answer to attaching it or giving it a new secret, and only once. */
   secret?: string;
@@ -227,7 +229,7 @@ export interface Run {
 export const isRunning = (r: Pick<Run, "state">) => r.state === "queued" || r.state === "running";
 
 export const computeTargets = async (ws: string) => (await json<{ items: Compute[] }>(send("GET", `${W(ws)}/compute/targets`))).items;
-export const runStatement = (ws: string, sql: string, limit: number, waitS = 30) => json<Run>(send("POST", `${W(ws)}/sql/statements`, { sql, limit, wait_s: waitS }));
+export const runStatement = (ws: string, sql: string, limit: number, waitS = 30, target?: string) => json<Run>(send("POST", `${W(ws)}/sql/statements`, { sql, limit, wait_s: waitS, ...(target ? { target } : {}) }));
 export const submitJob = (ws: string, b: { title: string; script: string; inputs: string[]; output: string; timeout_s?: number }) => json<Run>(send("POST", `${W(ws)}/runs`, b));
 export const runs = async (ws: string, kind?: "sql" | "job", limit = 50) => (await json<{ items: Run[] }>(send("GET", `${W(ws)}/runs?limit=${limit}${kind ? `&kind=${kind}` : ""}`))).items;
 export const run = (ws: string, id: string) => json<Run>(send("GET", `${W(ws)}/runs/${enc(id)}`));
@@ -235,6 +237,16 @@ export const cancelRun = (ws: string, id: string) => json<Run>(send("POST", `${W
 
 // Compute, in the account console
 export const attachedCompute = async (org: string) => (await json<{ items: Compute[] }>(send("GET", `/api/v1/orgs/${enc(org)}/compute/targets`))).items;
+export interface Provider {
+  id: "serverless" | "machine";
+  name: string;
+  description: string;
+  available: boolean;
+  max_memory_mb: number;
+  max_cpu_millis: number;
+  idle_stop_s: number;
+}
+export const providers = async (org: string) => (await json<{ items: Provider[] }>(send("GET", `/api/v1/orgs/${enc(org)}/compute/providers`))).items;
 export const attachCompute = (org: string, b: { name: string; kind?: "agent" | "serverless"; endpoint?: string; max_memory_mb: number; max_cpu_millis: number }) => json<Compute>(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets`, b));
 export const newComputeSecret = (org: string, id: string) => json<Compute>(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}/secret`, {}));
 export const detachCompute = (org: string, id: string) => none(send("DELETE", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}`));

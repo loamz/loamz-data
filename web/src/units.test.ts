@@ -1,4 +1,5 @@
 import { profileSql } from "@/components/TableTab";
+import { IDLE_STOP_MS, computeState, sizeLabel } from "./computeState";
 import { describe, expect, it } from "vitest";
 import { readError } from "./api";
 import { expiryOf } from "./auth";
@@ -177,5 +178,23 @@ describe("profileSql", () => {
     expect(sql).toContain('count("we""ird") AS n1');
     expect(sql).not.toContain("blob");
     expect(sql.endsWith("FROM shop.main.sales4")).toBe(true);
+  });
+});
+
+describe("computeState", () => {
+  const now = 1_000_000;
+  it("keeps a serverless warehouse running for a minute after its last statement, then stopped", () => {
+    const base = { kind: "serverless" as const, online: true };
+    expect(computeState({ ...base, last_used_ms: now - 5_000 }, now)).toBe("running");
+    expect(computeState({ ...base, last_used_ms: now - IDLE_STOP_MS - 1 }, now)).toBe("stopped");
+    expect(computeState({ ...base, last_used_ms: 0 }, now)).toBe("stopped");
+  });
+  it("shows a machine as running only while its agent answers", () => {
+    expect(computeState({ kind: "agent", online: true, last_used_ms: 0 }, now)).toBe("running");
+    expect(computeState({ kind: "agent", online: false, last_used_ms: now }, now)).toBe("offline");
+  });
+  it("words the size", () => {
+    expect(sizeLabel({ max_cpu_millis: 1000, max_memory_mb: 2048 })).toBe("1 CPU · 2 GB");
+    expect(sizeLabel({ max_cpu_millis: 4000, max_memory_mb: 1536 })).toBe("4 CPUs · 1.5 GB");
   });
 });

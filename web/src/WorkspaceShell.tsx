@@ -66,7 +66,7 @@ export function WorkspaceShell({ ws }: { ws: string }) {
             {route.screen === "catalog" && <Catalog ws={ws} id={route.id} me={me} />}
             <Suspense fallback={null}>
               {route.screen === "sql" && <SqlEditor ws={ws} />}
-            {route.screen === "compute" && <Compute ws={ws} />}
+            {route.screen === "compute" && <Compute ws={ws} me={me} />}
             </Suspense>
             {route.screen === "settings" && <Settings ws={ws} me={me} />}
           </>

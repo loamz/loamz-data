@@ -118,7 +118,7 @@ pub async fn add_serverless(
     identity: &Identity,
     org: &str,
     name: &str,
-    endpoint: &str,
+    endpoint: Option<&str>,
     max_memory_mb: i64,
     max_cpu_millis: i64,
 ) -> Result<Target> {
@@ -134,6 +134,10 @@ pub async fn add_serverless(
             "a name is words, digits, spaces and dashes, up to 64 characters".into(),
         ));
     }
+    let endpoint = endpoint
+        .filter(|e| !e.is_empty())
+        .or(app.serverless_endpoint.as_deref())
+        .ok_or_else(|| Error::Invalid("name the endpoint: this server has none configured (LOAMZ_DATA_SERVERLESS_ENDPOINT)".into()))?;
     let url = reqwest::Url::parse(endpoint)
         .map_err(|_| Error::Invalid("the address is not a URL".into()))?;
     if url.scheme() != "https" || url.host_str().is_none() || !url.username().is_empty() {
@@ -176,6 +180,51 @@ pub async fn add_serverless(
     .await?;
     uow.commit().await?;
     Ok(target)
+}
+
+/// A kind of compute this server can create for an organization.
+pub struct Provider {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub description: &'static str,
+    pub available: bool,
+    pub max_memory_mb: i64,
+    pub max_cpu_millis: i64,
+    pub idle_stop_s: i64,
+}
+
+/// What compute can be created here: a serverless SQL warehouse (when the server has its endpoint and token), and a machine of
+/// the organization's own that connects out (always).
+#[must_use]
+pub fn providers(app: &App) -> Vec<Provider> {
+    vec![
+        Provider {
+            id: "serverless",
+            name: "Serverless SQL warehouse",
+            description: "Starts when a statement arrives and stops after a minute with nothing to do. Statements over data classified normal only.",
+            available: app.serverless_token.is_some() && app.serverless_endpoint.is_some(),
+            max_memory_mb: 2048,
+            max_cpu_millis: 1000,
+            idle_stop_s: 60,
+        },
+        Provider {
+            id: "machine",
+            name: "Your own machine",
+            description: "A server you run connects out to this one and takes work in a sandbox. Nothing is opened on it.",
+            available: true,
+            max_memory_mb: 262_144,
+            max_cpu_millis: 64_000,
+            idle_stop_s: 0,
+        },
+    ]
+}
+
+/// When each of an organization's compute last finished some work, by target id.
+///
+/// # Errors
+/// The database could not be read.
+pub async fn last_used(app: &App, org: &str) -> Result<std::collections::HashMap<String, i64>> {
+    store::last_used(app.db.pool(), org).await
 }
 
 /// Every serverless target (for the provider worker).

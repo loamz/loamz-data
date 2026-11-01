@@ -1,8 +1,11 @@
-import { Cpu, Play, Plus, Square } from "lucide-react";
+import { Cpu, Play, Plus, Server, Square, TerminalSquare, Trash2, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Badge, Button, Dialog, DialogContent, Page, PageEmpty, Segmented, Tabs, TabsContent, TabsList, TabsTrigger, toast } from "@/design";
+import { Badge, Button, Dialog, DialogContent, Page, PageEmpty, Segmented, Tabs, TabsContent, TabsList, TabsTrigger, confirmAction, toast } from "@/design";
 import * as api from "@/api";
+import { CreateCompute } from "@/components/CreateCompute";
 import { NewJob } from "@/components/NewJob";
+import { computeState, sizeLabel, stateLabel, stateNote } from "@/computeState";
+import { go } from "@/route";
 import { when } from "@/format";
 import { useLoad } from "@/hooks";
 import { principalLabel } from "@/principals";
@@ -12,36 +15,51 @@ const words = (s: api.RunState) => s.replace("_", " ");
 const took = (r: api.Run) => (r.started_ms && r.finished_ms ? `${Math.max(0, Math.round((r.finished_ms - r.started_ms) / 100) / 10)} s` : "");
 
 /** Jobs and statements that have run here, and the compute they run on. */
-export function Compute({ ws }: { ws: string }) {
+export function Compute({ ws, me }: { ws: string; me: api.Me | undefined }) {
+  const info = me?.workspaces.find((w) => w.id === ws);
+  const [making, setMaking] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const [kind, setKind] = useState<"job" | "sql" | "all">("job");
   const [creating, setCreating] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const runs = useLoad(() => api.runs(ws, kind === "all" ? undefined : kind, 50), `${ws}/${kind}`);
   const targets = useLoad(() => api.computeTargets(ws), ws);
 
-  // While anything is queued or running the list keeps itself current.
+  // While anything is queued or running the lists keep themselves current, and a warehouse notices it has gone idle.
   const live = (runs.data ?? []).some(api.isRunning);
   useEffect(() => {
-    if (!live) return;
-    const t = setInterval(runs.reload, 2500);
+    const t = setInterval(() => {
+      setNow(Date.now());
+      if (live) {
+        runs.reload();
+        targets.reload();
+      }
+    }, live ? 2500 : 5000);
     return () => clearInterval(t);
-  }, [live, runs.reload]);
+  }, [live, runs.reload, targets.reload]);
 
   const items = runs.data ?? [];
   return (
     <Page
       title="Compute"
-      subtitle="Jobs and statements run on compute attached to your organization, each in a sandbox of its own."
+      subtitle="Where statements and jobs run: serverless SQL warehouses that start when needed, and machines of your own. Each run is in a sandbox of its own."
       actions={
-        <Button variant="primary" onClick={() => setCreating(true)}>
-          <Plus /> New job
-        </Button>
+        <>
+          {info?.admin && (
+            <Button variant="primary" onClick={() => setMaking(true)}>
+              <Plus /> Create compute
+            </Button>
+          )}
+          <Button variant="secondary" onClick={() => setCreating(true)}>
+            <Plus /> New job
+          </Button>
+        </>
       }
     >
-      <Tabs defaultValue="runs" className="space-y-4">
+      <Tabs defaultValue="compute" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="runs">Jobs and runs</TabsTrigger>
           <TabsTrigger value="compute">Compute</TabsTrigger>
+          <TabsTrigger value="runs">Jobs and runs</TabsTrigger>
         </TabsList>
 
         <TabsContent value="runs" className="space-y-3">
@@ -72,25 +90,70 @@ export function Compute({ ws }: { ws: string }) {
 
         <TabsContent value="compute" className="space-y-3">
           {(targets.data ?? []).length === 0 && !targets.loading ? (
-            <PageEmpty icon={Cpu} title="No compute is attached">An account admin attaches a machine in the account console and starts its agent. Nothing can run until then.</PageEmpty>
+            <PageEmpty icon={Cpu} title="No compute yet" action={info?.admin ? <Button variant="primary" onClick={() => setMaking(true)}><Plus /> Create compute</Button> : undefined}>
+              {info?.admin ? "Create a serverless SQL warehouse (it starts when a statement arrives) or attach a machine of your own. Nothing can run until then." : "An admin of this workspace creates compute. Nothing can run until then."}
+            </PageEmpty>
           ) : (
-            <div className="divide-y divide-border rounded-xl border border-border bg-background/40">
-              {(targets.data ?? []).map((c) => (
-                <div key={c.id} className="flex items-center gap-3 px-4 py-3">
-                  <Cpu className="shrink-0 text-muted" aria-hidden />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium text-foreground">{c.name}</span>
-                    <span className="block text-xs text-muted">Up to {c.max_memory_mb.toLocaleString()} MB and {c.max_cpu_millis / 1000} CPU{c.max_cpu_millis === 1000 ? "" : "s"} per run{c.last_seen_ms ? ` · last heard ${when(c.last_seen_ms)}` : " · never connected"}</span>
-                  </span>
-                  <Badge tone="neutral">{c.kind === "serverless" ? "serverless" : "machine"}</Badge>
-                  <Badge tone={c.online ? "success" : "neutral"}>{c.online ? (c.kind === "serverless" ? "ready" : "online") : "offline"}</Badge>
-                </div>
-              ))}
+            <div className="overflow-hidden rounded-xl border border-border bg-background/40">
+              <div className="hidden grid-cols-[minmax(0,2fr)_9rem_8rem_9rem_auto] gap-3 border-b border-border px-4 py-2 text-2xs font-medium uppercase tracking-wide text-muted md:grid">
+                <span>Name</span>
+                <span>Type</span>
+                <span>State</span>
+                <span>Size</span>
+                <span className="w-24 text-right">Last used</span>
+              </div>
+              <div className="divide-y divide-border">
+                {(targets.data ?? []).map((c) => {
+                  const state = computeState(c, now);
+                  const Icon = c.kind === "serverless" ? Zap : Server;
+                  return (
+                    <div key={c.id} className="grid grid-cols-1 items-center gap-1 px-4 py-3 md:grid-cols-[minmax(0,2fr)_9rem_8rem_9rem_auto] md:gap-3">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <Icon className="shrink-0 text-muted" aria-hidden />
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-medium text-foreground">{c.name}</span>
+                          {stateNote[state] && <span className="block truncate text-2xs text-muted">{stateNote[state]}</span>}
+                        </span>
+                      </span>
+                      <span className="text-xs text-muted">{c.kind === "serverless" ? "Serverless SQL warehouse" : "Machine"}</span>
+                      <span>
+                        <Badge tone={state === "running" ? "success" : "neutral"}>{stateLabel[state]}</Badge>
+                      </span>
+                      <span className="text-xs text-muted">{sizeLabel(c)}</span>
+                      <span className="flex items-center justify-end gap-1">
+                        <span className="w-16 text-right text-2xs text-muted">{c.last_used_ms ? when(c.last_used_ms) : "never"}</span>
+                        <Button variant="secondary" size="sm" onClick={() => go({ screen: "sql", ws })}>
+                          <TerminalSquare /> Query
+                        </Button>
+                        {info?.admin && (
+                          <Button
+                            variant="danger"
+                            size="icon-sm"
+                            aria-label={`Delete ${c.name}`}
+                            onClick={async () => {
+                              if (!(await confirmAction({ title: `Delete ${c.name}?`, description: "What is waiting or running on it fails.", confirmLabel: "Delete", danger: true }))) return;
+                              try {
+                                await api.detachCompute(info.org_id, c.id);
+                                targets.reload();
+                              } catch (e) {
+                                toast.error("Could not delete it", (e as Error).message);
+                              }
+                            }}
+                          >
+                            <Trash2 />
+                          </Button>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </TabsContent>
       </Tabs>
 
+      {info && <CreateCompute org={info.org_id} open={making} onOpenChange={setMaking} onCreated={targets.reload} />}
       <NewJob ws={ws} open={creating} onOpenChange={setCreating} onStarted={(r) => { toast.success("Job started"); setKind("job"); runs.reload(); setOpen(r.id); }} />
       <RunDialog ws={ws} id={open} onClose={() => { setOpen(null); runs.reload(); }} />
     </Page>
