@@ -185,8 +185,24 @@ export interface TableInfo {
   snapshots: { id: string; at_ms: number; operation?: string; records?: string; files?: string }[];
   current_snapshot: string;
   properties: Record<string, string>;
+  /** About the whole table, from its current snapshot: no data read. */
+  stats: { records: number | null; data_files: number | null; size_bytes: number | null; at_ms: number | null };
 }
 export const createTable = (ws: string, b: { parent_id: string; name: string; columns: Column[]; classification?: string }) => json<{ id: string }>(send("POST", `${W(ws)}/tables`, b));
+export interface ColumnStat {
+  id: number;
+  name: string;
+  values: number;
+  nulls: number;
+  min: string | null;
+  max: string | null;
+}
+export interface TableStats {
+  records: number;
+  data_files: number;
+  columns: ColumnStat[];
+}
+export const tableStats = (ws: string, id: string) => json<TableStats>(send("GET", `${W(ws)}/tables/${enc(id)}/stats`));
 export const tableInfo = (ws: string, id: string) => json<TableInfo>(send("GET", `${W(ws)}/tables/${enc(id)}`));
 
 // Compute

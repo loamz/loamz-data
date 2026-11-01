@@ -12,6 +12,8 @@ pub struct App {
     pub verifier: Verifier,
     /// Issues short-lived credentials for some folders of the bucket, for machines that read data themselves.
     pub issuer: Option<Issuer>,
+    /// Table metadata files, which never change once written: read from the bucket once.
+    pub metadata_cache: std::sync::Mutex<super::cache::BoundedCache>,
     pub max_upload: u64,
     /// The bearer token serverless endpoints accept, read from a mounted file. None: serverless compute is off.
     pub serverless_token: Option<String>,
@@ -34,6 +36,7 @@ impl App {
             verifier: Verifier::new(&settings.issuer)
                 .with_agent_clients(settings.agent_clients.clone()),
             issuer: settings.storage.issuer()?,
+            metadata_cache: std::sync::Mutex::new(super::cache::BoundedCache::new(64 << 20)),
             max_upload: settings.max_upload_bytes,
             serverless_token: settings.serverless_token()?,
             serverless_endpoint: settings.serverless_endpoint.clone(),

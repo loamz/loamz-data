@@ -1,5 +1,5 @@
 import { Copy, Database, Eye, Sigma } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Badge, Button, PageEmpty, toast } from "@/design";
 import * as api from "@/api";
 import { useLoad } from "@/hooks";
@@ -7,7 +7,7 @@ import { ResultGrid } from "@/components/ResultGrid";
 import { ComputePicker, useCompute, useWaitingOn } from "@/components/ComputePicker";
 import { elapsedText, useClock } from "@/clock";
 import { useStatement } from "@/components/useStatement";
-import { when } from "@/format";
+import { bytes, when } from "@/format";
 import { centralOrigin } from "@/site";
 
 const typeText = (t: string | object) => (typeof t === "string" ? t : (t as { type?: string }).type ?? "nested");
@@ -15,13 +15,6 @@ const typeText = (t: string | object) => (typeof t === "string" ? t : (t as { ty
 /** What a table is: its columns and its history. The data is read with SQL, or by any Iceberg client through this workspace's catalog. */
 const quote = (n: string) => `"${n.replace(/"/g, '""')}"`;
 const scalar = (t: string | object) => typeof t === "string" && !/^(binary|fixed)/.test(t);
-
-/** A statement that profiles every plain column in one pass: how many rows have a value, how many differ, the smallest and the largest. */
-export function profileSql(full: string, columns: api.TableInfo["columns"]): string {
-  const cols = columns.filter((c) => scalar(c.type));
-  const parts = cols.flatMap((c, i) => [`count(${quote(c.name)}) AS n${i}`, `approx_count_distinct(${quote(c.name)}) AS d${i}`, `CAST(min(${quote(c.name)}) AS VARCHAR) AS lo${i}`, `CAST(max(${quote(c.name)}) AS VARCHAR) AS hi${i}`]);
-  return `SELECT count(*) AS total${parts.length ? ", " + parts.join(", ") : ""} FROM ${full}`;
-}
 
 /** The first rows of a table, read as soon as the tab opens (on the workspace's compute; a stopped warehouse starts, which takes a few seconds). */
 export function SampleData({ ws, full }: { ws: string; full: string | null }) {
@@ -67,52 +60,57 @@ export function SampleData({ ws, full }: { ws: string; full: string | null }) {
   );
 }
 
-function Profile({ ws, full, columns }: { ws: string; full: string; columns: api.TableInfo["columns"] }) {
-  const s = useStatement(ws);
-  const compute = useCompute(ws);
-  const now = useClock(s.running);
-  const cols = columns.filter((c) => scalar(c.type));
-  const row = s.run?.state === "succeeded" ? s.run.result?.rows[0] : undefined;
+/** Counts and ranges of each column, read from what the table's files recorded about themselves: no compute, a moment's wait. */
+function Profile({ ws, id }: { ws: string; id: string }) {
+  const stats = useLoad(() => api.tableStats(ws, id), `${ws}/${id}/stats`);
+  const t0 = useRef(Date.now());
+  const took = stats.data ? elapsedText(Date.now() - t0.current) : "";
   return (
     <section>
       <div className="mb-2 flex items-center gap-2">
-        <h3 className="flex-1 text-xs font-medium text-foreground">Profile</h3>
-        <ComputePicker compute={compute} />
-        <Button variant="secondary" size="sm" disabled={s.running || !compute.target} onClick={() => void s.start(profileSql(full, columns), 1, compute.target)}>
-          <Sigma /> {s.running ? `Reading… ${s.startedAt ? elapsedText(now - s.startedAt) : ""}` : row ? "Profile again" : "Profile columns"}
-        </Button>
+        <h3 className="flex-1 text-xs font-medium text-foreground">Columns</h3>
+        {stats.data && <span className="text-2xs text-muted">from the table's metadata · {took}</span>}
       </div>
-      {s.error && <p className="text-xs text-danger">{s.error}</p>}
-      {row ? (
+      {stats.error && !stats.data ? (
+        <p className="text-xs text-danger">{stats.error.message}</p>
+      ) : !stats.data ? (
+        <p className="text-xs text-muted">Reading the table's metadata…</p>
+      ) : (
         <div className="overflow-hidden rounded-xl border border-border">
-          <p className="border-b border-border px-4 py-2 text-xs text-muted">{Number(row[0]).toLocaleString()} rows · {elapsedText(s.tookMs ?? 0)}</p>
           <table className="w-full text-left text-xs">
             <thead className="text-muted">
               <tr>
                 <th className="px-4 py-1.5 font-medium">Column</th>
-                <th className="px-2 py-1.5 text-right font-medium">With a value</th>
-                <th className="px-2 py-1.5 text-right font-medium">Different (about)</th>
+                <th className="px-2 py-1.5 text-right font-medium">Values</th>
+                <th className="px-2 py-1.5 text-right font-medium">Empty</th>
                 <th className="px-2 py-1.5 font-medium">Smallest</th>
                 <th className="px-2 py-1.5 font-medium">Largest</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {cols.map((c, i) => (
+              {stats.data.columns.map((c) => (
                 <tr key={c.id}>
                   <td className="px-4 py-1.5 font-mono text-foreground">{c.name}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{Number(row[1 + i * 4]).toLocaleString()}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{Number(row[2 + i * 4]).toLocaleString()}</td>
-                  <td className="max-w-40 truncate px-2 py-1.5">{String(row[3 + i * 4] ?? "")}</td>
-                  <td className="max-w-40 truncate px-2 py-1.5">{String(row[4 + i * 4] ?? "")}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{c.values.toLocaleString()}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{c.nulls.toLocaleString()}</td>
+                  <td className="max-w-40 truncate px-2 py-1.5">{c.min ?? ""}</td>
+                  <td className="max-w-40 truncate px-2 py-1.5">{c.max ?? ""}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      ) : (
-        !s.error && <p className="text-xs text-muted">{s.running ? "Running on the compute…" : "Counts, distinct values and the range of each column, in one pass."}</p>
       )}
     </section>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-2xs uppercase tracking-wide text-muted">{label}</p>
+      <p className="text-sm font-medium tabular-nums text-foreground">{value}</p>
+    </div>
   );
 }
 
@@ -131,8 +129,14 @@ export function TableTab({ ws, id, catalog, full }: { ws: string; id: string; ca
 ATTACH '${catalog}' AS ${catalog} (TYPE iceberg, ENDPOINT '${centralOrigin}/api/v1/workspaces/${ws}/iceberg', TOKEN '<your access token>');`;
   return (
     <div className="space-y-6">
+      <section className="flex flex-wrap gap-x-8 gap-y-2" aria-label="About this table">
+        <Fact label="Rows" value={t.stats.records === null ? "—" : t.stats.records.toLocaleString()} />
+        <Fact label="Files" value={t.stats.data_files === null ? "—" : t.stats.data_files.toLocaleString()} />
+        <Fact label="Size" value={t.stats.size_bytes === null ? "—" : bytes(t.stats.size_bytes)} />
+        <Fact label="Last written" value={t.stats.at_ms ? when(t.stats.at_ms) : "never"} />
+      </section>
       <section>
-        <h3 className="mb-2 text-xs font-medium text-foreground">Columns</h3>
+        <h3 className="mb-2 text-xs font-medium text-foreground">Schema</h3>
         <div className="divide-y divide-border rounded-xl border border-border bg-background/40">
           {t.columns.map((c) => (
             <div key={c.id} className="flex items-center gap-3 px-4 py-2">
@@ -143,7 +147,7 @@ ATTACH '${catalog}' AS ${catalog} (TYPE iceberg, ENDPOINT '${centralOrigin}/api/
           ))}
         </div>
       </section>
-      {full && <Profile ws={ws} full={full} columns={t.columns} />}
+      <Profile ws={ws} id={id} />
       <section>
         <h3 className="mb-2 text-xs font-medium text-foreground">History</h3>
         {t.snapshots.length === 0 ? (

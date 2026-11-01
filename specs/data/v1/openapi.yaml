@@ -1015,6 +1015,27 @@ paths:
           $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/tables/{id}/stats:
+    get:
+      summary: Per-column counts, nulls and ranges from what the table's files recorded about themselves; no data is read and no compute is used. Needs SELECT.
+      parameters:
+      - name: ws
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
   /api/v1/workspaces/{ws}/tables/{id}:
     get:
       summary: A table's columns and snapshots. Needs only that the caller can see it.

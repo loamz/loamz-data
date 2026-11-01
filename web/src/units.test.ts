@@ -1,4 +1,3 @@
-import { profileSql } from "@/components/TableTab";
 import { elapsedText } from "./clock";
 import { IDLE_STOP_MS, computeState, sizeLabel } from "./computeState";
 import { describe, expect, it } from "vitest";
@@ -168,19 +167,6 @@ describe("results", () => {
   });
 });
 
-describe("profileSql", () => {
-  it("profiles each plain column in one statement and quotes names", () => {
-    const sql = profileSql("shop.main.sales4", [
-      { id: 1, name: "id", type: "long", required: false },
-      { id: 2, name: 'we"ird', type: "string", required: false },
-      { id: 3, name: "blob", type: "binary", required: false },
-    ]);
-    expect(sql.startsWith("SELECT count(*) AS total, count(\"id\") AS n0")).toBe(true);
-    expect(sql).toContain('count("we""ird") AS n1');
-    expect(sql).not.toContain("blob");
-    expect(sql.endsWith("FROM shop.main.sales4")).toBe(true);
-  });
-});
 
 describe("computeState", () => {
   const now = 1_000_000;
