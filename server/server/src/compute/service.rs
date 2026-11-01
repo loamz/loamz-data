@@ -719,21 +719,23 @@ pub async fn get(app: &App, ctx: &Ctx<'_>, id: &str) -> Result<Run> {
     }
 }
 
-/// The workspace's runs, newest first: the person's own, or everyone's for an admin.
+/// The workspace's runs, newest first: the person's own, or everyone's for an admin (who may narrow it to one person).
 ///
 /// # Errors
 /// The database could not be read.
-pub async fn list(app: &App, ctx: &Ctx<'_>, kind: Option<&str>, limit: i64) -> Result<Vec<Run>> {
-    let by = if ctx.standing.is_admin() {
-        None
-    } else {
-        Some(ctx.identity.subject.as_str())
-    };
+pub async fn list(
+    app: &App,
+    ctx: &Ctx<'_>,
+    mut filter: store::RunFilter,
+    limit: i64,
+) -> Result<Vec<Run>> {
+    if !ctx.standing.is_admin() {
+        filter.by = Some(ctx.identity.subject.clone());
+    }
     store::runs_list(
         app.db.pool(),
         &ctx.workspace.id,
-        by,
-        kind,
+        &filter,
         limit.clamp(1, 200),
     )
     .await

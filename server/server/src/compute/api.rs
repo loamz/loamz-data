@@ -51,6 +51,7 @@ fn run_view(r: &Run, detail: bool) -> Value {
         "requested_by": r.requested_by, "on_behalf_of": r.on_behalf_of, "target_id": r.target_id,
         "created_ms": r.created_ms, "started_ms": r.started_ms, "finished_ms": r.finished_ms,
         "error": r.error, "exit_code": r.exit_code, "cancelling": r.cancel && !is_terminal(&r.state),
+        "queued_ms": waited(r, true), "run_ms": waited(r, false),
     });
     if detail {
         let mut spec = json_of(&r.spec);
@@ -63,6 +64,21 @@ fn run_view(r: &Run, detail: bool) -> Value {
         v["result"] = json_of(&r.result);
     }
     v
+}
+
+/// How long a run waited before it started (`queued`), or how long it ran (once it has ended); `-1` while that is not known yet.
+fn waited(r: &Run, queued: bool) -> i64 {
+    if queued {
+        if r.started_ms > 0 {
+            r.started_ms - r.created_ms
+        } else {
+            -1
+        }
+    } else if r.started_ms > 0 && r.finished_ms > 0 {
+        r.finished_ms - r.started_ms
+    } else {
+        -1
+    }
 }
 
 fn target_view(t: &Target, now: i64, last_run_ms: i64, unfinished_since: i64) -> Value {
@@ -175,6 +191,13 @@ async fn submit_job(
 struct ListParams {
     kind: Option<String>,
     limit: Option<i64>,
+    /// Only what this person asked for (an admin's narrowing; everyone else sees only their own anyway).
+    by: Option<String>,
+    target: Option<String>,
+    state: Option<String>,
+    since_ms: Option<i64>,
+    /// The page cursor: the `created_ms` of the oldest run of the page before.
+    before_ms: Option<i64>,
 }
 
 async fn list_runs(
@@ -185,7 +208,21 @@ async fn list_runs(
     if p.kind.as_deref().is_some_and(|k| k != "sql" && k != "job") {
         return Err(Error::Invalid("kind must be sql or job".into()));
     }
-    let runs = service::list(&app, &ctx(&c), p.kind.as_deref(), p.limit.unwrap_or(50)).await?;
+    if p.state
+        .as_deref()
+        .is_some_and(|s| !crate::compute::model::STATES.contains(&s))
+    {
+        return Err(Error::Invalid("unknown state".into()));
+    }
+    let filter = super::store::RunFilter {
+        by: p.by,
+        kind: p.kind,
+        target: p.target,
+        state: p.state,
+        since_ms: p.since_ms,
+        before_ms: p.before_ms,
+    };
+    let runs = service::list(&app, &ctx(&c), filter, p.limit.unwrap_or(50)).await?;
     Ok(Json(
         json!({"items": runs.iter().map(|r| run_view(r, false)).collect::<Vec<_>>()}),
     ))
