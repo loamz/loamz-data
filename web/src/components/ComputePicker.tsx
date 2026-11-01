@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Select } from "@/design";
+import { Button, Dialog, DialogContent, DialogFooter, Select, toast } from "@/design";
 import * as api from "@/api";
 import { computeState, stateLabel } from "@/computeState";
 import { useLoad } from "@/hooks";
@@ -43,10 +43,12 @@ export function useCompute(ws: string) {
     [ws],
   );
   const current = all.find((c) => c.id === target);
-  return { online, all, current, target: target || undefined, choose, reload: targets.reload, loaded: targets.data !== undefined };
+  // What a person may run on is only what is running: a stopped warehouse is started by hand, never by a statement arriving.
+  const running = current ? computeState(current, Date.now()) === "running" || current.starting : false;
+  return { online, all, current, running, target: target || undefined, choose, reload: targets.reload, loaded: targets.data !== undefined };
 }
 
-/** What the compute in use is doing while a statement waits on it: the first one after a stop starts it, and says so. */
+/** What the compute in use is doing while a statement waits on it. */
 export function useWaitingOn(compute: ReturnType<typeof useCompute>, running: boolean): string {
   const { current, reload } = compute;
   useEffect(() => {
@@ -70,5 +72,57 @@ export function ComputePicker({ compute, className = "w-52" }: { compute: Return
       onValueChange={choose}
       options={all.map((c) => ({ value: c.id, label: `${c.name} · ${c.kind === "serverless" ? "serverless" : "machine"} · ${stateLabel[computeState(c, Date.now())]}` }))}
     />
+  );
+}
+
+/** Databricks' "Attach to an existing compute resource": pick one, and start it if it is stopped, in one step. */
+export function AttachCompute({ ws, compute, open, onOpenChange }: { ws: string; compute: ReturnType<typeof useCompute>; open: boolean; onOpenChange: (o: boolean) => void }) {
+  const me = useLoad(api.me, "me");
+  const info = me.data?.workspaces.find((w) => w.id === ws);
+  const [pick, setPick] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) setPick(compute.target ?? compute.all[0]?.id ?? "");
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  const chosen = compute.all.find((c) => c.id === pick);
+  const stopped = chosen ? computeState(chosen, Date.now()) === "stopped" : false;
+  const canStart = Boolean(info?.admin);
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent title="Attach to an existing compute resource">
+        <div className="mt-4 space-y-3">
+          <Select
+            aria-label="Compute"
+            placeholder={compute.all.length === 0 ? "No compute yet" : "Select compute"}
+            value={pick}
+            onValueChange={setPick}
+            options={compute.all.map((c) => ({ value: c.id, label: `${c.name} · ${stateLabel[computeState(c, Date.now())]}` }))}
+          />
+          {chosen && stopped && !canStart && <p className="text-xs text-muted">{chosen.name} is stopped. A workspace admin has to start it.</p>}
+          <DialogFooter>
+            <Button
+              variant="primary"
+              disabled={!chosen || busy || (stopped && !canStart)}
+              onClick={async () => {
+                if (!chosen) return;
+                setBusy(true);
+                try {
+                  if (stopped && info) await api.startCompute(info.org_id, chosen.id);
+                  compute.choose(chosen.id);
+                  compute.reload();
+                  onOpenChange(false);
+                } catch (e) {
+                  toast.error("Could not start it", (e as Error).message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {stopped ? "Start and Close" : "Attach and Close"}
+            </Button>
+          </DialogFooter>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

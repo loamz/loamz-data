@@ -252,7 +252,7 @@ async fn sql_is_checked_before_it_runs(s: Server) {
         r.json()["detail"]
             .as_str()
             .unwrap()
-            .contains("no compute is answering")
+            .contains("no compute is running")
     );
     attach(&s).await;
 

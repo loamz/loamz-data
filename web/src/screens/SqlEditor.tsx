@@ -3,7 +3,7 @@ import { useCallback, useRef, useState } from "react";
 import { Badge, Button, Dialog, DialogContent, DialogFooter, Input, Select, TreePane, cn, toast } from "@/design";
 import * as api from "@/api";
 import { elapsedText, useClock } from "@/clock";
-import { ComputePicker, useCompute, useWaitingOn } from "@/components/ComputePicker";
+import { AttachCompute, ComputePicker, useCompute, useWaitingOn } from "@/components/ComputePicker";
 import { CodeEditor, type CodeEditorHandle } from "@/components/CodeEditor";
 import { ResultGrid } from "@/components/ResultGrid";
 import { SchemaBrowser } from "@/components/SchemaBrowser";
@@ -36,6 +36,7 @@ export function SqlEditor({ ws }: { ws: string }) {
   const picked = useCompute(ws);
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
   const [naming, setNaming] = useState<string | null>(null);
+  const [attaching, setAttaching] = useState(false);
   const handle = useRef<CodeEditorHandle | null>(null);
   const cancelling = useRef<Record<string, boolean>>({});
 
@@ -58,6 +59,10 @@ export function SqlEditor({ ws }: { ws: string }) {
     if (!sql) return;
     if (!picked.target) {
       toast.error("Choose a compute first", "Pick the compute this statement should run on, next to Run.");
+      return;
+    }
+    if (!picked.running) {
+      setAttaching(true);
       return;
     }
     const id = tab.id;
@@ -154,7 +159,7 @@ export function SqlEditor({ ws }: { ws: string }) {
               <Square /> Stop
             </Button>
           ) : (
-            <Button variant="primary" onClick={() => void run(handle.current?.selection() ?? null)} disabled={!tab.sql.trim() || !picked.target} title={picked.target ? undefined : "Choose a compute first"}>
+            <Button variant="primary" onClick={() => void run(handle.current?.selection() ?? null)} disabled={!tab.sql.trim() || !picked.target} title={picked.target ? (picked.running ? undefined : "Start the compute first") : "Choose a compute first"}>
               <Play /> Run
             </Button>
           )}
@@ -192,6 +197,7 @@ export function SqlEditor({ ws }: { ws: string }) {
         </div>
       </section>
 
+      <AttachCompute ws={ws} compute={picked} open={attaching} onOpenChange={setAttaching} />
       <Dialog open={naming !== null} onOpenChange={(o) => !o && setNaming(null)}>
         <DialogContent title="Save this query" description="Saved queries are yours; a workspace admin can see them too.">
           <form

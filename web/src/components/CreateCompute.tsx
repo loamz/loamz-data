@@ -104,7 +104,7 @@ export function CreateCompute({ org, open, onOpenChange, onCreated }: { org: str
           </label>
           {kind === "serverless" && chosen ? (
             <p className="text-xs text-muted">
-              {sizeLabel(chosen)} per statement. Stops {chosen.idle_stop_s} seconds after its last statement; the next one starts it again (the first takes about ten seconds).
+              {sizeLabel(chosen)} per statement. Starts when you start it, and stops {chosen.idle_stop_s} seconds after its last statement. Nothing starts it for you.
             </p>
           ) : (
             <div className="grid grid-cols-2 gap-3">

@@ -16,8 +16,8 @@ export function computeState(c: Pick<Compute, "kind" | "online" | "last_used_ms"
 export const stateLabel: Record<ComputeState, string> = { running: "Running", starting: "Starting", stopped: "Stopped", offline: "Offline" };
 export const stateNote: Record<ComputeState, string> = {
   running: "",
-  starting: "Starting: the first statement after a stop takes about ten seconds",
-  stopped: "Starts when a statement arrives",
+  starting: "Starting: this takes about ten seconds",
+  stopped: "Stopped: start it to run anything on it",
   offline: "Its agent is not answering",
 };
 

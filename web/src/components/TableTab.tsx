@@ -1,11 +1,11 @@
 import { Copy, Database, Eye } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Principal } from "@/components/Principal";
 import { Badge, Button, DataTable, DetailBlock, DetailRow, PageEmpty, Popover, PopoverContent, PopoverTrigger, WithRail, toast, type Column } from "@/design";
 import * as api from "@/api";
 import { useLoad } from "@/hooks";
 import { ResultGrid } from "@/components/ResultGrid";
-import { ComputePicker, useCompute, useWaitingOn } from "@/components/ComputePicker";
+import { AttachCompute, ComputePicker, useCompute, useWaitingOn } from "@/components/ComputePicker";
 import { elapsedText, useClock } from "@/clock";
 import { useStatement } from "@/components/useStatement";
 import { bytes, when } from "@/format";
@@ -24,12 +24,24 @@ export function SampleData({ ws, full }: { ws: string; full: string | null }) {
   const waited = s.startedAt ? elapsedText(now - s.startedAt) : "";
   const doing = useWaitingOn(compute, s.running);
   const { start } = s;
-  const { target, loaded } = compute;
-  // Read when the tab opens, and again when another compute is chosen.
+  const { target, loaded, running } = compute;
+  const [attaching, setAttaching] = useState(false);
+  // Read when the tab opens, and again when another compute is chosen: only on compute that is running. A stopped one is started
+  // by hand (Select compute), never by a read arriving.
   useEffect(() => {
-    if (full && loaded && target) void start(`SELECT * FROM ${full} LIMIT 100`, 100, target);
-  }, [full, start, target, loaded]);
+    if (full && loaded && target && running) void start(`SELECT * FROM ${full} LIMIT 100`, 100, target);
+  }, [full, start, target, loaded, running]);
   if (!full) return <p className="text-xs text-muted">This table's full name is still loading.</p>;
+  if (loaded && !running) {
+    return (
+      <>
+        <PageEmpty icon={Database} title="Sample data is not available without a running compute" action={<Button variant="secondary" onClick={() => setAttaching(true)}>Select compute</Button>}>
+          {compute.all.length === 0 ? "There is no compute yet. Create one on the Compute page." : target ? `${compute.current?.name ?? "The compute"} is stopped. Start it to read rows.` : "Choose a compute, and start it if it is stopped."}
+        </PageEmpty>
+        <AttachCompute ws={ws} compute={compute} open={attaching} onOpenChange={setAttaching} />
+      </>
+    );
+  }
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">

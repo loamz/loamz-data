@@ -43,10 +43,23 @@ impl Target {
         self.kind == SERVERLESS
     }
 
-    /// Serverless compute is started when work arrives, so it is always there to be asked.
+    /// A machine is online while its agent keeps asking for work. A serverless warehouse is always there to be asked: whether it is
+    /// running is [`Target::running`].
     #[must_use]
     pub fn online(&self, now: i64) -> bool {
         self.serverless() || self.last_seen_ms > 0 && now - self.last_seen_ms < ONLINE_MS
+    }
+
+    /// Whether work may be sent to it now. A machine must be online. A serverless warehouse must have been started (by hand, which
+    /// is a positive `last_seen_ms`) or used within its idle minute, and not stopped since: it never starts itself when work arrives.
+    #[must_use]
+    pub fn running(&self, last_run_ms: i64, now: i64) -> bool {
+        if !self.serverless() {
+            return self.online(now);
+        }
+        let used = last_run_ms.max(self.last_seen_ms.max(0));
+        let stopped = (-self.last_seen_ms).max(0);
+        used > 0 && stopped < used && now - used < IDLE_STOP_MS
     }
 }
 
@@ -253,6 +266,37 @@ mod tests {
             }
             .online(1),
             "never seen is not online"
+        );
+    }
+
+    #[test]
+    fn a_serverless_warehouse_runs_only_after_it_was_started_and_never_starts_itself() {
+        let w = |last_seen_ms| Target {
+            kind: SERVERLESS.into(),
+            last_seen_ms,
+            ..target()
+        };
+        let now = 1_000_000;
+        assert!(!w(0).running(0, now), "never started");
+        assert!(
+            w(now - 1000).running(0, now),
+            "started by hand a moment ago"
+        );
+        assert!(
+            !w(now - IDLE_STOP_MS - 1).running(0, now),
+            "idle past its minute"
+        );
+        assert!(
+            w(now - IDLE_STOP_MS - 1).running(now - 1000, now),
+            "used a moment ago"
+        );
+        assert!(
+            !w(-(now - 10)).running(now - 5000, now),
+            "stopped by hand after its last use"
+        );
+        assert!(
+            w(-(now - 10)).running(now - 5, now),
+            "used after being stopped, so it was started again"
         );
     }
 
