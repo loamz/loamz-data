@@ -265,6 +265,43 @@ pub async fn new_secret(app: &App, identity: &Identity, org: &str, id: &str) -> 
     })
 }
 
+/// Starts (`start`) or stops (`stop`) serverless compute now. A machine is started and stopped on the machine itself.
+///
+/// # Errors
+/// Not an account admin, no such compute, it is a machine, or the endpoint could not be reached.
+pub async fn power(app: &App, identity: &Identity, org: &str, id: &str, start: bool) -> Result<()> {
+    orgs::require_admin(app, identity, org).await?;
+    let target = store::target_by_id(app.db.pool(), org, id)
+        .await?
+        .ok_or_else(|| Error::NotFound("no such compute".into()))?;
+    if !target.serverless() {
+        return Err(Error::Invalid(
+            "a machine is started and stopped on the machine itself".into(),
+        ));
+    }
+    let action = if start { "warm" } else { "stop" };
+    let outcome = super::serverless::signal(app, &target, action).await;
+    if outcome.is_ok() {
+        // For serverless compute `last_seen_ms` says when it was last started (positive) or stopped (negative) by hand.
+        let now = now_ms();
+        store::touch(app.db.pool(), id, if start { now } else { -now }).await?;
+    }
+    crate::governance::audit::service::record(
+        app,
+        org,
+        &Who::of(identity),
+        if start {
+            "compute.start"
+        } else {
+            "compute.stop"
+        },
+        &format!("compute {id}"),
+        if outcome.is_ok() { "ok" } else { "failed" },
+    )
+    .await?;
+    outcome
+}
+
 /// Removes a target. What was waiting or running on it fails.
 ///
 /// # Errors

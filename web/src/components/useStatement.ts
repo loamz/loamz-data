@@ -12,12 +12,12 @@ export function useStatement(ws: string) {
   const [state, setState] = useState<Statement>({ running: false });
   const busy = useRef(false);
   const start = useCallback(
-    async (sql: string, limit = 100) => {
+    async (sql: string, limit = 100, target?: string) => {
       if (busy.current) return;
       busy.current = true;
       setState({ running: true });
       try {
-        let r = await api.runStatement(ws, sql, limit, 0);
+        let r = await api.runStatement(ws, sql, limit, 0, target);
         setState({ running: true, run: r });
         while (api.isRunning(r)) {
           await new Promise((ok) => setTimeout(ok, 700));

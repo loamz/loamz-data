@@ -201,6 +201,8 @@ export interface Compute {
   last_seen_ms: number;
   /** When it last finished some work (0 for never): a serverless warehouse is running for a minute after this. */
   last_used_ms: number;
+  /** When a serverless warehouse was last stopped by hand (0 for never): it is stopped if that is after its last use. */
+  stopped_ms: number;
   created_ms: number;
   /** Only in the answer to attaching it or giving it a new secret, and only once. */
   secret?: string;
@@ -249,4 +251,6 @@ export interface Provider {
 export const providers = async (org: string) => (await json<{ items: Provider[] }>(send("GET", `/api/v1/orgs/${enc(org)}/compute/providers`))).items;
 export const attachCompute = (org: string, b: { name: string; kind?: "agent" | "serverless"; endpoint?: string; max_memory_mb: number; max_cpu_millis: number }) => json<Compute>(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets`, b));
 export const newComputeSecret = (org: string, id: string) => json<Compute>(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}/secret`, {}));
+export const startCompute = (org: string, id: string) => none(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}/start`, {}));
+export const stopCompute = (org: string, id: string) => none(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}/stop`, {}));
 export const detachCompute = (org: string, id: string) => none(send("DELETE", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}`));

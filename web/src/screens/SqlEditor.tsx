@@ -2,6 +2,7 @@ import { History, Play, Plus, Square, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Select, cn, toast } from "@/design";
 import * as api from "@/api";
+import { ComputePicker, useCompute } from "@/components/ComputePicker";
 import { CodeEditor, type CodeEditorHandle } from "@/components/CodeEditor";
 import { ResultGrid } from "@/components/ResultGrid";
 import { SchemaBrowser } from "@/components/SchemaBrowser";
@@ -32,8 +33,8 @@ export function SqlEditor({ ws }: { ws: string }) {
   const [state, setState] = useState(() => load(ws));
   const [names, setNames] = useState<string[]>([]);
   const [limit, setLimit] = useState("1000");
-  // Which compute to run on; "auto" lets the server choose (your own machines first, a serverless warehouse when nothing else answers).
-  const [target, setTarget] = useState("auto");
+  // Which compute to run on: shared with the table pages, and remembered here.
+  const picked = useCompute(ws);
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
   const [bottom, setBottom] = useState<"results" | "history">("results");
   const handle = useRef<CodeEditorHandle | null>(null);
@@ -41,15 +42,7 @@ export function SqlEditor({ ws }: { ws: string }) {
 
   const tab = state.tabs.find((t) => t.id === state.active) ?? state.tabs[0]!;
   const out = outcomes[tab.id];
-  const compute = useLoad(() => api.computeTargets(ws), ws);
-  // The organization's own machines come first, as the server picks them; a provider's endpoint when nothing else answers.
-  const online = (compute.data ?? []).filter((c) => c.online).sort((a, b) => Number(a.kind === "serverless") - Number(b.kind === "serverless"));
-
-  // The compute list is checked now and then, so the chip is honest without a reload.
-  useEffect(() => {
-    const t = setInterval(compute.reload, 15_000);
-    return () => clearInterval(t);
-  }, [compute.reload]);
+  const { online, loaded } = picked;
 
   const update = (next: typeof state) => {
     setState(next);
@@ -62,6 +55,10 @@ export function SqlEditor({ ws }: { ws: string }) {
   const run = async (selection: string | null) => {
     const sql = (selection ?? tab.sql).trim();
     if (!sql) return;
+    if (!picked.target) {
+      toast.error("Choose a compute first", "Pick the compute this statement should run on, next to Run.");
+      return;
+    }
     const id = tab.id;
     if (outcomes[id]?.running) return;
     cancelling.current[id] = false;
@@ -70,7 +67,7 @@ export function SqlEditor({ ws }: { ws: string }) {
     setBottom("results");
     try {
       // Asked without waiting, so the screen learns at once that the run is queued, then running, instead of after the wait.
-      let r = await api.runStatement(ws, sql, Number(limit), 0, target === "auto" ? undefined : target);
+      let r = await api.runStatement(ws, sql, Number(limit), 0, picked.target);
       set(id, { run: r });
       // Keep asking until it ends (a cold start can take ten seconds or more).
       while (api.isRunning(r) && !cancelling.current[id]) {
@@ -110,7 +107,7 @@ export function SqlEditor({ ws }: { ws: string }) {
   const insert = (name: string) => edit({ sql: tab.sql ? `${tab.sql.replace(/\s*$/, "")}\n${name}` : `SELECT * FROM ${name} LIMIT 100`, title: titleOf(tab.sql || name, tab.title) });
   const failed = out?.run && (out.run.state === "failed" || out.run.state === "timed_out");
   const result = out?.run?.state === "succeeded" ? out.run.result : null;
-  const noCompute = compute.data !== undefined && online.length === 0;
+  const noCompute = loaded && picked.all.length === 0;
 
   return (
     <div className="flex h-full min-h-0">
@@ -146,21 +143,14 @@ export function SqlEditor({ ws }: { ws: string }) {
               <Square /> Stop
             </Button>
           ) : (
-            <Button variant="primary" onClick={() => void run(handle.current?.selection() ?? null)} disabled={!tab.sql.trim()}>
+            <Button variant="primary" onClick={() => void run(handle.current?.selection() ?? null)} disabled={!tab.sql.trim() || !picked.target} title={picked.target ? undefined : "Choose a compute first"}>
               <Play /> Run
             </Button>
           )}
           <span className="hidden text-2xs text-muted-foreground sm:inline">Ctrl+Enter · runs the selection if there is one</span>
           <span className="flex-1" />
           <Select size="sm" className="w-32" aria-label="Rows to return" value={limit} onValueChange={setLimit} options={LIMITS} />
-          <Select
-            size="sm"
-            className="w-48"
-            aria-label="Compute"
-            value={target}
-            onValueChange={setTarget}
-            options={[{ value: "auto", label: online[0] ? `Auto · ${online[0].name}` : "Auto" }, ...online.map((c) => ({ value: c.id, label: `${c.name} · ${c.kind === "serverless" ? "serverless" : "machine"}` }))]}
-          />
+          <ComputePicker compute={picked} />
           {noCompute && (
             <button type="button" onClick={() => go({ screen: "compute", ws })} className="cursor-pointer" title="Create compute">
               <Badge tone="warning">No compute · create one</Badge>

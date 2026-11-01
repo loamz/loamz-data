@@ -65,8 +65,15 @@ fn run_view(r: &Run, detail: bool) -> Value {
     v
 }
 
-fn target_view(t: &Target, now: i64, last_used_ms: i64) -> Value {
-    json!({"id": t.id, "name": t.name, "kind": t.kind, "online": t.online(now), "max_memory_mb": t.max_memory_mb, "max_cpu_millis": t.max_cpu_millis, "last_seen_ms": t.last_seen_ms, "last_used_ms": last_used_ms, "created_ms": t.created_ms})
+fn target_view(t: &Target, now: i64, last_run_ms: i64) -> Value {
+    // A serverless target's `last_seen_ms` is when it was last started (positive) or stopped (negative) by hand; it is in use from
+    // then or from its last run, whichever is later.
+    let (started, stopped) = if t.serverless() {
+        (t.last_seen_ms.max(0), (-t.last_seen_ms).max(0))
+    } else {
+        (0, 0)
+    };
+    json!({"id": t.id, "name": t.name, "kind": t.kind, "online": t.online(now), "max_memory_mb": t.max_memory_mb, "max_cpu_millis": t.max_cpu_millis, "last_seen_ms": t.last_seen_ms.max(0), "last_used_ms": last_run_ms.max(started), "stopped_ms": stopped, "created_ms": t.created_ms})
 }
 
 async fn listed(
@@ -244,6 +251,16 @@ async fn rotate(State(app): State<Shared>, c: OrgCtx) -> Result<Json<Value>> {
     Ok(Json(v))
 }
 
+async fn start(State(app): State<Shared>, c: OrgCtx) -> Result<StatusCode> {
+    service::power(&app, &c.identity, &c.org, &param(&c.params, "id")?, true).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn stop(State(app): State<Shared>, c: OrgCtx) -> Result<StatusCode> {
+    service::power(&app, &c.identity, &c.org, &param(&c.params, "id")?, false).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn detach(State(app): State<Shared>, c: OrgCtx) -> Result<StatusCode> {
     service::remove_target(&app, &c.identity, &c.org, &param(&c.params, "id")?).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -339,6 +356,8 @@ pub fn routes() -> Routes {
         .get("/api/v1/orgs/{org}/compute/targets", account_targets)
         .post("/api/v1/orgs/{org}/compute/targets", attach)
         .post("/api/v1/orgs/{org}/compute/targets/{id}/secret", rotate)
+        .post("/api/v1/orgs/{org}/compute/targets/{id}/start", start)
+        .post("/api/v1/orgs/{org}/compute/targets/{id}/stop", stop)
         .delete("/api/v1/orgs/{org}/compute/targets/{id}", detach)
         .post("/api/v1/agent/lease", lease)
         .post("/api/v1/agent/runs/{id}/heartbeat", heartbeat)

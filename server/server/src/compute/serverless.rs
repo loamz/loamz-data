@@ -139,3 +139,35 @@ async fn call(app: &App, target: &Target, lease: &service::Lease) -> Result<Repo
         },
     })
 }
+
+/// Starts or stops a serverless endpoint's container now, instead of waiting for a statement or for the idle minute.
+/// `warm` returns once the container is up; `stop` makes it take no more work and exit.
+///
+/// # Errors
+/// The endpoint could not be reached, or refused.
+pub async fn signal(app: &App, target: &Target, action: &str) -> Result<()> {
+    let token = app
+        .serverless_token
+        .as_deref()
+        .ok_or_else(|| Error::Unavailable("this server has no serverless token".into()))?;
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(90))
+        .build()
+        .map_err(|e| Error::Internal(e.to_string()))?;
+    let reply = http
+        .post(&target.endpoint)
+        .bearer_auth(token)
+        .json(&json!({"action": action}))
+        .send()
+        .await
+        .map_err(|_| Error::Unavailable(format!("{} could not be reached", target.name)))?;
+    if reply.status().is_success() {
+        Ok(())
+    } else {
+        Err(Error::Unavailable(format!(
+            "{} answered {}",
+            target.name,
+            reply.status()
+        )))
+    }
+}

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Badge, Button, Dialog, DialogContent, Page, PageEmpty, Segmented, Tabs, TabsContent, TabsList, TabsTrigger, confirmAction, toast } from "@/design";
 import * as api from "@/api";
 import { CreateCompute } from "@/components/CreateCompute";
+import { PowerButton } from "@/components/PowerButton";
 import { NewJob } from "@/components/NewJob";
 import { computeState, sizeLabel, stateLabel, stateNote } from "@/computeState";
 import { go } from "@/route";
@@ -122,6 +123,7 @@ export function Compute({ ws, me }: { ws: string; me: api.Me | undefined }) {
                       <span className="text-xs text-muted">{sizeLabel(c)}</span>
                       <span className="flex items-center justify-end gap-1">
                         <span className="w-16 text-right text-2xs text-muted">{c.last_used_ms ? when(c.last_used_ms) : "never"}</span>
+                        {info?.admin && <PowerButton org={info.org_id} compute={c} state={state} onChanged={targets.reload} />}
                         <Button variant="secondary" size="sm" onClick={() => go({ screen: "sql", ws })}>
                           <TerminalSquare /> Query
                         </Button>

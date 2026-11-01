@@ -960,3 +960,26 @@ async fn the_kinds_of_compute_that_can_be_created_say_whether_they_are_available
     assert!(made.text().contains("serverless token"));
 }
 both!(the_kinds_of_compute_that_can_be_created_say_whether_they_are_available);
+
+async fn serverless_compute_is_started_and_stopped_by_admins_and_a_machine_is_not(s: Server) {
+    let l = lab(&s).await;
+    let (_, machine) = attach(&s).await;
+    let power = |org: &str, id: &str, what: &str, who: Who| {
+        let (s, path) = (
+            &s,
+            format!("/api/v1/orgs/{org}/compute/targets/{id}/{what}"),
+        );
+        async move { s.post(&path, &who, json!({})).await }
+    };
+    // A machine is started and stopped on the machine itself.
+    for what in ["start", "stop"] {
+        let r = power(ACME, &machine, what, ana()).await;
+        assert_eq!(r.status, 400, "{what}: {}", r.text());
+        assert!(r.text().contains("on the machine itself"));
+    }
+    assert_eq!(power(ACME, "nope", "start", ana()).await.status, 404);
+    // Not for people who are not admins of the account.
+    s.assign(&l.ws, &[&bob()]).await;
+    assert_eq!(power(ACME, &machine, "stop", bob()).await.status, 403);
+}
+both!(serverless_compute_is_started_and_stopped_by_admins_and_a_machine_is_not);
