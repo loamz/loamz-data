@@ -5,6 +5,9 @@ export interface Statement {
   running: boolean;
   run?: api.Run;
   error?: string;
+  /** When it was started, and how long it took once it ended. */
+  startedAt?: number;
+  tookMs?: number;
 }
 
 /** Runs a read-only statement on the workspace's compute and follows it until it ends. One at a time. */
@@ -15,18 +18,19 @@ export function useStatement(ws: string) {
     async (sql: string, limit = 100, target?: string) => {
       if (busy.current) return;
       busy.current = true;
-      setState({ running: true });
+      const began = Date.now();
+      setState({ running: true, startedAt: began });
       try {
         let r = await api.runStatement(ws, sql, limit, 0, target);
-        setState({ running: true, run: r });
+        setState({ running: true, run: r, startedAt: began });
         while (api.isRunning(r)) {
           await new Promise((ok) => setTimeout(ok, 700));
           r = await api.run(ws, r.id);
-          setState({ running: true, run: r });
+          setState({ running: true, run: r, startedAt: began });
         }
-        setState({ running: false, run: r, error: r.state === "succeeded" ? undefined : r.error || `It ${r.state.replace("_", " ")}.` });
+        setState({ running: false, run: r, startedAt: began, tookMs: Date.now() - began, error: r.state === "succeeded" ? undefined : r.error || `It ${r.state.replace("_", " ")}.` });
       } catch (e) {
-        setState({ running: false, error: (e as Error).message });
+        setState({ running: false, startedAt: began, tookMs: Date.now() - began, error: (e as Error).message });
       } finally {
         busy.current = false;
       }

@@ -2,6 +2,7 @@ import { History, Play, Plus, Square, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Select, cn, toast } from "@/design";
 import * as api from "@/api";
+import { elapsedText, useClock } from "@/clock";
 import { ComputePicker, useCompute } from "@/components/ComputePicker";
 import { CodeEditor, type CodeEditorHandle } from "@/components/CodeEditor";
 import { ResultGrid } from "@/components/ResultGrid";
@@ -26,7 +27,7 @@ const LIMITS = [
   { value: "10000", label: "10,000 rows" },
 ];
 
-const seconds = (ms: number) => (ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`);
+const seconds = elapsedText;
 
 /** SQL on the workspace's compute: tabs of statements, the tables beside them, rows beneath. */
 export function SqlEditor({ ws }: { ws: string }) {
@@ -42,6 +43,7 @@ export function SqlEditor({ ws }: { ws: string }) {
 
   const tab = state.tabs.find((t) => t.id === state.active) ?? state.tabs[0]!;
   const out = outcomes[tab.id];
+  const clock = useClock(out?.running === true);
   const { online, loaded } = picked;
 
   const update = (next: typeof state) => {
@@ -186,7 +188,7 @@ export function SqlEditor({ ws }: { ws: string }) {
           ) : result ? (
             <ResultGrid result={result} elapsed={out?.elapsed} />
           ) : out?.running ? (
-            <Empty text={out.run?.state === "running" ? "Running on the compute…" : "Waiting for the compute…"} busy />
+            <Empty text={`${out.run?.state === "running" ? "Running on the compute…" : "Waiting for the compute…"} ${elapsedText(clock - out.since)}`} busy />
           ) : (
             <Empty text={noCompute ? "No compute is answering. An account admin attaches a machine in the account console, and starts its agent." : "Run a statement to see its rows here."} />
           )}
