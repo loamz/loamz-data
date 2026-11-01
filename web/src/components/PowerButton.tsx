@@ -4,8 +4,8 @@ import { Button, toast } from "@/design";
 import * as api from "@/api";
 import type { ComputeState } from "@/computeState";
 
-/** Start or stop serverless compute now. It also starts by itself when a statement arrives and stops by itself when idle, so
- *  this is for starting it before a demo or stopping it to save the minute. A machine has no button: it is run on the machine. */
+/** Start or stop serverless compute now. Nothing starts it for you: a stopped warehouse refuses work until someone starts it. It stops by itself a minute after its last
+ *  statement, so Stop is for saving that minute. A machine has no button: it is run on the machine. */
 export function PowerButton({ org, compute, state, onChanged }: { org: string; compute: api.Compute; state: ComputeState; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   if (compute.kind !== "serverless") return null;

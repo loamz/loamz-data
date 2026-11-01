@@ -9,7 +9,7 @@ import { go } from "@/route";
 import { when } from "@/format";
 import { useLoad } from "@/hooks";
 
-/** The compute work runs on: serverless SQL warehouses that start when a statement arrives, and sandboxes on machines of your own. */
+/** The compute work runs on: serverless SQL warehouses that you start and that stop a minute after their last statement, and sandboxes on machines of your own. */
 export function Compute({ ws, me }: { ws: string; me: api.Me | undefined }) {
   const info = me?.workspaces.find((w) => w.id === ws);
   const [making, setMaking] = useState(false);
@@ -100,7 +100,7 @@ export function Compute({ ws, me }: { ws: string; me: api.Me | undefined }) {
           <TabsTrigger value="sandboxes">Sandboxes</TabsTrigger>
         </TabsList>
         <TabsContent value="warehouses">
-          <DataTable columns={columns("serverless")} rows={warehouses} rowKey={(c) => c.id} count={`${warehouses.length} ${warehouses.length === 1 ? "warehouse" : "warehouses"}`} empty="No SQL warehouse yet. A serverless one starts when a statement arrives and stops a minute after." />
+          <DataTable columns={columns("serverless")} rows={warehouses} rowKey={(c) => c.id} count={`${warehouses.length} ${warehouses.length === 1 ? "warehouse" : "warehouses"}`} empty="No SQL warehouse yet. A serverless one runs when you start it and stops a minute after its last statement." />
         </TabsContent>
         <TabsContent value="sandboxes">
           <DataTable columns={columns("agent")} rows={sandboxes} rowKey={(c) => c.id} count={`${sandboxes.length} ${sandboxes.length === 1 ? "machine" : "machines"}`} empty="No machine attached. Jobs and agent code run in a gVisor sandbox on a machine you attach." />

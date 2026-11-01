@@ -201,7 +201,7 @@ pub fn providers(app: &App) -> Vec<Provider> {
         Provider {
             id: "serverless",
             name: "Serverless SQL warehouse",
-            description: "Starts when a statement arrives and stops after a minute with nothing to do. Statements over data classified normal only.",
+            description: "Runs when you start it and stops after a minute with nothing to do; nothing starts it for you. Statements over data classified normal only.",
             available: app.serverless_token.is_some() && app.serverless_endpoint.is_some(),
             max_memory_mb: 2048,
             max_cpu_millis: 1000,
@@ -472,6 +472,8 @@ async fn pick(
 ) -> Result<Target> {
     let now = now_ms();
     let mut all = store::targets_in(app.db.pool(), org).await?;
+    let used = store::last_used(app.db.pool(), org).await?;
+    let up = |t: &Target| t.running(used.get(&t.id).copied().unwrap_or(0), now);
     // The organization's own machines come first; a provider's is used when asked for or when nothing else answers.
     all.sort_by_key(Target::serverless);
     let big_enough = |t: &Target| {
@@ -490,8 +492,12 @@ async fn pick(
             .iter()
             .find(|t| t.id == id)
             .ok_or_else(|| Error::NotFound("no such compute".into()))?;
-        if !t.online(now) {
-            return Err(Error::Conflict(format!("{} is not answering", t.name)));
+        if !up(t) {
+            return Err(Error::Conflict(if t.serverless() {
+                format!("{} is stopped. Start it first.", t.name)
+            } else {
+                format!("{} is not answering", t.name)
+            }));
         }
         if own_only && t.serverless() {
             return Err(Error::Invalid(format!(
@@ -507,11 +513,11 @@ async fn pick(
     }
     let online: Vec<&Target> = all
         .iter()
-        .filter(|t| t.online(now) && !(own_only && t.serverless()))
+        .filter(|t| up(t) && !(own_only && t.serverless()))
         .collect();
     if online.is_empty() {
         return Err(Error::Conflict(
-            "no compute is answering. Attach a machine in the account console, and start its agent"
+            "no compute is running. Start a SQL warehouse, or attach a machine in the account console and start its agent"
                 .into(),
         ));
     }

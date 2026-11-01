@@ -217,7 +217,7 @@ export interface Compute {
   last_seen_ms: number;
   /** When it last finished some work (0 for never): a serverless warehouse is running for a minute after this. */
   last_used_ms: number;
-  /** Serverless compute that something is waiting on after it had stopped: the first statement pays for the start. */
+  /** Serverless compute that is starting up after someone started it. */
   starting: boolean;
   /** When a serverless warehouse was last stopped by hand (0 for never): it is stopped if that is after its last use. */
   stopped_ms: number;
