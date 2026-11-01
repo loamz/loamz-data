@@ -4,6 +4,7 @@ import { Badge, Button, Dialog, DialogContent, DialogFooter, Input, NavItem, Pag
 import * as api from "@/api";
 import { AgentCommand } from "@/components/AgentCommand";
 import { CreateCompute } from "@/components/CreateCompute";
+import { PowerButton } from "@/components/PowerButton";
 import { computeState, stateLabel } from "@/computeState";
 import { Principal } from "@/components/Principal";
 import { PrincipalField } from "@/components/PrincipalField";
@@ -344,6 +345,7 @@ function ComputeTab({ org }: { org: string }) {
               </span>
               <Badge tone="neutral">{c.kind === "serverless" ? "serverless" : "machine"}</Badge>
               <Badge tone={computeState(c, now) === "running" ? "success" : "neutral"}>{stateLabel[computeState(c, now)]}</Badge>
+              <PowerButton org={org} compute={c} state={computeState(c, now)} onChanged={list.reload} />
               {c.kind === "agent" && (
               <Button
                 variant="secondary"

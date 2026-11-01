@@ -50,6 +50,15 @@ def sql(body: dict, request: Request):
     if not hmac.compare_digest(sent, "Bearer " + os.environ["LOAMZ_TOKEN"]):
         raise HTTPException(status_code=401)
 
+    # Start and stop on demand. "warm" is answered the moment the container is up (so asking starts it); "stop" makes this
+    # container take no more work after this call and exit, instead of waiting out its minute of idle.
+    action = body.get("action")
+    if action == "warm":
+        return {"ready": True}
+    if action == "stop":
+        modal.experimental.stop_fetching_inputs()
+        return {"stopping": True}
+
     storage, limit = body["storage"], int(body["limit"])
     con = duckdb.connect(
         ":memory:",

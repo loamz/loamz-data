@@ -1,8 +1,10 @@
 import { Copy, Database, Eye, Sigma } from "lucide-react";
+import { useEffect } from "react";
 import { Badge, Button, PageEmpty, toast } from "@/design";
 import * as api from "@/api";
 import { useLoad } from "@/hooks";
 import { ResultGrid } from "@/components/ResultGrid";
+import { ComputePicker, useCompute } from "@/components/ComputePicker";
 import { useStatement } from "@/components/useStatement";
 import { when } from "@/format";
 import { centralOrigin } from "@/site";
@@ -20,37 +22,60 @@ export function profileSql(full: string, columns: api.TableInfo["columns"]): str
   return `SELECT count(*) AS total${parts.length ? ", " + parts.join(", ") : ""} FROM ${full}`;
 }
 
-function Peek({ ws, full }: { ws: string; full: string }) {
+/** The first rows of a table, read as soon as the tab opens (on the workspace's compute; a stopped warehouse starts, which takes a few seconds). */
+export function SampleData({ ws, full }: { ws: string; full: string | null }) {
   const s = useStatement(ws);
   const result = s.run?.state === "succeeded" ? s.run.result : undefined;
+  const compute = useCompute(ws);
+  const { start } = s;
+  const { target, loaded } = compute;
+  // Read when the tab opens, and again when another compute is chosen.
+  useEffect(() => {
+    if (full && loaded && target) void start(`SELECT * FROM ${full} LIMIT 100`, 100, target);
+  }, [full, start, target, loaded]);
+  if (!full) return <p className="text-xs text-muted">This table's full name is still loading.</p>;
   return (
-    <section>
-      <div className="mb-2 flex items-center gap-2">
-        <h3 className="flex-1 text-xs font-medium text-foreground">Sample rows</h3>
-        <Button variant="secondary" size="sm" disabled={s.running} onClick={() => void s.start(`SELECT * FROM ${full} LIMIT 100`)}>
-          <Eye /> {s.running ? "Reading…" : result ? "Read again" : "Preview"}
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <p className="flex-1 text-xs text-muted">
+          {!target
+            ? loaded && compute.all.length === 0
+              ? "There is no compute yet. Create one on the Compute page."
+              : "Choose a compute to read the rows."
+            : s.running
+              ? s.run?.state === "running"
+                ? "Reading on the compute…"
+                : "Waiting for the compute…"
+              : result
+                ? `The first ${result.rows.length.toLocaleString()} ${result.rows.length === 1 ? "row" : "rows"}`
+                : ""}
+        </p>
+        <ComputePicker compute={compute} />
+        <Button variant="secondary" size="sm" disabled={s.running || !target} onClick={() => void s.start(`SELECT * FROM ${full} LIMIT 100`, 100, target)}>
+          <Eye /> Refresh
         </Button>
       </div>
-      {s.error && <p className="text-xs text-danger">{s.error}</p>}
+      {s.error && <p className="text-sm text-danger">{s.error}</p>}
       {result && (
-        <div className="h-72 overflow-hidden rounded-xl border border-border">
+        <div className="h-[28rem] overflow-hidden rounded-xl border border-border">
           <ResultGrid result={result} />
         </div>
       )}
-      {!result && !s.error && <p className="text-xs text-muted">{s.running ? "Running on the compute…" : "Reads up to 100 rows on your compute."}</p>}
-    </section>
+    </div>
   );
 }
 
 function Profile({ ws, full, columns }: { ws: string; full: string; columns: api.TableInfo["columns"] }) {
   const s = useStatement(ws);
+  const compute = useCompute(ws);
   const cols = columns.filter((c) => scalar(c.type));
   const row = s.run?.state === "succeeded" ? s.run.result?.rows[0] : undefined;
   return (
     <section>
       <div className="mb-2 flex items-center gap-2">
         <h3 className="flex-1 text-xs font-medium text-foreground">Profile</h3>
-        <Button variant="secondary" size="sm" disabled={s.running} onClick={() => void s.start(profileSql(full, columns), 1)}>
+        <ComputePicker compute={compute} />
+        <Button variant="secondary" size="sm" disabled={s.running || !compute.target} onClick={() => void s.start(profileSql(full, columns), 1, compute.target)}>
           <Sigma /> {s.running ? "Reading…" : row ? "Profile again" : "Profile columns"}
         </Button>
       </div>
@@ -115,7 +140,6 @@ ATTACH '${catalog}' AS ${catalog} (TYPE iceberg, ENDPOINT '${centralOrigin}/api/
           ))}
         </div>
       </section>
-      {full && <Peek ws={ws} full={full} />}
       {full && <Profile ws={ws} full={full} columns={t.columns} />}
       <section>
         <h3 className="mb-2 text-xs font-medium text-foreground">History</h3>

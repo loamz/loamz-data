@@ -7,8 +7,8 @@ export type ComputeState = "running" | "stopped" | "offline";
 
 /** What a person sees of a piece of compute: a machine is running when its agent answers; a serverless warehouse is running for a
  *  minute after its last statement and otherwise stopped, which is fine: the next statement starts it. */
-export function computeState(c: Pick<Compute, "kind" | "online" | "last_used_ms">, now: number): ComputeState {
-  if (c.kind === "serverless") return c.last_used_ms > 0 && now - c.last_used_ms < IDLE_STOP_MS ? "running" : "stopped";
+export function computeState(c: Pick<Compute, "kind" | "online" | "last_used_ms" | "stopped_ms">, now: number): ComputeState {
+  if (c.kind === "serverless") return c.last_used_ms > 0 && c.stopped_ms < c.last_used_ms && now - c.last_used_ms < IDLE_STOP_MS ? "running" : "stopped";
   return c.online ? "running" : "offline";
 }
 

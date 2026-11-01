@@ -6,7 +6,7 @@ import { go } from "@/route";
 import { openInEditor } from "@/sqlTabs";
 import { AccessList } from "@/components/AccessList";
 import { FilesTab } from "@/components/FilesTab";
-import { TableTab } from "@/components/TableTab";
+import { SampleData, TableTab } from "@/components/TableTab";
 import { NewDialog } from "@/components/NewDialog";
 import { PrincipalField } from "@/components/PrincipalField";
 import { Tree } from "@/components/Tree";
@@ -214,6 +214,7 @@ function Detail({ ws, item, onBack, onDropped, onChanged }: { ws: string; item: 
         <TabsList>
           {isVolume && <TabsTrigger value="files">Files</TabsTrigger>}
           {isTable && <TabsTrigger value="schema">Table</TabsTrigger>}
+          {isTable && <TabsTrigger value="sample">Sample data</TabsTrigger>}
           <TabsTrigger value="about">About</TabsTrigger>
           <TabsTrigger value="access">Access</TabsTrigger>
         </TabsList>
@@ -225,6 +226,11 @@ function Detail({ ws, item, onBack, onDropped, onChanged }: { ws: string; item: 
         {isTable && (
           <TabsContent value="schema">
             <TableTab ws={ws} id={item.id} catalog={trail.data?.[0] ?? ""} full={fullName} />
+          </TabsContent>
+        )}
+        {isTable && (
+          <TabsContent value="sample">
+            <SampleData ws={ws} full={fullName} />
           </TabsContent>
         )}
         <TabsContent value="about">
