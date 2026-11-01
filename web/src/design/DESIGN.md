@@ -68,3 +68,10 @@ If a control changes the screen you are on, it is violet. If it makes something 
   - *A dashboard* (limits, then totals, then a chart) → rows of figures that are read together, with the chart full width (Usage). Not two columns.
   - *One list or one table* → stays one block, full width (Storage, Approvals).
   If the content has no second part, leave the space empty rather than inventing one.
+
+## Data screens (`Workbench`)
+
+Catalogs, tables, queries and runs are scanned, not browsed, so they use the dense frame instead of `Page`: `Workbench` (a `TopBar` over a `Sidebar` and the body),
+`ObjectHeader` (breadcrumb, icon, name, actions; **no subtitle**), `Tabs` with `variant="line"`, `DataTable` (36px rows, columns sized to their content, a filter and a
+count), `WithRail` + `DetailBlock` (what the object is goes in a right rail, not in sentences) and `TreePane`. Rules: no explanatory sentence under a title, a table never
+spreads over more width than its content needs, one orange action per view, rows 32-36px.

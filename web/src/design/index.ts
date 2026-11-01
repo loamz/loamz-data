@@ -24,3 +24,5 @@ export { Container } from "./layout/Container";
 export { Stack } from "./layout/Stack";
 export { Heading } from "./type/Heading";
 export { Text } from "./type/Text";
+export { Workbench, TopBar, SearchField, Sidebar, SidebarGroup, SidebarItem, ObjectHeader, Body, WithRail, DetailBlock, DetailRow, TreePane, type Crumb } from "./layout/Workbench";
+export { DataTable, type Column } from "./layout/DataTable";
