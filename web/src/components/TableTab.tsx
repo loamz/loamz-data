@@ -5,6 +5,7 @@ import * as api from "@/api";
 import { useLoad } from "@/hooks";
 import { ResultGrid } from "@/components/ResultGrid";
 import { ComputePicker, useCompute } from "@/components/ComputePicker";
+import { elapsedText, useClock } from "@/clock";
 import { useStatement } from "@/components/useStatement";
 import { when } from "@/format";
 import { centralOrigin } from "@/site";
@@ -27,6 +28,8 @@ export function SampleData({ ws, full }: { ws: string; full: string | null }) {
   const s = useStatement(ws);
   const result = s.run?.state === "succeeded" ? s.run.result : undefined;
   const compute = useCompute(ws);
+  const now = useClock(s.running);
+  const waited = s.startedAt ? elapsedText(now - s.startedAt) : "";
   const { start } = s;
   const { target, loaded } = compute;
   // Read when the tab opens, and again when another compute is chosen.
@@ -44,10 +47,10 @@ export function SampleData({ ws, full }: { ws: string; full: string | null }) {
               : "Choose a compute to read the rows."
             : s.running
               ? s.run?.state === "running"
-                ? "Reading on the compute…"
-                : "Waiting for the compute…"
+                ? `Reading on the compute… ${waited}`
+                : `Waiting for the compute… ${waited}`
               : result
-                ? `The first ${result.rows.length.toLocaleString()} ${result.rows.length === 1 ? "row" : "rows"}`
+                ? `The first ${result.rows.length.toLocaleString()} ${result.rows.length === 1 ? "row" : "rows"} · ${elapsedText(s.tookMs ?? 0)}`
                 : ""}
         </p>
         <ComputePicker compute={compute} />
@@ -68,6 +71,7 @@ export function SampleData({ ws, full }: { ws: string; full: string | null }) {
 function Profile({ ws, full, columns }: { ws: string; full: string; columns: api.TableInfo["columns"] }) {
   const s = useStatement(ws);
   const compute = useCompute(ws);
+  const now = useClock(s.running);
   const cols = columns.filter((c) => scalar(c.type));
   const row = s.run?.state === "succeeded" ? s.run.result?.rows[0] : undefined;
   return (
@@ -76,13 +80,13 @@ function Profile({ ws, full, columns }: { ws: string; full: string; columns: api
         <h3 className="flex-1 text-xs font-medium text-foreground">Profile</h3>
         <ComputePicker compute={compute} />
         <Button variant="secondary" size="sm" disabled={s.running || !compute.target} onClick={() => void s.start(profileSql(full, columns), 1, compute.target)}>
-          <Sigma /> {s.running ? "Reading…" : row ? "Profile again" : "Profile columns"}
+          <Sigma /> {s.running ? `Reading… ${s.startedAt ? elapsedText(now - s.startedAt) : ""}` : row ? "Profile again" : "Profile columns"}
         </Button>
       </div>
       {s.error && <p className="text-xs text-danger">{s.error}</p>}
       {row ? (
         <div className="overflow-hidden rounded-xl border border-border">
-          <p className="border-b border-border px-4 py-2 text-xs text-muted">{Number(row[0]).toLocaleString()} rows</p>
+          <p className="border-b border-border px-4 py-2 text-xs text-muted">{Number(row[0]).toLocaleString()} rows · {elapsedText(s.tookMs ?? 0)}</p>
           <table className="w-full text-left text-xs">
             <thead className="text-muted">
               <tr>

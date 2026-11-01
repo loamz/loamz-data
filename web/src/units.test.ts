@@ -1,4 +1,5 @@
 import { profileSql } from "@/components/TableTab";
+import { elapsedText } from "./clock";
 import { IDLE_STOP_MS, computeState, sizeLabel } from "./computeState";
 import { describe, expect, it } from "vitest";
 import { readError } from "./api";
@@ -199,5 +200,13 @@ describe("computeState", () => {
   it("words the size", () => {
     expect(sizeLabel({ max_cpu_millis: 1000, max_memory_mb: 2048 })).toBe("1 CPU · 2 GB");
     expect(sizeLabel({ max_cpu_millis: 4000, max_memory_mb: 1536 })).toBe("4 CPUs · 1.5 GB");
+  });
+});
+
+describe("elapsedText", () => {
+  it("words a wait in the unit it is long enough for", () => {
+    expect(elapsedText(420)).toBe("420 ms");
+    expect(elapsedText(10_432)).toBe("10.4 s");
+    expect(elapsedText(125_000)).toBe("2 min 5 s");
   });
 });
