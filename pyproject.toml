@@ -17,7 +17,7 @@ loamz-engine = { workspace = true }
 dev = [
     "ruff>=0.15.0",
     "import-linter>=2.11",
-    "pytest>=9.0",
+    "pytest>=9.2.0",
     "pytest-asyncio>=1.4",
 ]
 

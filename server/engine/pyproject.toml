@@ -26,11 +26,11 @@ sentence-transformers = ["sentence-transformers>=3.0.0"]
 # structured JSON logs
 logging = ["python-json-logger>=2.0.7"]
 # the conformance suites and test helpers in loamz.engine.testing
-testing = ["pytest>=9.0.3", "pytest-asyncio>=1.4.0", "httpx>=0.27.0"]
+testing = ["pytest>=9.2.0", "pytest-asyncio>=1.4.0", "httpx>=0.27.0"]
 
 [dependency-groups]
 dev = [
-    "pytest>=9",
+    "pytest>=9.2.0",
     "pytest-asyncio>=1.4",
     "pytest-xdist>=3.6",
     "pytest-timeout>=2.3",
