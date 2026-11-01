@@ -1,6 +1,7 @@
-import { Copy, Database, Eye, Sigma } from "lucide-react";
+import { Copy, Database, Eye } from "lucide-react";
 import { useEffect, useRef } from "react";
-import { Badge, Button, PageEmpty, toast } from "@/design";
+import { Principal } from "@/components/Principal";
+import { Badge, Button, DataTable, DetailBlock, DetailRow, PageEmpty, Popover, PopoverContent, PopoverTrigger, WithRail, toast, type Column } from "@/design";
 import * as api from "@/api";
 import { useLoad } from "@/hooks";
 import { ResultGrid } from "@/components/ResultGrid";
@@ -9,8 +10,6 @@ import { elapsedText, useClock } from "@/clock";
 import { useStatement } from "@/components/useStatement";
 import { bytes, when } from "@/format";
 import { centralOrigin } from "@/site";
-
-const typeText = (t: string | object) => (typeof t === "string" ? t : (t as { type?: string }).type ?? "nested");
 
 /** What a table is: its columns and its history. The data is read with SQL, or by any Iceberg client through this workspace's catalog. */
 const quote = (n: string) => `"${n.replace(/"/g, '""')}"`;
@@ -60,62 +59,23 @@ export function SampleData({ ws, full }: { ws: string; full: string | null }) {
   );
 }
 
-/** Counts and ranges of each column, read from what the table's files recorded about themselves: no compute, a moment's wait. */
-function Profile({ ws, id }: { ws: string; id: string }) {
+const typeText = (t: string | object) => (typeof t === "string" ? t : (t as { type?: string }).type ?? "nested");
+
+interface ColumnRow {
+  id: number;
+  name: string;
+  type: string;
+  values: string;
+  nulls: string;
+  min: string;
+  max: string;
+}
+
+/** A table's columns with what its files recorded about them (no compute: a moment's wait), and what the table is in a rail beside it. */
+export function TableOverview({ ws, id, catalog, owner, created }: { ws: string; id: string; catalog: string; owner: string; created: number }) {
+  const info = useLoad(() => api.tableInfo(ws, id), `${ws}/${id}`);
   const stats = useLoad(() => api.tableStats(ws, id), `${ws}/${id}/stats`);
   const t0 = useRef(Date.now());
-  const took = stats.data ? elapsedText(Date.now() - t0.current) : "";
-  return (
-    <section>
-      <div className="mb-2 flex items-center gap-2">
-        <h3 className="flex-1 text-xs font-medium text-foreground">Columns</h3>
-        {stats.data && <span className="text-2xs text-muted">from the table's metadata · {took}</span>}
-      </div>
-      {stats.error && !stats.data ? (
-        <p className="text-xs text-danger">{stats.error.message}</p>
-      ) : !stats.data ? (
-        <p className="text-xs text-muted">Reading the table's metadata…</p>
-      ) : (
-        <div className="overflow-hidden rounded-xl border border-border">
-          <table className="w-full text-left text-xs">
-            <thead className="text-muted">
-              <tr>
-                <th className="px-4 py-1.5 font-medium">Column</th>
-                <th className="px-2 py-1.5 text-right font-medium">Values</th>
-                <th className="px-2 py-1.5 text-right font-medium">Empty</th>
-                <th className="px-2 py-1.5 font-medium">Smallest</th>
-                <th className="px-2 py-1.5 font-medium">Largest</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {stats.data.columns.map((c) => (
-                <tr key={c.id}>
-                  <td className="px-4 py-1.5 font-mono text-foreground">{c.name}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{c.values.toLocaleString()}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{c.nulls.toLocaleString()}</td>
-                  <td className="max-w-40 truncate px-2 py-1.5">{c.min ?? ""}</td>
-                  <td className="max-w-40 truncate px-2 py-1.5">{c.max ?? ""}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function Fact({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-2xs uppercase tracking-wide text-muted">{label}</p>
-      <p className="text-sm font-medium tabular-nums text-foreground">{value}</p>
-    </div>
-  );
-}
-
-export function TableTab({ ws, id, catalog, full }: { ws: string; id: string; catalog: string; full: string | null }) {
-  const info = useLoad(() => api.tableInfo(ws, id), `${ws}/${id}`);
   if (info.error && !info.data) {
     return (
       <PageEmpty icon={Database} title="You can't open this table">
@@ -124,67 +84,98 @@ export function TableTab({ ws, id, catalog, full }: { ws: string; id: string; ca
     );
   }
   const t = info.data;
-  if (!t) return <p className="text-xs text-muted">Loading…</p>;
+  if (!t) return <p className="text-sm text-muted">Loading…</p>;
+  const byId = new Map((stats.data?.columns ?? []).map((c) => [c.id, c]));
+  const rows: ColumnRow[] = t.columns.map((c) => {
+    const st = byId.get(c.id);
+    return {
+      id: c.id,
+      name: c.name,
+      type: typeText(c.type),
+      values: st ? st.values.toLocaleString() : "",
+      nulls: st ? st.nulls.toLocaleString() : "",
+      min: st?.min ?? "",
+      max: st?.max ?? "",
+    };
+  });
+  const columns: Column<ColumnRow>[] = [
+    { key: "name", header: "Column", width: "fill", cell: (r) => <span className="font-mono">{r.name}</span> },
+    { key: "type", header: "Type", cell: (r) => <Badge>{r.type}</Badge> },
+    { key: "values", header: "Values", align: "right", cell: (r) => r.values },
+    { key: "nulls", header: "Empty", align: "right", cell: (r) => r.nulls },
+    { key: "min", header: "Smallest", width: 12, cell: (r) => r.min },
+    { key: "max", header: "Largest", width: 12, cell: (r) => r.max },
+  ];
   const connect = `INSTALL iceberg; LOAD iceberg;
 ATTACH '${catalog}' AS ${catalog} (TYPE iceberg, ENDPOINT '${centralOrigin}/api/v1/workspaces/${ws}/iceberg', TOKEN '<your access token>');`;
   return (
-    <div className="space-y-6">
-      <section className="flex flex-wrap gap-x-8 gap-y-2" aria-label="About this table">
-        <Fact label="Rows" value={t.stats.records === null ? "—" : t.stats.records.toLocaleString()} />
-        <Fact label="Files" value={t.stats.data_files === null ? "—" : t.stats.data_files.toLocaleString()} />
-        <Fact label="Size" value={t.stats.size_bytes === null ? "—" : bytes(t.stats.size_bytes)} />
-        <Fact label="Last written" value={t.stats.at_ms ? when(t.stats.at_ms) : "never"} />
-      </section>
-      <section>
-        <h3 className="mb-2 text-xs font-medium text-foreground">Schema</h3>
-        <div className="divide-y divide-border rounded-xl border border-border bg-background/40">
-          {t.columns.map((c) => (
-            <div key={c.id} className="flex items-center gap-3 px-4 py-2">
-              <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">{c.name}</span>
-              <Badge>{typeText(c.type)}</Badge>
-              {c.required && <span className="text-2xs text-muted">required</span>}
-            </div>
-          ))}
-        </div>
-      </section>
-      <Profile ws={ws} id={id} />
-      <section>
-        <h3 className="mb-2 text-xs font-medium text-foreground">History</h3>
-        {t.snapshots.length === 0 ? (
-          <p className="text-xs text-muted">Nothing has been written to this table yet.</p>
-        ) : (
-          <div className="divide-y divide-border rounded-xl border border-border bg-background/40">
-            {t.snapshots.map((s) => (
-              <div key={s.id} className="flex items-center gap-3 px-4 py-2 text-xs">
-                <span className="flex-1 text-foreground">{s.operation ?? "change"}</span>
-                {s.records && <span className="text-muted">{Number(s.records).toLocaleString()} rows</span>}
-                <span className="text-muted">{when(s.at_ms)}</span>
-                {s.id === t.current_snapshot && <Badge tone="success">current</Badge>}
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-      <section>
-        <h3 className="mb-2 text-xs font-medium text-foreground">Use it from DuckDB</h3>
-        <pre className="scroll-area whitespace-pre-wrap break-all rounded-md border border-border bg-background/50 p-3 font-mono text-xs text-foreground">{connect}</pre>
-        <div className="mt-2 flex justify-end">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(connect);
-                toast.success("Copied");
-              } catch {
-                toast.error("Could not copy", "Select the text and copy it.");
-              }
-            }}
-          >
-            <Copy /> Copy
-          </Button>
-        </div>
-      </section>
-    </div>
+    <WithRail
+      rail={
+        <>
+          <DetailBlock title="About this table">
+            <DetailRow label="Rows">{t.stats.records === null ? "—" : t.stats.records.toLocaleString()}</DetailRow>
+            <DetailRow label="Files">{t.stats.data_files === null ? "—" : t.stats.data_files.toLocaleString()}</DetailRow>
+            <DetailRow label="Size">{t.stats.size_bytes === null ? "—" : bytes(t.stats.size_bytes)}</DetailRow>
+            <DetailRow label="Written">{t.stats.at_ms ? when(t.stats.at_ms) : "never"}</DetailRow>
+            <DetailRow label="Owner"><Principal id={owner} /></DetailRow>
+            <DetailRow label="Created">{when(created)}</DetailRow>
+          </DetailBlock>
+          <DetailBlock title="Use it elsewhere">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="secondary" size="sm" className="self-start">
+                  <Copy /> DuckDB connection
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[34rem] max-w-[90vw]">
+                <pre className="scroll-area whitespace-pre-wrap break-all font-mono text-xs text-foreground">{connect}</pre>
+                <div className="mt-2 flex justify-end">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(connect);
+                        toast.success("Copied");
+                      } catch {
+                        toast.error("Could not copy", "Select the text and copy it.");
+                      }
+                    }}
+                  >
+                    <Copy /> Copy
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </DetailBlock>
+        </>
+      }
+    >
+      <DataTable columns={columns} rows={rows} rowKey={(r) => String(r.id)} count={`${rows.length} ${rows.length === 1 ? "column" : "columns"}${stats.data ? ` · from the table's metadata, ${elapsedText(Date.now() - t0.current)}` : ""}`} />
+    </WithRail>
   );
+}
+
+interface Snap {
+  id: string;
+  at_ms: number;
+  operation?: string;
+  records?: string;
+  files?: string;
+}
+
+/** Every change made to the table, newest first: what was done, how many rows it added, and when. */
+export function TableHistory({ ws, id }: { ws: string; id: string }) {
+  const info = useLoad(() => api.tableInfo(ws, id), `${ws}/${id}`);
+  const t = info.data;
+  if (!t) return <p className="text-sm text-muted">Loading…</p>;
+  const rows: Snap[] = [...t.snapshots].sort((a, b) => b.at_ms - a.at_ms);
+  const columns: Column<Snap>[] = [
+    { key: "at", header: "When", cell: (r) => when(r.at_ms) },
+    { key: "op", header: "Change", width: "fill", cell: (r) => r.operation ?? "change" },
+    { key: "records", header: "Rows added", align: "right", cell: (r) => (r.records ? Number(r.records).toLocaleString() : "") },
+    { key: "files", header: "Files", align: "right", cell: (r) => r.files ?? "" },
+    { key: "now", header: "", cell: (r) => (r.id === t.current_snapshot ? <Badge tone="success">current</Badge> : null) },
+  ];
+  return <DataTable columns={columns} rows={rows} rowKey={(r) => r.id} empty="Nothing has been written to this table yet." />;
 }

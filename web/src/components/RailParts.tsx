@@ -28,7 +28,7 @@ export function ThemeButton() {
   const dark = theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
   useEffect(() => applyTheme(theme), [theme]);
   return (
-    <Tooltip label={dark ? "Light theme" : "Dark theme"} side="right">
+    <Tooltip label={dark ? "Light theme" : "Dark theme"} side="bottom">
       <Button
         variant="ghost"
         size="icon"
@@ -54,7 +54,7 @@ export function UserMenu({ me, note, children }: { me: Me | undefined; note?: st
           {(me?.name || me?.subject || "?").slice(0, 2)}
         </Button>
       </MenuTrigger>
-      <MenuContent side="right" align="end">
+      <MenuContent align="end">
         <MenuLabel>{me ? me.name || me.subject : "Signed in"}</MenuLabel>
         {me?.email && <p className="px-2 text-2xs text-muted">{me.email}</p>}
         {note && <p className="px-2 pb-1.5 text-2xs text-muted">{note}</p>}

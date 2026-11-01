@@ -1,12 +1,15 @@
-import { Briefcase, ChevronRight, Cpu, Database, Settings as Gear, TerminalSquare } from "lucide-react";
-import { Badge, Page, PageEmpty, Section } from "@/design";
+import { Database } from "lucide-react";
+import { Body, DataTable, ObjectHeader, Page, PageEmpty, type Column } from "@/design";
 import * as api from "@/api";
-import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
+import { Principal } from "@/components/Principal";
+import { when } from "@/format";
 import { useLoad } from "@/hooks";
+import { kindIcon, kindLabel } from "@/kinds";
+import { recents, type Recent } from "@/recents";
 import { go } from "@/route";
 
-/** The front door of one workspace: what is in it and what you can do here. Everything else in a workspace starts from this page. */
-export function Workspace({ ws, me }: { ws: string; me: api.Me | undefined }) {
+/** The front door of one workspace: what you opened lately, and the catalogs you can reach. */
+export function Workspace({ ws }: { ws: string; me: api.Me | undefined }) {
   const w = useLoad(() => api.workspace(ws), ws);
   const catalogs = useLoad(() => api.list(ws, ""), ws);
   if (w.error) {
@@ -18,71 +21,41 @@ export function Workspace({ ws, me }: { ws: string; me: api.Me | undefined }) {
       </Page>
     );
   }
-  const here = w.data;
-  if (!here) return <Page title="Workspace">{null}</Page>;
-  const org = me?.workspaces.find((x) => x.id === ws)?.org_alias;
-  const items = catalogs.data ?? [];
+  const lately = recents(ws);
+  const open = (id: string) => go({ screen: "catalog", ws, id });
+  const recentColumns: Column<Recent>[] = [
+    { key: "name", header: "Name", width: "fill", cell: (r) => <Named kind={r.kind} name={r.name} /> },
+    { key: "kind", header: "Type", cell: (r) => kindLabel[r.kind] },
+    { key: "at", header: "Opened", cell: (r) => when(r.at) },
+  ];
+  const catalogColumns: Column<api.Securable>[] = [
+    { key: "name", header: "Name", width: "fill", cell: (c) => <Named kind="catalog" name={c.name} /> },
+    { key: "owner", header: "Owner", cell: (c) => <Principal id={c.owner} /> },
+    { key: "created", header: "Created", cell: (c) => when(c.created_ms) },
+  ];
   return (
-    <Page
-      title={here.name}
-      subtitle={`${org === "Personal" ? "Your own space" : (org ?? "")} · you are ${here.account_admin ? "an account admin" : here.admin ? "an admin" : "a user"} here`}
-      actions={me && <WorkspaceSwitcher current={ws} all={me.workspaces} />}
-      layout="columns"
-    >
-      <Section title="Catalogs" description="The data you can reach in this workspace. Open one to browse its schemas, tables and files.">
-        <div className="-m-1">
-          {items.length === 0 && !catalogs.loading ? (
-            <button type="button" onClick={() => go({ screen: "catalog", ws, id: null })} className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-3 text-left text-sm text-muted transition-colors hover:bg-card-hover">
-              <Database aria-hidden /> <span className="flex-1">Nothing here yet. Open the catalog to create the first one.</span>
-              <ChevronRight aria-hidden />
-            </button>
-          ) : (
-            <div className="divide-y divide-border">
-              {items.map((c) => (
-                <button key={c.id} type="button" onClick={() => go({ screen: "catalog", ws, id: c.id })} className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors hover:bg-card-hover">
-                  <Database className="shrink-0 text-muted" aria-hidden />
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{c.name}</span>
-                  {c.classification !== "normal" && <Badge tone="warning">{c.classification}</Badge>}
-                  <ChevronRight className="shrink-0 text-muted" aria-hidden />
-                </button>
-              ))}
-              <button type="button" onClick={() => go({ screen: "catalog", ws, id: null })} className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-3 text-left text-sm text-muted transition-colors hover:bg-card-hover">
-                <span className="flex-1">Open the catalog explorer</span>
-                <ChevronRight aria-hidden />
-              </button>
-            </div>
-          )}
-        </div>
-      </Section>
-
-      <Section title="Run and query" description="Statements and jobs run on compute your organization attached, each in a sandbox of its own, under the same access rules as the data.">
-        <div className="-m-1 divide-y divide-border">
-          {[
-            { icon: TerminalSquare, name: "SQL editor", note: "Ask a table a question and see the rows", to: { screen: "sql", ws } as const },
-            { icon: Briefcase, name: "Jobs and runs", note: "Python scripts over your data, with a history of every run", to: { screen: "compute", ws } as const },
-            { icon: Cpu, name: "Compute", note: "The machines work runs on, and whether they are answering", to: { screen: "compute", ws } as const },
-          ].map(({ icon: Icon, name, note, to }) => (
-            <button key={name} type="button" onClick={() => go(to)} className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors hover:bg-card-hover">
-              <Icon className="shrink-0 text-muted" aria-hidden />
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-foreground">{name}</span>
-                <span className="block text-xs text-muted">{note}</span>
-              </span>
-              <ChevronRight className="shrink-0 text-muted" aria-hidden />
-            </button>
-          ))}
-        </div>
-      </Section>
-
-      {here.admin && (
-        <Section title="Manage this workspace" description="Who works here, what they may do, and which catalogs show here.">
-          <button type="button" onClick={() => go({ screen: "settings", ws })} className="-m-1 flex w-[calc(100%+0.5rem)] cursor-pointer items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors hover:bg-card-hover">
-            <Gear className="shrink-0 text-muted" aria-hidden />
-            <span className="flex-1 text-sm font-medium text-foreground">Members, entitlements and catalogs</span>
-            <ChevronRight className="shrink-0 text-muted" aria-hidden />
-          </button>
-        </Section>
+    <Body>
+      <ObjectHeader title={w.data?.name ?? "Workspace"} />
+      {lately.length > 0 && (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-sm font-semibold">Recents</h2>
+          <DataTable columns={recentColumns} rows={lately} rowKey={(r) => r.id} onOpen={(r) => open(r.id)} />
+        </section>
       )}
-    </Page>
+      <section className="flex flex-col gap-2">
+        <h2 className="text-sm font-semibold">Catalogs</h2>
+        <DataTable columns={catalogColumns} rows={catalogs.data ?? []} rowKey={(c) => c.id} onOpen={(c) => open(c.id)} empty="No catalogs yet. Make one in the Catalog." />
+      </section>
+    </Body>
+  );
+}
+
+export function Named({ kind, name }: { kind: api.Kind; name: string }) {
+  const Icon = kindIcon[kind];
+  return (
+    <span className="inline-flex min-w-0 items-center gap-2">
+      <Icon className="shrink-0 text-muted" aria-hidden />
+      <span className="truncate font-medium text-accent">{name}</span>
+    </span>
   );
 }

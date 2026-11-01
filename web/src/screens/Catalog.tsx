@@ -1,20 +1,21 @@
-import { Database, MoreHorizontal, Plus, TerminalSquare, Trash2, UserCog } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import { Badge, Button, Dialog, DialogContent, DialogFooter, Menu, MenuContent, MenuItem, MenuTrigger, Page, PageEmpty, SettingGroup, SettingRow, Tabs, TabsContent, TabsList, TabsTrigger, confirmAction, toast } from "@/design";
+import { Copy, Database, RefreshCw, MoreHorizontal, Plus, TerminalSquare, Trash2, UserCog } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Body, Button, DataTable, DetailBlock, DetailRow, Dialog, DialogContent, DialogFooter, Menu, MenuContent, MenuItem, MenuTrigger, ObjectHeader, Page, PageEmpty, Tabs, TabsContent, TabsList, TabsTrigger, TreePane, WithRail, confirmAction, toast, type Column } from "@/design";
 import * as api from "@/api";
 import { go } from "@/route";
 import { openInEditor } from "@/sqlTabs";
 import { AccessList } from "@/components/AccessList";
 import { FilesTab } from "@/components/FilesTab";
-import { SampleData, TableTab } from "@/components/TableTab";
+import { SampleData, TableHistory, TableOverview } from "@/components/TableTab";
 import { NewDialog } from "@/components/NewDialog";
 import { PrincipalField } from "@/components/PrincipalField";
 import { Tree } from "@/components/Tree";
-import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
 import { when } from "@/format";
-import { useLoad, useWide } from "@/hooks";
+import { useLoad } from "@/hooks";
 import { Principal } from "@/components/Principal";
-import { canContain, kindLabel } from "@/kinds";
+import { Named } from "@/screens/Workspace";
+import { canContain, kindIcon, kindLabel } from "@/kinds";
+import { remember } from "@/recents";
 
 export function Catalog({ ws, id, me }: { ws: string; id: string | null; me: api.Me | undefined }) {
   const open = (to: string | null) => go({ screen: "catalog", ws, id: to });
@@ -86,31 +87,72 @@ export function Catalog({ ws, id, me }: { ws: string; id: string | null; me: api
     );
   }
 
+  const flat = useMemo(() => Object.values(children).flat(), [children]);
+  const [filter, setFilter] = useState("");
+  const shown = filter.trim() ? flat.filter((s) => s.name.includes(filter.trim().toLowerCase())) : null;
+  const top = children[""] ?? [];
+
+  const tree = (
+    <TreePane
+      title="Catalog"
+      actions={
+        <>
+          <Button variant="ghost" size="icon-sm" aria-label="Refresh" onClick={() => void load(selected.data?.parent_id ?? "")}>
+            <RefreshCw />
+          </Button>
+          <Button variant="ghost" size="icon-sm" aria-label="New" onClick={() => setCreating(true)}>
+            <Plus />
+          </Button>
+        </>
+      }
+      filter={filter}
+      onFilter={setFilter}
+    >
+      {topEmpty ? (
+        <p className="px-3 py-6 text-center text-xs text-muted">Nothing here yet. Create a catalog to begin.</p>
+      ) : shown ? (
+        <ul className="space-y-0.5">
+          {shown.map((s) => (
+            <li key={s.id}>
+              <Button variant="ghost" size="md" className="w-full justify-start gap-2 text-sm text-foreground" onClick={() => open(s.id)}>
+                {(() => {
+                  const Icon = kindIcon[s.kind];
+                  return <Icon className="text-muted" aria-hidden />;
+                })()}
+                <span className="truncate">{s.name}</span>
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <Tree byParent={children} expanded={expanded} selected={id} onToggle={toggle} onOpen={(s) => open(s.id)} />
+      )}
+    </TreePane>
+  );
+
+  const catalogColumns: Column<api.Securable>[] = [
+    { key: "name", header: "Name", width: "fill", cell: (c) => <Named kind={c.kind} name={c.name} /> },
+    { key: "owner", header: "Owner", cell: (c) => <Principal id={c.owner} /> },
+    { key: "created", header: "Created", cell: (c) => when(c.created_ms) },
+  ];
+
   return (
     <div className="flex h-full min-h-0">
-      <aside className={`${id ? "hidden md:flex" : "flex"} w-full shrink-0 flex-col border-border bg-sidebar md:w-80 md:border-r`}>
-        <div className="flex items-center gap-2 px-4 pb-2 pt-4">
-          <div className="min-w-0 flex-1">{me ? <WorkspaceSwitcher current={ws} all={me.workspaces} /> : <h1 className="text-sm font-semibold text-foreground">Catalog</h1>}</div>
-          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-            <Plus /> New
-          </Button>
-        </div>
-        <div className="scroll-area min-h-0 flex-1 px-2 pb-4">
-          {topEmpty ? (
-            <p className="px-3 py-6 text-center text-xs text-muted">Nothing here yet. Create a catalog to begin.</p>
-          ) : (
-            <Tree byParent={children} expanded={expanded} selected={id} onToggle={toggle} onOpen={(s) => open(s.id)} />
-          )}
-        </div>
-      </aside>
-
+      <div className={`${id ? "hidden md:block" : "block"} h-full w-full md:w-auto`}>{tree}</div>
       <section className={`${id ? "block" : "hidden md:block"} min-w-0 flex-1`}>
         {!id ? (
-          <Page title="Catalog" subtitle="Everything you keep here: catalogs hold schemas, and schemas hold tables, volumes and views.">
-            <PageEmpty icon={Database} title={topEmpty ? "Start with a catalog" : "Pick something on the left"} action={topEmpty ? <Button variant="primary" onClick={() => setCreating(true)}><Plus /> New catalog</Button> : undefined}>
-              {topEmpty ? "A catalog is the top-level home for a team's data." : "Open a volume to see its files, or any item to see who can reach it."}
-            </PageEmpty>
-          </Page>
+          <Body>
+            <ObjectHeader
+              icon={Database}
+              title="Catalogs"
+              actions={
+                <Button variant="primary" onClick={() => setCreating(true)}>
+                  <Plus /> New catalog
+                </Button>
+              }
+            />
+            <DataTable columns={catalogColumns} rows={top} rowKey={(c) => c.id} onOpen={(c) => open(c.id)} count={`${top.length} ${top.length === 1 ? "catalog" : "catalogs"}`} empty="Start with a catalog: the top-level home for a team's data." />
+          </Body>
         ) : selected.error ? (
           <Page title="Not found" onBack={() => open(null)}>
             <PageEmpty icon={Database} title="This isn't here, or you can't see it">{selected.error.message}</PageEmpty>
@@ -120,7 +162,10 @@ export function Catalog({ ws, id, me }: { ws: string; id: string | null; me: api
             key={selected.data.id}
             ws={ws}
             item={selected.data}
-            onBack={() => open(null)}
+            children={children[selected.data.id]}
+            load={load}
+            onOpen={open}
+            onNew={() => setCreating(true)}
             onChanged={selected.reload}
             onDropped={async (s) => {
               open(s.parent_id || null);
@@ -147,76 +192,122 @@ export function Catalog({ ws, id, me }: { ws: string; id: string | null; me: api
   );
 }
 
-function Detail({ ws, item, onBack, onDropped, onChanged }: { ws: string; item: api.Securable; onBack: () => void; onDropped: (s: api.Securable) => void; onChanged: () => void }) {
-  const wide = useWide();
+function Detail({ ws, item, children, load, onOpen, onNew, onDropped, onChanged }: { ws: string; item: api.Securable; children: api.Securable[] | undefined; load: (parent: string) => Promise<void>; onOpen: (id: string | null) => void; onNew: () => void; onDropped: (s: api.Securable) => void; onChanged: () => void }) {
   const [handing, setHanding] = useState(false);
   const [heir, setHeir] = useState("");
+  const [childFilter, setChildFilter] = useState("");
   const trail = useLoad(async () => {
-    const names: string[] = [];
-    let up = item.parent_id;
-    while (up) {
-      const p = await api.get(ws, up).catch(() => null);
+    const up: { id: string; name: string }[] = [];
+    let at = item.parent_id;
+    while (at) {
+      const p = await api.get(ws, at).catch(() => null);
       if (!p) break;
-      names.unshift(p.name);
-      up = p.parent_id;
+      up.unshift({ id: p.id, name: p.name });
+      at = p.parent_id;
     }
-    return names;
+    return up;
   }, item.id);
+  useEffect(() => {
+    remember(ws, { id: item.id, name: item.name, kind: item.kind });
+    if (canContain(item.kind)) void load(item.id);
+  }, [item.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const subtitle = [...(trail.data ?? []), kindLabel[item.kind].toLowerCase()].join(" / ");
+  const names = (trail.data ?? []).map((t) => t.name);
   const isVolume = item.kind === "volume";
   const isTable = item.kind === "table";
+  const isContainer = canContain(item.kind);
   // A table is named in full in SQL: catalog.schema.table.
-  const fullName = trail.data?.length === 2 ? `${trail.data.join(".")}.${item.name}` : null;
+  const fullName = names.length === 2 ? `${names.join(".")}.${item.name}` : null;
+  const kids = (children ?? []).filter((c) => c.name.includes(childFilter.trim().toLowerCase()));
+  const kidColumns: Column<api.Securable>[] = [
+    { key: "name", header: "Name", width: "fill", cell: (c) => <Named kind={c.kind} name={c.name} /> },
+    { key: "kind", header: "Type", cell: (c) => kindLabel[c.kind] },
+    { key: "owner", header: "Owner", cell: (c) => <Principal id={c.owner} /> },
+    { key: "created", header: "Created", cell: (c) => when(c.created_ms) },
+  ];
+  const details = (
+    <DetailBlock title={`About this ${kindLabel[item.kind].toLowerCase()}`}>
+      <DetailRow label="Owner"><Principal id={item.owner} /></DetailRow>
+      <DetailRow label="Created">{when(item.created_ms)}</DetailRow>
+      <DetailRow label="Class">{item.classification}</DetailRow>
+      <DetailRow label="Placement">{item.placement}</DetailRow>
+      <DetailRow label="Writes">{item.consistency === "transaction" ? "all together or not at all" : "one writer at a time"}</DetailRow>
+    </DetailBlock>
+  );
+  const crumbs = [{ label: "Catalog", onClick: () => onOpen(null) }, ...(trail.data ?? []).map((t) => ({ label: t.name, onClick: () => onOpen(t.id) }))];
   return (
-    <Page
-      title={item.name}
-      subtitle={subtitle}
-      onBack={wide ? undefined : onBack}
-      actions={
-        <>
-          {item.kind === "table" && fullName && (
-            <Button variant="primary" onClick={() => openInEditor(ws, `SELECT * FROM ${fullName} LIMIT 100`, item.name)}>
-              <TerminalSquare /> Query
-            </Button>
-          )}
-        <Menu>
-          <MenuTrigger asChild>
-            <Button variant="ghost" size="icon" aria-label="More">
-              <MoreHorizontal />
-            </Button>
-          </MenuTrigger>
-          <MenuContent align="end">
-            <MenuItem onSelect={() => setHanding(true)}>
-              <UserCog /> Change owner…
-            </MenuItem>
-            <MenuItem
-              className="text-danger"
-              onSelect={async () => {
-                if (!(await confirmAction({ title: `Drop ${item.name}?`, description: `${item.name} and everything inside it disappear now. Its files are removed for good in the background.`, confirmLabel: "Drop", danger: true }))) return;
-                try {
-                  await api.drop(ws, item.id);
-                  toast.success(`Dropping ${item.name}`, "It's gone from view; the files are being removed.");
-                  onDropped(item);
-                } catch (e) {
-                  toast.error("Could not drop it", (e as Error).message);
-                }
-              }}
-            >
-              <Trash2 /> Drop…
-            </MenuItem>
-          </MenuContent>
-        </Menu>
-        </>
-      }
-    >
-      <Tabs defaultValue={isVolume ? "files" : isTable ? "schema" : "about"} className="space-y-4">
-        <TabsList>
-          {isVolume && <TabsTrigger value="files">Files</TabsTrigger>}
-          {isTable && <TabsTrigger value="schema">Table</TabsTrigger>}
+    <Body>
+      <ObjectHeader
+        crumbs={crumbs}
+        icon={kindIcon[item.kind]}
+        title={item.name}
+        tools={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Copy the name"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(fullName ?? [...names, item.name].join("."));
+                toast.success("Copied");
+              } catch {
+                toast.error("Could not copy");
+              }
+            }}
+          >
+            <Copy />
+          </Button>
+        }
+        actions={
+          <>
+            {isTable && fullName && (
+              <Button variant="primary" onClick={() => openInEditor(ws, `SELECT * FROM ${fullName} LIMIT 100`, item.name)}>
+                <TerminalSquare /> Query
+              </Button>
+            )}
+            {isContainer && (
+              <Button variant="primary" onClick={onNew}>
+                <Plus /> New
+              </Button>
+            )}
+            <Menu>
+              <MenuTrigger asChild>
+                <Button variant="ghost" size="icon" aria-label="More">
+                  <MoreHorizontal />
+                </Button>
+              </MenuTrigger>
+              <MenuContent align="end">
+                <MenuItem onSelect={() => setHanding(true)}>
+                  <UserCog /> Change owner…
+                </MenuItem>
+                <MenuItem
+                  className="text-danger"
+                  onSelect={async () => {
+                    if (!(await confirmAction({ title: `Drop ${item.name}?`, description: `${item.name} and everything inside it disappear now. Its files are removed for good in the background.`, confirmLabel: "Drop", danger: true }))) return;
+                    try {
+                      await api.drop(ws, item.id);
+                      toast.success(`Dropping ${item.name}`, "It's gone from view; the files are being removed.");
+                      onDropped(item);
+                    } catch (e) {
+                      toast.error("Could not drop it", (e as Error).message);
+                    }
+                  }}
+                >
+                  <Trash2 /> Drop…
+                </MenuItem>
+              </MenuContent>
+            </Menu>
+          </>
+        }
+      />
+      <Tabs defaultValue={isVolume ? "files" : "overview"} className="flex flex-col gap-4">
+        <TabsList variant="line">
+          {isVolume ? <TabsTrigger value="files">Files</TabsTrigger> : <TabsTrigger value="overview">Overview</TabsTrigger>}
           {isTable && <TabsTrigger value="sample">Sample data</TabsTrigger>}
-          <TabsTrigger value="about">About</TabsTrigger>
-          <TabsTrigger value="access">Access</TabsTrigger>
+          {!isContainer && !isTable && <TabsTrigger value="details">Details</TabsTrigger>}
+          {isTable && <TabsTrigger value="details">Details</TabsTrigger>}
+          <TabsTrigger value="access">Permissions</TabsTrigger>
+          {isTable && <TabsTrigger value="history">History</TabsTrigger>}
         </TabsList>
         {isVolume && (
           <TabsContent value="files">
@@ -224,8 +315,15 @@ function Detail({ ws, item, onBack, onDropped, onChanged }: { ws: string; item: 
           </TabsContent>
         )}
         {isTable && (
-          <TabsContent value="schema">
-            <TableTab ws={ws} id={item.id} catalog={trail.data?.[0] ?? ""} full={fullName} />
+          <TabsContent value="overview">
+            <TableOverview ws={ws} id={item.id} catalog={names[0] ?? ""} owner={item.owner} created={item.created_ms} />
+          </TabsContent>
+        )}
+        {isContainer && (
+          <TabsContent value="overview">
+            <WithRail rail={details}>
+              <DataTable columns={kidColumns} rows={kids} rowKey={(c) => c.id} onOpen={(c) => onOpen(c.id)} filter={childFilter} onFilter={setChildFilter} count={`${kids.length} ${kids.length === 1 ? "item" : "items"}`} empty="Nothing inside yet." />
+            </WithRail>
           </TabsContent>
         )}
         {isTable && (
@@ -233,28 +331,19 @@ function Detail({ ws, item, onBack, onDropped, onChanged }: { ws: string; item: 
             <SampleData ws={ws} full={fullName} />
           </TabsContent>
         )}
-        <TabsContent value="about">
-          <SettingGroup title="Details">
-            <SettingRow label="Owner" description="The one who made it. They manage it.">
-              <Principal id={item.owner} />
-            </SettingRow>
-            <SettingRow label="Classification" description="How carefully the data is handled.">
-              <Badge tone={item.classification === "normal" ? "neutral" : "warning"}>{item.classification}</Badge>
-            </SettingRow>
-            <SettingRow label="Placement" description="Where the bytes live.">
-              <Badge>{item.placement}</Badge>
-            </SettingRow>
-            <SettingRow label="Consistency" description={item.consistency === "transaction" ? "Changes happen all together or not at all." : "Each change appears whole; one writer at a time."}>
-              <Badge>{item.consistency}</Badge>
-            </SettingRow>
-            <SettingRow label="Created">
-              <span className="text-xs text-muted">{when(item.created_ms)}</span>
-            </SettingRow>
-          </SettingGroup>
-        </TabsContent>
+        {(isVolume || isTable) && (
+          <TabsContent value="details">
+            <WithRail rail={<></>}>{<div className="max-w-md">{details}</div>}</WithRail>
+          </TabsContent>
+        )}
         <TabsContent value="access">
           <AccessList ws={ws} id={item.id} />
         </TabsContent>
+        {isTable && (
+          <TabsContent value="history">
+            <TableHistory ws={ws} id={item.id} />
+          </TabsContent>
+        )}
       </Tabs>
       <Dialog open={handing} onOpenChange={setHanding}>
         <DialogContent title={`Change the owner of ${item.name}`} description="The owner manages it and everything inside it. You keep any access you were given separately.">
@@ -282,6 +371,6 @@ function Detail({ ws, item, onBack, onDropped, onChanged }: { ws: string; item: 
           </div>
         </DialogContent>
       </Dialog>
-    </Page>
+    </Body>
   );
 }

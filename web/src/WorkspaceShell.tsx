@@ -1,11 +1,12 @@
 import { Cpu, Database, LayoutDashboard, LockKeyhole, Settings as Gear, TerminalSquare, type LucideIcon } from "lucide-react";
-import { Suspense, lazy } from "react";
-import { Button, PageEmpty, Page, Tooltip, cn } from "@/design";
+import { Suspense, lazy, type MouseEvent } from "react";
+import { Button, PageEmpty, Page, Sidebar, SidebarGroup, SidebarItem, TopBar, Workbench, cn } from "@/design";
 import * as api from "./api";
 import { Link, ThemeButton, UserMenu } from "./components/RailParts";
 import { useLoad, usePath } from "./hooks";
 import { Mark } from "./Mark";
-import { parseRoute, type Route } from "./route";
+import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
+import { go, hrefOf, parseRoute, type Route } from "./route";
 import { Catalog } from "./screens/Catalog";
 import { Settings } from "./screens/Settings";
 import { Workspace } from "./screens/Workspace";
@@ -13,6 +14,13 @@ import { Workspace } from "./screens/Workspace";
 // The code editor is the heaviest part of the app and only two screens use it, so they are loaded when first opened.
 const SqlEditor = lazy(() => import("./screens/SqlEditor").then((m) => ({ default: m.SqlEditor })));
 const Compute = lazy(() => import("./screens/Compute").then((m) => ({ default: m.Compute })));
+
+/** A sidebar link moves without reloading, and still opens in a new tab when asked to. */
+const navigate = (to: Route) => (e: MouseEvent<HTMLElement>) => {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+  e.preventDefault();
+  go(to);
+};
 
 /**
  * One workspace, as a website of its own. Everything in it belongs to this workspace, and nothing links back out: not to Home, not to the
@@ -24,36 +32,55 @@ export function WorkspaceShell({ ws }: { ws: string }) {
   const me = who.data;
   const mine = me?.workspaces.find((w) => w.id === ws);
 
-  const places: { to: Route; label: string; icon: LucideIcon; active: boolean; show: boolean }[] = [
-    { to: { screen: "workspace", ws }, label: "Workspace overview", icon: LayoutDashboard, active: route.screen === "workspace", show: true },
-    { to: { screen: "catalog", ws, id: null }, label: "Catalog", icon: Database, active: route.screen === "catalog", show: true },
-    { to: { screen: "sql", ws }, label: "SQL editor", icon: TerminalSquare, active: route.screen === "sql", show: true },
-    { to: { screen: "compute", ws }, label: "Compute", icon: Cpu, active: route.screen === "compute", show: true },
-    { to: { screen: "settings", ws }, label: "Workspace settings", icon: Gear, active: route.screen === "settings", show: Boolean(mine?.admin) },
+  const places: { to: Route; label: string; icon: LucideIcon; active: boolean; show: boolean; group: "work" | "sql" | "admin" }[] = [
+    { to: { screen: "workspace", ws }, label: "Home", icon: LayoutDashboard, active: route.screen === "workspace", show: true, group: "work" },
+    { to: { screen: "catalog", ws, id: null }, label: "Catalog", icon: Database, active: route.screen === "catalog", show: true, group: "work" },
+    { to: { screen: "compute", ws }, label: "Compute", icon: Cpu, active: route.screen === "compute", show: true, group: "work" },
+    { to: { screen: "sql", ws }, label: "SQL editor", icon: TerminalSquare, active: route.screen === "sql", show: true, group: "sql" },
+    { to: { screen: "settings", ws }, label: "Settings", icon: Gear, active: route.screen === "settings", show: Boolean(mine?.admin), group: "admin" },
   ];
+  const shown = places.filter((p) => p.show);
+  const item = (p: (typeof places)[number]) => (
+    <SidebarItem key={p.label} icon={p.icon} active={p.active} href={hrefOf(p.to)} onClick={navigate(p.to)}>
+      {p.label}
+    </SidebarItem>
+  );
 
   return (
-    <div className="flex h-full flex-col-reverse bg-background text-foreground md:flex-row">
-      <nav aria-label="Main" className="flex shrink-0 items-center justify-around gap-1 border-t border-border bg-sidebar px-2 py-1.5 md:w-14 md:flex-col md:justify-start md:border-r md:border-t-0 md:px-0 md:py-3">
-        <div className="hidden md:mb-3 md:block" aria-hidden>
-          <Mark />
-        </div>
-        {places
-          .filter((p) => p.show)
-          .map(({ to, label, icon: Icon, active }) => (
-            <Tooltip key={label} label={label} side="right">
-              <Button asChild variant="ghost" size="icon" className={cn(active && "bg-accent/20 text-accent hover:bg-accent/20")}>
-                <Link to={to} aria-label={label} aria-current={active ? "page" : undefined}>
-                  <Icon />
-                </Link>
-              </Button>
-            </Tooltip>
-          ))}
-        <div className="hidden flex-1 md:block" />
-        <ThemeButton />
-        <UserMenu me={me} note={mine ? `${mine.name} · ${mine.org_alias === "Personal" ? "your own space" : mine.org_alias}` : undefined} />
+    <Workbench
+      top={
+        <TopBar
+          left={
+            <>
+              <Mark />
+              {me && <WorkspaceSwitcher current={ws} all={me.workspaces} />}
+            </>
+          }
+          right={
+            <>
+              <ThemeButton />
+              <UserMenu me={me} note={mine ? `${mine.name} · ${mine.org_alias === "Personal" ? "your own space" : mine.org_alias}` : undefined} />
+            </>
+          }
+        />
+      }
+      side={
+        <Sidebar footer={shown.filter((p) => p.group === "admin").map(item)}>
+          <SidebarGroup>{shown.filter((p) => p.group === "work").map(item)}</SidebarGroup>
+          <SidebarGroup label="SQL">{shown.filter((p) => p.group === "sql").map(item)}</SidebarGroup>
+        </Sidebar>
+      }
+    >
+      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-20 flex items-center justify-around border-t border-border bg-sidebar px-2 py-1.5 md:hidden">
+        {shown.map(({ to, label, icon: Icon, active }) => (
+          <Button key={label} asChild variant="ghost" size="icon" className={cn(active && "bg-accent/20 text-accent hover:bg-accent/20")}>
+            <Link to={to} aria-label={label} aria-current={active ? "page" : undefined}>
+              <Icon />
+            </Link>
+          </Button>
+        ))}
       </nav>
-      <main className="min-h-0 min-w-0 flex-1">
+      <div className="h-full min-h-0 pb-12 md:pb-0">
         {me && !mine ? (
           <Page title="No access">
             <PageEmpty icon={LockKeyhole} title="You are not part of this workspace">
@@ -71,7 +98,7 @@ export function WorkspaceShell({ ws }: { ws: string }) {
             {route.screen === "settings" && <Settings ws={ws} me={me} />}
           </>
         )}
-      </main>
-    </div>
+      </div>
+    </Workbench>
   );
 }
