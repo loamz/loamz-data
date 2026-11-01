@@ -344,7 +344,7 @@ function ComputeTab({ org }: { org: string }) {
                 <span className="block text-xs text-muted">Up to {c.max_memory_mb.toLocaleString()} MB and {c.max_cpu_millis / 1000} CPU per run{c.kind === "serverless" ? " · starts when a statement arrives, stops when idle" : c.last_seen_ms ? ` · last heard ${when(c.last_seen_ms)}` : " · its agent has not connected yet"}</span>
               </span>
               <Badge tone="neutral">{c.kind === "serverless" ? "serverless" : "machine"}</Badge>
-              <Badge tone={computeState(c, now) === "running" ? "success" : "neutral"}>{stateLabel[computeState(c, now)]}</Badge>
+              <Badge tone={computeState(c, now) === "running" ? "success" : computeState(c, now) === "starting" ? "accent" : "neutral"}>{stateLabel[computeState(c, now)]}</Badge>
               <PowerButton org={org} compute={c} state={computeState(c, now)} onChanged={list.reload} />
               {c.kind === "agent" && (
               <Button

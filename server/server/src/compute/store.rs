@@ -488,3 +488,25 @@ pub async fn last_used<'e, E: Executor<'e, Database = Any>>(
         .collect::<std::result::Result<_, sqlx::Error>>()
         .map_err(Into::into)
 }
+
+/// For each target of an organization with a statement or job not yet finished: when the oldest of them was asked for.
+pub async fn unfinished_since<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    org: &str,
+) -> Result<std::collections::HashMap<String, i64>> {
+    let rows = sqlx::query(
+        "SELECT target_id, MIN(created_ms) AS at FROM runs WHERE org_id = $1 AND state IN ('queued','running') GROUP BY target_id",
+    )
+    .bind(org)
+    .fetch_all(e)
+    .await?;
+    rows.iter()
+        .map(|r| {
+            Ok((
+                r.try_get::<String, _>("target_id")?,
+                r.try_get::<i64, _>("at")?,
+            ))
+        })
+        .collect::<std::result::Result<_, sqlx::Error>>()
+        .map_err(Into::into)
+}

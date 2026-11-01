@@ -219,6 +219,17 @@ pub fn providers(app: &App) -> Vec<Provider> {
     ]
 }
 
+/// For each target with work not yet finished: when the oldest of it was asked for.
+///
+/// # Errors
+/// The database could not be read.
+pub async fn unfinished_since(
+    app: &App,
+    org: &str,
+) -> Result<std::collections::HashMap<String, i64>> {
+    store::unfinished_since(app.db.pool(), org).await
+}
+
 /// When each of an organization's compute last finished some work, by target id.
 ///
 /// # Errors
@@ -909,17 +920,30 @@ pub async fn lease(app: &App, target: &Target) -> Result<Option<Lease>> {
     let storage = if ids.is_empty() || app.issuer.is_none() {
         None
     } else {
-        match storage_for(app, &run.org_id, &ids, limits.timeout_s).await {
+        // The credentials come from the storage provider over the network: one more try before giving up on a slow answer.
+        let mut got = storage_for(app, &run.org_id, &ids, limits.timeout_s).await;
+        if got.is_err() {
+            got = storage_for(app, &run.org_id, &ids, limits.timeout_s).await;
+        }
+        match got {
             Ok(s) => Some(s),
             Err(e) => {
-                // The run cannot be given its data; say so now rather than let it time out.
+                // The run cannot be given its data; say so now, and why, rather than let it time out.
+                tracing::warn!(run = %run.id, error = %e, "could not prepare a run's data access");
+                let why = match e {
+                    Error::Internal(_) | Error::Unavailable(_) => {
+                        "the storage service did not answer in time, so this statement's data could not be prepared: try again"
+                            .to_owned()
+                    }
+                    other => other.to_string(),
+                };
                 let report = Report {
                     state: "failed".into(),
                     exit_code: -1,
                     stdout: String::new(),
                     stderr: String::new(),
                     result: String::new(),
-                    error: e.to_string(),
+                    error: why,
                 };
                 complete(app, target, &run.id, report).await?;
                 return Ok(None);

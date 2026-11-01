@@ -9,6 +9,9 @@ pub const LEASE_MS: i64 = 90_000;
 /// A run nobody picked up for this long is failed, so a question never waits for ever on compute that is gone.
 pub const QUEUE_MS: i64 = 600_000;
 
+/// How long serverless compute stays up after its last statement (what the endpoint is deployed with).
+pub const IDLE_STOP_MS: i64 = 60_000;
+
 pub const MAX_ROWS: i64 = 10_000;
 pub const DEFAULT_ROWS: i64 = 1_000;
 pub const MAX_TIMEOUT_S: i64 = 3_600;

@@ -118,7 +118,7 @@ export function Compute({ ws, me }: { ws: string; me: api.Me | undefined }) {
                       </span>
                       <span className="text-xs text-muted">{c.kind === "serverless" ? "Serverless SQL warehouse" : "Machine"}</span>
                       <span>
-                        <Badge tone={state === "running" ? "success" : "neutral"}>{stateLabel[state]}</Badge>
+                        <Badge tone={state === "running" ? "success" : state === "starting" ? "accent" : "neutral"}>{stateLabel[state]}</Badge>
                       </span>
                       <span className="text-xs text-muted">{sizeLabel(c)}</span>
                       <span className="flex items-center justify-end gap-1">

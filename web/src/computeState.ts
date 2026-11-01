@@ -3,18 +3,20 @@ import type { Compute } from "@/api";
 /** How long a serverless warehouse stays up after its last statement (what the endpoint is deployed with). */
 export const IDLE_STOP_MS = 60_000;
 
-export type ComputeState = "running" | "stopped" | "offline";
+export type ComputeState = "running" | "starting" | "stopped" | "offline";
 
 /** What a person sees of a piece of compute: a machine is running when its agent answers; a serverless warehouse is running for a
  *  minute after its last statement and otherwise stopped, which is fine: the next statement starts it. */
-export function computeState(c: Pick<Compute, "kind" | "online" | "last_used_ms" | "stopped_ms">, now: number): ComputeState {
+export function computeState(c: Pick<Compute, "kind" | "online" | "last_used_ms" | "stopped_ms" | "starting">, now: number): ComputeState {
+  if (c.kind === "serverless" && c.starting) return "starting";
   if (c.kind === "serverless") return c.last_used_ms > 0 && c.stopped_ms < c.last_used_ms && now - c.last_used_ms < IDLE_STOP_MS ? "running" : "stopped";
   return c.online ? "running" : "offline";
 }
 
-export const stateLabel: Record<ComputeState, string> = { running: "Running", stopped: "Stopped", offline: "Offline" };
+export const stateLabel: Record<ComputeState, string> = { running: "Running", starting: "Starting", stopped: "Stopped", offline: "Offline" };
 export const stateNote: Record<ComputeState, string> = {
   running: "",
+  starting: "Starting: the first statement after a stop takes about ten seconds",
   stopped: "Starts when a statement arrives",
   offline: "Its agent is not answering",
 };

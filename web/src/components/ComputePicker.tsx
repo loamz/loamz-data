@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Select } from "@/design";
 import * as api from "@/api";
+import { computeState, stateLabel } from "@/computeState";
 import { useLoad } from "@/hooks";
 
 const key = (ws: string) => `loamz.compute.${ws}`;
@@ -41,7 +42,20 @@ export function useCompute(ws: string) {
     },
     [ws],
   );
-  return { online, all, target: target || undefined, choose, loaded: targets.data !== undefined };
+  const current = all.find((c) => c.id === target);
+  return { online, all, current, target: target || undefined, choose, reload: targets.reload, loaded: targets.data !== undefined };
+}
+
+/** What the compute in use is doing while a statement waits on it: the first one after a stop starts it, and says so. */
+export function useWaitingOn(compute: ReturnType<typeof useCompute>, running: boolean): string {
+  const { current, reload } = compute;
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(reload, 2000);
+    return () => clearInterval(t);
+  }, [running, reload]);
+  if (!current) return "the compute";
+  return current.starting ? `Starting ${current.name}` : `Running on ${current.name}`;
 }
 
 export function ComputePicker({ compute, className = "w-52" }: { compute: ReturnType<typeof useCompute>; className?: string }) {
@@ -54,7 +68,7 @@ export function ComputePicker({ compute, className = "w-52" }: { compute: Return
       placeholder="Select compute"
       value={target ?? ""}
       onValueChange={choose}
-      options={all.map((c) => ({ value: c.id, label: `${c.name} · ${c.kind === "serverless" ? "serverless" : "machine"}` }))}
+      options={all.map((c) => ({ value: c.id, label: `${c.name} · ${c.kind === "serverless" ? "serverless" : "machine"} · ${stateLabel[computeState(c, Date.now())]}` }))}
     />
   );
 }
