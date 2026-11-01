@@ -185,17 +185,18 @@ describe("profileSql", () => {
 describe("computeState", () => {
   const now = 1_000_000;
   it("keeps a serverless warehouse running for a minute after its last statement, then stopped", () => {
-    const base = { kind: "serverless" as const, online: true, stopped_ms: 0 };
+    const base = { kind: "serverless" as const, online: true, stopped_ms: 0, starting: false };
     expect(computeState({ ...base, last_used_ms: now - 5_000 }, now)).toBe("running");
     expect(computeState({ ...base, last_used_ms: now - IDLE_STOP_MS - 1 }, now)).toBe("stopped");
     expect(computeState({ ...base, last_used_ms: 0 }, now)).toBe("stopped");
+    expect(computeState({ ...base, last_used_ms: 0, starting: true }, now)).toBe("starting");
     // Stopped by hand after its last use: stopped now, not a minute from now.
     expect(computeState({ ...base, last_used_ms: now - 5_000, stopped_ms: now - 1_000 }, now)).toBe("stopped");
     expect(computeState({ ...base, last_used_ms: now - 500, stopped_ms: now - 5_000 }, now)).toBe("running");
   });
   it("shows a machine as running only while its agent answers", () => {
-    expect(computeState({ kind: "agent", online: true, last_used_ms: 0, stopped_ms: 0 }, now)).toBe("running");
-    expect(computeState({ kind: "agent", online: false, last_used_ms: now, stopped_ms: 0 }, now)).toBe("offline");
+    expect(computeState({ kind: "agent", online: true, last_used_ms: 0, stopped_ms: 0, starting: false }, now)).toBe("running");
+    expect(computeState({ kind: "agent", online: false, last_used_ms: now, stopped_ms: 0, starting: false }, now)).toBe("offline");
   });
   it("words the size", () => {
     expect(sizeLabel({ max_cpu_millis: 1000, max_memory_mb: 2048 })).toBe("1 CPU · 2 GB");

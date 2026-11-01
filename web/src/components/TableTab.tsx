@@ -4,7 +4,7 @@ import { Badge, Button, PageEmpty, toast } from "@/design";
 import * as api from "@/api";
 import { useLoad } from "@/hooks";
 import { ResultGrid } from "@/components/ResultGrid";
-import { ComputePicker, useCompute } from "@/components/ComputePicker";
+import { ComputePicker, useCompute, useWaitingOn } from "@/components/ComputePicker";
 import { elapsedText, useClock } from "@/clock";
 import { useStatement } from "@/components/useStatement";
 import { when } from "@/format";
@@ -30,6 +30,7 @@ export function SampleData({ ws, full }: { ws: string; full: string | null }) {
   const compute = useCompute(ws);
   const now = useClock(s.running);
   const waited = s.startedAt ? elapsedText(now - s.startedAt) : "";
+  const doing = useWaitingOn(compute, s.running);
   const { start } = s;
   const { target, loaded } = compute;
   // Read when the tab opens, and again when another compute is chosen.
@@ -46,9 +47,7 @@ export function SampleData({ ws, full }: { ws: string; full: string | null }) {
               ? "There is no compute yet. Create one on the Compute page."
               : "Choose a compute to read the rows."
             : s.running
-              ? s.run?.state === "running"
-                ? `Reading on the compute… ${waited}`
-                : `Waiting for the compute… ${waited}`
+              ? `${doing}… ${waited}`
               : result
                 ? `The first ${result.rows.length.toLocaleString()} ${result.rows.length === 1 ? "row" : "rows"} · ${elapsedText(s.tookMs ?? 0)}`
                 : ""}

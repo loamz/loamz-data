@@ -10,11 +10,12 @@ export function PowerButton({ org, compute, state, onChanged }: { org: string; c
   const [busy, setBusy] = useState(false);
   if (compute.kind !== "serverless") return null;
   const starting = state !== "running";
+  const inFlight = state === "starting";
   return (
     <Button
       variant="secondary"
       size="sm"
-      disabled={busy}
+      disabled={busy || inFlight}
       onClick={async () => {
         setBusy(true);
         try {
@@ -28,7 +29,7 @@ export function PowerButton({ org, compute, state, onChanged }: { org: string; c
         }
       }}
     >
-      {starting ? <Play /> : <Square />} {busy ? (starting ? "Starting…" : "Stopping…") : starting ? "Start" : "Stop"}
+      {starting ? <Play /> : <Square />} {busy || inFlight ? (starting ? "Starting…" : "Stopping…") : starting ? "Start" : "Stop"}
     </Button>
   );
 }

@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{
-    model::{Run, Target, is_terminal},
+    model::{IDLE_STOP_MS, Run, Target, is_terminal},
     service::{self, Ctx, JobRequest, Report, SqlRequest},
 };
 use crate::{
@@ -65,7 +65,7 @@ fn run_view(r: &Run, detail: bool) -> Value {
     v
 }
 
-fn target_view(t: &Target, now: i64, last_run_ms: i64) -> Value {
+fn target_view(t: &Target, now: i64, last_run_ms: i64, unfinished_since: i64) -> Value {
     // A serverless target's `last_seen_ms` is when it was last started (positive) or stopped (negative) by hand; it is in use from
     // then or from its last run, whichever is later.
     let (started, stopped) = if t.serverless() {
@@ -73,7 +73,12 @@ fn target_view(t: &Target, now: i64, last_run_ms: i64) -> Value {
     } else {
         (0, 0)
     };
-    json!({"id": t.id, "name": t.name, "kind": t.kind, "online": t.online(now), "max_memory_mb": t.max_memory_mb, "max_cpu_millis": t.max_cpu_millis, "last_seen_ms": t.last_seen_ms.max(0), "last_used_ms": last_run_ms.max(started), "stopped_ms": stopped, "created_ms": t.created_ms})
+    // Serverless compute is starting when something is waiting on it and it had been idle (stopped or past its idle minute) when
+    // that was asked for: the first statement after a stop pays for the start.
+    let last_used = last_run_ms.max(started);
+    let was_cold = unfinished_since > 0
+        && (last_used == 0 || unfinished_since - last_used > IDLE_STOP_MS || stopped >= last_used);
+    json!({"starting": t.serverless() && was_cold, "id": t.id, "name": t.name, "kind": t.kind, "online": t.online(now), "max_memory_mb": t.max_memory_mb, "max_cpu_millis": t.max_cpu_millis, "last_seen_ms": t.last_seen_ms.max(0), "last_used_ms": last_run_ms.max(started), "stopped_ms": stopped, "created_ms": t.created_ms})
 }
 
 async fn listed(
@@ -83,10 +88,18 @@ async fn listed(
 ) -> Result<Vec<Value>> {
     let now = now_ms();
     let used = service::last_used(app, org).await?;
+    let waiting = service::unfinished_since(app, org).await?;
     Ok(service::targets(app, identity, org)
         .await?
         .iter()
-        .map(|t| target_view(t, now, used.get(&t.id).copied().unwrap_or(0)))
+        .map(|t| {
+            target_view(
+                t,
+                now,
+                used.get(&t.id).copied().unwrap_or(0),
+                waiting.get(&t.id).copied().unwrap_or(0),
+            )
+        })
         .collect())
 }
 
@@ -228,7 +241,7 @@ async fn attach(
             req.max_cpu_millis.unwrap_or(1000),
         )
         .await?;
-        return Ok((StatusCode::CREATED, Json(target_view(&t, now_ms(), 0))));
+        return Ok((StatusCode::CREATED, Json(target_view(&t, now_ms(), 0, 0))));
     }
     let e = service::add_target(
         &app,
@@ -239,14 +252,14 @@ async fn attach(
         req.max_cpu_millis.unwrap_or(1000),
     )
     .await?;
-    let mut v = target_view(&e.target, now_ms(), 0);
+    let mut v = target_view(&e.target, now_ms(), 0, 0);
     v["secret"] = json!(e.secret);
     Ok((StatusCode::CREATED, Json(v)))
 }
 
 async fn rotate(State(app): State<Shared>, c: OrgCtx) -> Result<Json<Value>> {
     let e = service::new_secret(&app, &c.identity, &c.org, &param(&c.params, "id")?).await?;
-    let mut v = target_view(&e.target, now_ms(), 0);
+    let mut v = target_view(&e.target, now_ms(), 0, 0);
     v["secret"] = json!(e.secret);
     Ok(Json(v))
 }
