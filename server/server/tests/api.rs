@@ -1000,6 +1000,42 @@ async fn an_agent_acting_for_a_person(s: Server) {
 }
 both!(an_agent_acting_for_a_person);
 
+/// The identity provider issues a person's token to the agents client only by exchange, with no `act` claim: that is the agent
+/// acting for the person, and gets only what both may do.
+async fn a_token_exchanged_for_the_agents_client_is_the_agent_acting_for_the_person(s: Server) {
+    let ws = s.acme().await;
+    s.assign(&ws, &[&bob()]).await;
+    s.put(
+        &format!("/api/v1/workspaces/{ws}/members"),
+        &ana(),
+        json!({"principal": "sp:loamz-agents", "role": "user"}),
+    )
+    .await;
+    let (c, _, v) = tree(&s, &ws).await;
+    s.upload(&ws, &v, "a.txt", &ana(), b"hello").await;
+    s.grant(&ws, &ana(), &c, "user:bob", "contributor").await;
+    let exchanged = bob().via_client("loamz-agents");
+
+    // bob can read; the agents client has been given nothing, so the pair cannot.
+    assert_eq!(s.download(&ws, &v, "a.txt", &bob()).await.status, 200);
+    assert_eq!(s.download(&ws, &v, "a.txt", &exchanged).await.status, 404);
+    // Given read, the pair can read, but not write, though bob can.
+    s.grant(&ws, &ana(), &c, "sp:loamz-agents", "reader").await;
+    assert_eq!(s.download(&ws, &v, "a.txt", &exchanged).await.status, 200);
+    assert_eq!(
+        s.upload(&ws, &v, "b.txt", &exchanged, b"x").await.status,
+        403
+    );
+    // A client that is not an agent client is just where bob signed in.
+    assert_eq!(
+        s.download(&ws, &v, "a.txt", &bob().via_client("some-web-app"))
+            .await
+            .status,
+        200
+    );
+}
+both!(a_token_exchanged_for_the_agents_client_is_the_agent_acting_for_the_person);
+
 // ---- files -------------------------------------------------------------------------------------------------------
 
 async fn files(s: Server) {

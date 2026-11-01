@@ -29,7 +29,8 @@ impl App {
         Ok(Self {
             db,
             stores: settings.storage.open()?,
-            verifier: Verifier::new(&settings.issuer),
+            verifier: Verifier::new(&settings.issuer)
+                .with_agent_clients(settings.agent_clients.clone()),
             issuer: settings.storage.issuer()?,
             max_upload: settings.max_upload_bytes,
             serverless_token: settings.serverless_token()?,

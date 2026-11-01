@@ -72,6 +72,7 @@ pub struct Who {
     pub groups: Vec<String>,
     pub roles: Vec<String>,
     pub acting: Option<String>,
+    pub client: Option<String>,
 }
 
 /// A person with no organization.
@@ -82,6 +83,7 @@ pub fn person(sub: &str) -> Who {
         groups: vec![],
         roles: vec![],
         acting: None,
+        client: None,
     }
 }
 
@@ -109,6 +111,12 @@ impl Who {
         self
     }
 
+    /// The person's token was issued to this client (an exchange for an agent), not to the web app.
+    pub fn via_client(mut self, client: &str) -> Self {
+        self.client = Some(client.into());
+        self
+    }
+
     pub fn acting_as(mut self, agent: &str) -> Self {
         self.acting = Some(agent.into());
         self
@@ -121,7 +129,7 @@ impl Who {
 
 fn mint_with(who: &Who, pem: &str, audience: &str, issuer: &str) -> String {
     let mut claims = json!({
-        "sub": who.sub, "iss": issuer, "aud": audience, "azp": "loamz-data",
+        "sub": who.sub, "iss": issuer, "aud": audience, "azp": who.client.as_deref().unwrap_or("loamz-data"),
         "exp": loamz_data_server::kernel::now_ms() / 1000 + 3600,
         "name": who.sub, "email": format!("{}@example.test", who.sub),
         "groups": who.groups,
@@ -227,6 +235,7 @@ pub async fn server_with(db: Db, max_upload: u64) -> Server {
         max_upload_bytes: max_upload,
         web_dir: None,
         serverless_token_file: None,
+        agent_clients: vec!["loamz-agents".into()],
     };
     db.migrate(&MIGRATIONS).await.unwrap();
     let app = shared(App::new(&settings, db).unwrap());
