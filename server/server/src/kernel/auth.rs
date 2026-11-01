@@ -166,6 +166,8 @@ pub struct Verifier {
     keys: RwLock<HashMap<String, (String, String)>>,
     issuer: String,
     token_endpoint: RwLock<Option<String>>,
+    /// Clients that act for people (the agents server). A person's token issued to one of them is that agent acting for the person.
+    agent_clients: Vec<String>,
     last_fetch: Mutex<Option<Instant>>,
     http: reqwest::Client,
 }
@@ -177,12 +179,21 @@ impl Verifier {
             keys: RwLock::new(HashMap::new()),
             issuer: issuer.trim_end_matches('/').to_owned(),
             token_endpoint: RwLock::new(None),
+            agent_clients: Vec::new(),
             last_fetch: Mutex::new(None),
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
                 .unwrap_or_default(),
         }
+    }
+
+    /// Names the clients that act for people. The identity provider issues a person's token to such a client only by exchange
+    /// (they have no sign-in of their own), so it means: this agent, for this person.
+    #[must_use]
+    pub fn with_agent_clients(mut self, clients: Vec<String>) -> Self {
+        self.agent_clients = clients;
+        self
     }
 
     /// Installs a key set as the identity provider publishes it. Only RSA signing keys are kept.
@@ -330,10 +341,14 @@ impl Verifier {
         } else {
             Kind::Person
         };
+        let client = c.azp.unwrap_or_default();
+        let actor = c.act.map(|a| a.sub).filter(|s| !s.is_empty()).or_else(|| {
+            (kind == Kind::Person && self.agent_clients.contains(&client)).then(|| client.clone())
+        });
         Ok(Identity {
             name: c.name.or(c.preferred_username).unwrap_or_default(),
             email: c.email.unwrap_or_default(),
-            client: c.azp.unwrap_or_default(),
+            client,
             subject: c.sub,
             kind,
             groups,
@@ -343,7 +358,7 @@ impl Verifier {
                 .and_then(|mut m| m.remove(AUDIENCE))
                 .map(|a| a.roles)
                 .unwrap_or_default(),
-            actor: c.act.map(|a| a.sub).filter(|s| !s.is_empty()),
+            actor,
             scope: None,
         })
     }

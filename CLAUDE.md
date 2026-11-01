@@ -30,6 +30,7 @@ The governed data platform of Loamz, in Rust. Design: `docs/charter.md`. Plan: `
 - Erase and drop are durable tasks (lease, retry, verify, audit). Never a best-effort call.
 - A statement is parsed (`compute/sql.rs`): one plain query, every table named `catalog.schema.table` and authorized (`SELECT`) before it is queued. DuckDB inside the sandbox is a second, separate lock.
 - Compute agents connect out; the server never connects to a machine. An agent holds only its own secret (shown once, kept as a hash). A serverless target is the one exception: the server calls the provider's https endpoint, which takes SQL only, only over data classified `normal`.
+- A person's token issued to a client named in `LOAMZ_DATA_AGENT_CLIENTS` (the agents server's, reached only by token exchange) is that agent acting for the person: `act` is not needed, and the pair gets what both may do. Deploy: `loamz-agents` client in the realm template (standard token exchange on; local: `deploy/dev/agents_client.py`).
 - A machine never holds the bucket's key: a run is given credentials for exactly its tables' folders, read-only, for its time limit plus five minutes (a statement has no job token at all; only a job's volume files go through the API with one).
 - SQL is written once in the portable subset (TEXT ids, BIGINT numbers, `$1`, NOT NULL columns); every database test runs on SQLite and on Postgres.
 - Errors are RFC 9457; the API is versioned (`/api/v1`); the OpenAPI document and the router must agree (a test checks it).
