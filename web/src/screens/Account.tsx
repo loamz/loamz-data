@@ -4,6 +4,7 @@ import { Badge, Button, Dialog, DialogContent, DialogFooter, Input, NavItem, Pag
 import * as api from "@/api";
 import { AgentCommand } from "@/components/AgentCommand";
 import { CreateCompute } from "@/components/CreateCompute";
+import { computeState, stateLabel } from "@/computeState";
 import { Principal } from "@/components/Principal";
 import { PrincipalField } from "@/components/PrincipalField";
 import { describe, shortTarget, when } from "@/format";
@@ -303,6 +304,14 @@ function ComputeTab({ org }: { org: string }) {
   const items = list.data ?? [];
 
   // Anyone watching the list sees a machine come online as soon as its agent connects.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => {
+      setNow(Date.now());
+      list.reload();
+    }, 10_000);
+    return () => clearInterval(t);
+  }, [list.reload]);
   const waiting = items.some((c) => !c.online && c.kind === "agent");
   useEffect(() => {
     if (!waiting) return;
@@ -334,7 +343,7 @@ function ComputeTab({ org }: { org: string }) {
                 <span className="block text-xs text-muted">Up to {c.max_memory_mb.toLocaleString()} MB and {c.max_cpu_millis / 1000} CPU per run{c.kind === "serverless" ? " · starts when a statement arrives, stops when idle" : c.last_seen_ms ? ` · last heard ${when(c.last_seen_ms)}` : " · its agent has not connected yet"}</span>
               </span>
               <Badge tone="neutral">{c.kind === "serverless" ? "serverless" : "machine"}</Badge>
-              <Badge tone={c.online ? "success" : "neutral"}>{c.online ? (c.kind === "serverless" ? "ready" : "online") : "offline"}</Badge>
+              <Badge tone={computeState(c, now) === "running" ? "success" : "neutral"}>{stateLabel[computeState(c, now)]}</Badge>
               {c.kind === "agent" && (
               <Button
                 variant="secondary"
