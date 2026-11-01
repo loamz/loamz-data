@@ -363,14 +363,30 @@ pub async fn entitled(
     standing: Standing,
     entitlement: &str,
 ) -> Result<bool> {
-    if standing.is_admin() {
-        return Ok(true);
+    // An agent acting for a person is entitled only where both are: the person's entitlement is not the agent's to borrow, and
+    // an admin's agent is not an admin. Each side stands on its own.
+    let Some(w) = store::get(app.db.pool(), id).await? else {
+        return Ok(false);
+    };
+    let sides = orgs::sides(app, identity, &w.org_id).await?;
+    if sides.len() == 1 {
+        if standing.is_admin() {
+            return Ok(true);
+        }
+        let held = store::entitlements(app.db.pool(), id).await?;
+        return Ok(held
+            .iter()
+            .any(|(p, e)| e == entitlement && identity.principals().contains(p)));
     }
-    let mine = identity.principals();
-    Ok(store::entitlements(app.db.pool(), id)
-        .await?
-        .iter()
-        .any(|(p, e)| e == entitlement && mine.contains(p)))
+    let members = store::members(app.db.pool(), id).await?;
+    let held = store::entitlements(app.db.pool(), id).await?;
+    Ok(sides.iter().all(|side| {
+        side.account_admin
+            || best_role(&members, &side.principals) == Some(Role::Admin)
+            || held
+                .iter()
+                .any(|(p, e)| e == entitlement && side.principals.contains(p))
+    }))
 }
 
 /// Whether a catalog is visible from this workspace: unbound catalogs are visible everywhere, bound ones only where bound.
