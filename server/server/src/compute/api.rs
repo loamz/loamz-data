@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{
-    model::{IDLE_STOP_MS, Run, Target, is_terminal},
+    model::{IDLE_STOP_MS, Run, RunFilter, Target, is_terminal},
     service::{self, Ctx, JobRequest, Report, SqlRequest},
 };
 use crate::{
@@ -214,7 +214,7 @@ async fn list_runs(
     {
         return Err(Error::Invalid("unknown state".into()));
     }
-    let filter = super::store::RunFilter {
+    let filter = RunFilter {
         by: p.by,
         kind: p.kind,
         target: p.target,

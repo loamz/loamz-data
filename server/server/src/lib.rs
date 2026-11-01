@@ -4,6 +4,7 @@ pub mod compute;
 pub mod governance;
 pub mod kernel;
 pub mod storage;
+pub mod work;
 
 use std::sync::Arc;
 
@@ -26,6 +27,7 @@ pub fn routes() -> Routes {
         .merge(storage::volumes::api::routes())
         .merge(storage::tables::api::routes())
         .merge(compute::api::routes())
+        .merge(work::queries::api::routes())
 }
 
 /// The router, and the `(method, path)` pairs it serves.

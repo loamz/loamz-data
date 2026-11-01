@@ -75,6 +75,21 @@ pub struct Run {
     pub finished_ms: i64,
 }
 
+/// What a list of runs is narrowed to. Every field left empty narrows nothing.
+#[derive(Default, Clone)]
+pub struct RunFilter {
+    /// What one person asked for (their own, or what ran on their behalf).
+    pub by: Option<String>,
+    /// `sql` or `job`.
+    pub kind: Option<String>,
+    pub target: Option<String>,
+    pub state: Option<String>,
+    /// Started asking at or after this time.
+    pub since_ms: Option<i64>,
+    /// Started asking before this time (also the page cursor: the oldest `created_ms` of the page before).
+    pub before_ms: Option<i64>,
+}
+
 pub const STATES: [&str; 6] = [
     "queued",
     "running",

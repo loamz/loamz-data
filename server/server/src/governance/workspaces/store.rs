@@ -80,7 +80,12 @@ pub async fn rename<'e, E: Executor<'e, Database = Any>>(e: E, id: &str, name: &
 
 /// Removes a workspace and everything that hangs on it (members, entitlements, bindings).
 pub async fn delete(c: &mut sqlx::AnyConnection, id: &str) -> Result<()> {
-    for table in ["workspace_members", "entitlements", "catalog_bindings"] {
+    for table in [
+        "workspace_members",
+        "entitlements",
+        "catalog_bindings",
+        "saved_queries",
+    ] {
         sqlx::query(&format!("DELETE FROM {table} WHERE workspace_id = $1"))
             .bind(id)
             .execute(&mut *c)
