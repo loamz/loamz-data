@@ -33,7 +33,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ENV HOME=/opt/loamz/home
 RUN mkdir -p $HOME && /app/.venv/bin/python -c "import duckdb; duckdb.connect().execute('INSTALL httpfs')"
 
-FROM python:3.14-slim-bookworm AS runtime
+FROM python:3.15-slim-bookworm AS runtime
 RUN useradd --system --uid 10001 --home-dir /opt/loamz/home app
 COPY --from=build --chown=app:app /app/.venv /app/.venv
 COPY --from=build --chown=app:app /opt/loamz/home /opt/loamz/home
