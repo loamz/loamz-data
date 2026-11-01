@@ -7,6 +7,8 @@ export interface Tab {
   id: string;
   title: string;
   sql: string;
+  /** Set when the tab holds a saved query: its id, and the SQL as last saved (so a change shows as unsaved). */
+  saved?: { id: string; name: string; sql: string };
 }
 export interface Tabs {
   tabs: Tab[];
@@ -45,6 +47,19 @@ export function openInEditor(ws: string, sql: string, title: string): void {
   const state = load(ws);
   const tab = blank(title, sql);
   save(ws, { tabs: [...state.tabs, tab], active: tab.id });
+  go({ screen: "sql", ws });
+}
+
+/** Opens a saved query in its own tab (the one already open, if it is). */
+export function openSaved(ws: string, q: { id: string; name: string; sql: string }): void {
+  const state = load(ws);
+  const open = state.tabs.find((t) => t.saved?.id === q.id);
+  if (open) {
+    save(ws, { ...state, active: open.id });
+  } else {
+    const tab: Tab = { ...blank(q.name, q.sql), saved: { id: q.id, name: q.name, sql: q.sql } };
+    save(ws, { tabs: [...state.tabs, tab], active: tab.id });
+  }
   go({ screen: "sql", ws });
 }
 
