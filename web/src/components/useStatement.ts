@@ -24,7 +24,7 @@ export function useStatement(ws: string) {
         let r = await api.runStatement(ws, sql, limit, 0, target);
         setState({ running: true, run: r, startedAt: began });
         while (api.isRunning(r)) {
-          await new Promise((ok) => setTimeout(ok, 700));
+          await new Promise((ok) => setTimeout(ok, 350));
           r = await api.run(ws, r.id);
           setState({ running: true, run: r, startedAt: began });
         }

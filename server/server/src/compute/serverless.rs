@@ -30,7 +30,8 @@ pub async fn serve_forever(app: crate::kernel::state::Shared) {
             }
             Err(e) => tracing::error!(error = %e, "serverless: could not list targets"),
         }
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        // Looks again at once when a statement is queued, and at least once a second.
+        let _ = tokio::time::timeout(Duration::from_secs(1), app.queued.notified()).await;
     }
 }
 
@@ -83,14 +84,13 @@ async fn call(app: &App, target: &Target, lease: &service::Lease) -> Result<Repo
             "secret": storage["secret"], "session_token": storage["session_token"],
         },
     });
-    let http = reqwest::Client::builder()
+    let sent = std::time::Instant::now();
+    let call = app
+        .serverless_http
+        .post(&target.endpoint)
         .timeout(Duration::from_secs(
             u64::try_from(lease.limits.timeout_s).unwrap_or(120) + 30,
         ))
-        .build()
-        .map_err(|e| Error::Internal(e.to_string()))?;
-    let call = http
-        .post(&target.endpoint)
         .bearer_auth(token)
         .json(&body)
         .send();
@@ -132,7 +132,20 @@ async fn call(app: &App, target: &Target, lease: &service::Lease) -> Result<Repo
         None => Report {
             state: "succeeded".into(),
             exit_code: 0,
-            stdout: format!("ran on {} (serverless)", target.name),
+            stdout: format!(
+                "ran on {} (serverless): {} ms in the call{}",
+                target.name,
+                sent.elapsed().as_millis(),
+                v["timings_ms"]
+                    .as_object()
+                    .map_or_else(String::new, |t| format!(
+                        "; inside it: {}",
+                        t.iter()
+                            .map(|(k, v)| format!("{k} {v} ms"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ))
+            ),
             stderr: String::new(),
             result: text,
             error: String::new(),

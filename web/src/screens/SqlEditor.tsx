@@ -74,7 +74,7 @@ export function SqlEditor({ ws }: { ws: string }) {
       set(id, { run: r });
       // Keep asking until it ends (a cold start can take ten seconds or more).
       while (api.isRunning(r) && !cancelling.current[id]) {
-        await new Promise((ok) => setTimeout(ok, 700));
+        await new Promise((ok) => setTimeout(ok, 350));
         r = await api.run(ws, r.id);
         set(id, { run: r });
       }
