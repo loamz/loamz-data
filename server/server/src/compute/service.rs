@@ -929,7 +929,7 @@ pub async fn lease(app: &App, target: &Target) -> Result<Option<Lease>> {
             Ok(s) => Some(s),
             Err(e) => {
                 // The run cannot be given its data; say so now, and why, rather than let it time out.
-                tracing::warn!(run = %run.id, error = %e, "could not prepare a run's data access");
+                tracing::warn!(run = %run.id, error = ?e, "could not prepare a run's data access");
                 let why = match e {
                     Error::Internal(_) | Error::Unavailable(_) => {
                         "the storage service did not answer in time, so this statement's data could not be prepared: try again"
