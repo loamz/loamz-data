@@ -5,7 +5,11 @@
 //   workspace site  /                        the workspace's overview: what you can do in it
 //                   /catalog[/<id>]          its Catalog Explorer
 //                   /sql                     the SQL editor
-//                   /compute                 jobs and runs, and the compute they run on
+//                   /queries                 saved queries
+//                   /history                 every statement and job that ran, who ran it and how long it took
+//                   /jobs                    jobs that ran, and the button to start one
+//                   /runs/<id>               one run: how it went and what it printed
+//                   /compute                 the compute work runs on
 //                   /settings                its members, entitlements, bound catalogs
 
 export type AccountTab = "workspaces" | "compute" | "admins" | "activity" | "erase";
@@ -14,6 +18,10 @@ export type Route =
   | { screen: "home" }
   | { screen: "workspace"; ws: string }
   | { screen: "sql"; ws: string }
+  | { screen: "queries"; ws: string }
+  | { screen: "history"; ws: string }
+  | { screen: "jobs"; ws: string }
+  | { screen: "run"; ws: string; id: string }
   | { screen: "compute"; ws: string }
   | { screen: "catalog"; ws: string; id: string | null }
   | { screen: "settings"; ws: string }
@@ -27,6 +35,10 @@ export function parseRoute(path: string, kind: "account" | "workspace", ws = "")
   if (kind === "workspace") {
     if (parts[0] === "settings") return { screen: "settings", ws };
     if (parts[0] === "sql") return { screen: "sql", ws };
+    if (parts[0] === "queries") return { screen: "queries", ws };
+    if (parts[0] === "history") return { screen: "history", ws };
+    if (parts[0] === "jobs") return { screen: "jobs", ws };
+    if (parts[0] === "runs" && parts[1]) return { screen: "run", ws, id: parts[1] };
     if (parts[0] === "compute") return { screen: "compute", ws };
     if (parts[0] === "catalog") return { screen: "catalog", ws, id: parts[1] && WS.test(parts[1]) ? parts[1] : null };
     return { screen: "workspace", ws };
@@ -50,6 +62,14 @@ export function hrefOf(r: Route): string {
       return "/settings";
     case "sql":
       return "/sql";
+    case "queries":
+      return "/queries";
+    case "history":
+      return "/history";
+    case "jobs":
+      return "/jobs";
+    case "run":
+      return `/runs/${encodeURIComponent(r.id)}`;
     case "compute":
       return "/compute";
     case "account":

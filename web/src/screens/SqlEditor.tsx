@@ -1,14 +1,12 @@
-import { History, Play, Plus, Square, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Badge, Button, Select, cn, toast } from "@/design";
+import { Play, Plus, Save, Square, X } from "lucide-react";
+import { useCallback, useRef, useState } from "react";
+import { Badge, Button, Dialog, DialogContent, DialogFooter, Input, Select, TreePane, cn, toast } from "@/design";
 import * as api from "@/api";
 import { elapsedText, useClock } from "@/clock";
 import { ComputePicker, useCompute, useWaitingOn } from "@/components/ComputePicker";
 import { CodeEditor, type CodeEditorHandle } from "@/components/CodeEditor";
 import { ResultGrid } from "@/components/ResultGrid";
 import { SchemaBrowser } from "@/components/SchemaBrowser";
-import { when } from "@/format";
-import { useLoad } from "@/hooks";
 import { go } from "@/route";
 import { blank, load, save, titleOf, type Tab } from "@/sqlTabs";
 
@@ -37,7 +35,7 @@ export function SqlEditor({ ws }: { ws: string }) {
   // Which compute to run on: shared with the table pages, and remembered here.
   const picked = useCompute(ws);
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
-  const [bottom, setBottom] = useState<"results" | "history">("results");
+  const [naming, setNaming] = useState<string | null>(null);
   const handle = useRef<CodeEditorHandle | null>(null);
   const cancelling = useRef<Record<string, boolean>>({});
 
@@ -67,7 +65,6 @@ export function SqlEditor({ ws }: { ws: string }) {
     cancelling.current[id] = false;
     const started = Date.now();
     set(id, { running: true, run: undefined, error: undefined, since: started, elapsed: undefined });
-    setBottom("results");
     try {
       // Asked without waiting, so the screen learns at once that the run is queued, then running, instead of after the wait.
       let r = await api.runStatement(ws, sql, Number(limit), 0, picked.target);
@@ -108,26 +105,37 @@ export function SqlEditor({ ws }: { ws: string }) {
     update({ tabs: rest, active: state.active === id ? rest[0]!.id : state.active });
   };
   const insert = (name: string) => edit({ sql: tab.sql ? `${tab.sql.replace(/\s*$/, "")}\n${name}` : `SELECT * FROM ${name} LIMIT 100`, title: titleOf(tab.sql || name, tab.title) });
+  const dirty = !tab.saved || tab.saved.sql !== tab.sql;
+  const saveAs = async (name: string) => {
+    try {
+      const draft = { name, sql: tab.sql, ...(picked.target && { target_id: picked.target }) };
+      const q = tab.saved ? await api.changeQuery(ws, tab.saved.id, draft) : await api.saveQuery(ws, draft);
+      edit({ title: q.name, saved: { id: q.id, name: q.name, sql: q.sql } });
+      toast.success(`Saved ${q.name}`);
+      setNaming(null);
+    } catch (e) {
+      toast.error("Could not save it", (e as Error).message);
+    }
+  };
   const failed = out?.run && (out.run.state === "failed" || out.run.state === "timed_out");
   const result = out?.run?.state === "succeeded" ? out.run.result : null;
   const noCompute = loaded && picked.all.length === 0;
 
   return (
     <div className="flex h-full min-h-0">
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
-        <div className="px-4 pb-2 pt-4">
-          <h1 className="text-sm font-semibold text-foreground">Tables</h1>
-          <p className="text-2xs text-muted">Click one to put its name in the editor.</p>
-        </div>
-        <SchemaBrowser ws={ws} onPick={insert} onNames={setNames} />
-      </aside>
+      <div className="hidden md:block">
+        <TreePane title="Tables">
+          <SchemaBrowser ws={ws} onPick={insert} onNames={setNames} />
+        </TreePane>
+      </div>
 
       <section className="flex min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-sidebar px-2 py-1.5">
           {state.tabs.map((t) => (
             <div key={t.id} className={cn("group flex h-control-sm shrink-0 items-center rounded-md text-xs transition-colors", t.id === tab.id ? "bg-card text-foreground shadow-sm" : "text-muted hover:text-foreground")}>
               <button type="button" className="h-full max-w-48 cursor-pointer truncate pl-3 pr-1.5" onClick={() => update({ ...state, active: t.id })}>
-                {titleOf(t.sql, t.title)}
+                {t.saved ? t.saved.name : titleOf(t.sql, t.title)}
+                {t.saved && t.saved.sql !== t.sql && <span className="ml-1.5 inline-block size-1.5 rounded-full bg-muted" aria-label="unsaved changes" />}
                 {outcomes[t.id]?.running && <span className="ml-1.5 inline-block size-1.5 animate-pulse rounded-full bg-accent" aria-label="running" />}
               </button>
               <button type="button" aria-label={`Close ${t.title}`} className="mr-1 flex size-5 cursor-pointer items-center justify-center rounded text-muted-foreground opacity-0 hover:bg-card-hover hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100" onClick={() => close(t.id)}>
@@ -150,7 +158,9 @@ export function SqlEditor({ ws }: { ws: string }) {
               <Play /> Run
             </Button>
           )}
-          <span className="hidden text-2xs text-muted-foreground sm:inline">Ctrl+Enter · runs the selection if there is one</span>
+          <Button variant="secondary" disabled={!tab.sql.trim() || !dirty} onClick={() => (tab.saved ? void saveAs(tab.saved.name) : setNaming(titleOf(tab.sql, tab.title)))}>
+            <Save /> Save
+          </Button>
           <span className="flex-1" />
           <Select size="sm" className="w-32" aria-label="Rows to return" value={limit} onValueChange={setLimit} options={LIMITS} />
           <ComputePicker compute={picked} />
@@ -165,22 +175,8 @@ export function SqlEditor({ ws }: { ws: string }) {
           <CodeEditor key={tab.id} value={tab.sql} onChange={(sql) => edit({ sql })} onRun={(sel) => void run(sel)} language="sql" names={names} hint="SELECT * FROM catalog.schema.table LIMIT 100" handle={handle} />
         </div>
 
-        <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1">
-          {(["results", "history"] as const).map((b) => (
-            <button key={b} type="button" onClick={() => setBottom(b)} className={cn("h-control-sm cursor-pointer rounded-md px-3 text-xs font-medium transition-colors", bottom === b ? "bg-accent/15 text-accent" : "text-muted hover:text-foreground")}>
-              {b === "results" ? "Results" : "History"}
-            </button>
-          ))}
-        </div>
-
         <div className="min-h-0 flex-1">
-          {bottom === "history" ? (
-            <HistoryList ws={ws} onOpen={(sql) => {
-                const t = blank(titleOf(sql, "Query"), sql);
-                update({ tabs: [...state.tabs, t], active: t.id });
-                setBottom("results");
-              }} />
-          ) : out?.error ? (
+          {out?.error ? (
             <Problem title="This could not be run" text={out.error} />
           ) : failed ? (
             <Problem title={out.run?.state === "timed_out" ? "It took too long" : "The statement failed"} text={out.run?.error || out.run?.stderr || "No details were reported."} />
@@ -195,6 +191,25 @@ export function SqlEditor({ ws }: { ws: string }) {
           )}
         </div>
       </section>
+
+      <Dialog open={naming !== null} onOpenChange={(o) => !o && setNaming(null)}>
+        <DialogContent title="Save this query" description="Saved queries are yours; a workspace admin can see them too.">
+          <form
+            className="mt-4 space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (naming?.trim()) void saveAs(naming.trim());
+            }}
+          >
+            <Input autoFocus aria-label="Name" value={naming ?? ""} onChange={(e) => setNaming(e.target.value)} />
+            <DialogFooter>
+              <Button type="submit" variant="primary" disabled={!naming?.trim()}>
+                Save
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -213,26 +228,6 @@ function Problem({ title, text }: { title: string; text: string }) {
     <div className="scroll-area h-full px-4 py-3">
       <p className="text-sm font-medium text-danger">{title}</p>
       <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-xs text-foreground">{text}</pre>
-    </div>
-  );
-}
-
-/** The statements you have run here, newest first. Open one to put it in a new tab. */
-function HistoryList({ ws, onOpen }: { ws: string; onOpen: (sql: string) => void }) {
-  const list = useLoad(() => api.runs(ws, "sql", 40), ws);
-  const items = useMemo(() => list.data ?? [], [list.data]);
-  if (list.loading && !list.data) return <Empty text="Loading…" />;
-  if (items.length === 0) return <Empty text="Nothing run here yet." />;
-  return (
-    <div className="scroll-area h-full divide-y divide-border">
-      {items.map((r) => (
-        <button key={r.id} type="button" className="flex w-full cursor-pointer items-center gap-3 px-4 py-2 text-left transition-colors hover:bg-card-hover" onClick={async () => onOpen((await api.run(ws, r.id).catch(() => r)).spec?.sql ?? r.title)}>
-          <History className="shrink-0 text-muted" aria-hidden />
-          <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">{r.title}</span>
-          <Badge tone={r.state === "succeeded" ? "success" : r.state === "failed" || r.state === "timed_out" ? "danger" : "neutral"}>{r.state.replace("_", " ")}</Badge>
-          <span className="w-20 shrink-0 text-right text-2xs text-muted">{when(r.created_ms)}</span>
-        </button>
-      ))}
     </div>
   );
 }

@@ -240,6 +240,9 @@ export interface Run {
   error: string;
   exit_code: number;
   cancelling: boolean;
+  /** How long it waited before starting, and how long it ran once it had ended; -1 while not known yet. */
+  queued_ms: number;
+  run_ms: number;
   // Only on the one run, not in a list:
   spec?: { sql?: string; script?: string; tables?: { id: string; name: string }[]; inputs?: { id: string; kind: string; name: string }[]; output?: string; memory_mb?: number; cpu_millis?: number; timeout_s?: number };
   stdout?: string;
@@ -251,7 +254,22 @@ export const isRunning = (r: Pick<Run, "state">) => r.state === "queued" || r.st
 export const computeTargets = async (ws: string) => (await json<{ items: Compute[] }>(send("GET", `${W(ws)}/compute/targets`))).items;
 export const runStatement = (ws: string, sql: string, limit: number, waitS = 30, target?: string) => json<Run>(send("POST", `${W(ws)}/sql/statements`, { sql, limit, wait_s: waitS, ...(target ? { target } : {}) }));
 export const submitJob = (ws: string, b: { title: string; script: string; inputs: string[]; output: string; timeout_s?: number }) => json<Run>(send("POST", `${W(ws)}/runs`, b));
-export const runs = async (ws: string, kind?: "sql" | "job", limit = 50) => (await json<{ items: Run[] }>(send("GET", `${W(ws)}/runs?limit=${limit}${kind ? `&kind=${kind}` : ""}`))).items;
+export interface RunFilter {
+  kind?: "sql" | "job";
+  /** A person's subject (an admin's narrowing). */
+  by?: string;
+  target?: string;
+  state?: RunState;
+  since_ms?: number;
+  /** The `created_ms` of the oldest run of the page before. */
+  before_ms?: number;
+  limit?: number;
+}
+export const runs = async (ws: string, f: RunFilter = {}) => {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(f)) if (v !== undefined && v !== "") q.set(k, String(v));
+  return (await json<{ items: Run[] }>(send("GET", `${W(ws)}/runs?${q.toString()}`))).items;
+};
 export const run = (ws: string, id: string) => json<Run>(send("GET", `${W(ws)}/runs/${enc(id)}`));
 export const cancelRun = (ws: string, id: string) => json<Run>(send("POST", `${W(ws)}/runs/${enc(id)}/cancel`, {}));
 
@@ -272,3 +290,25 @@ export const newComputeSecret = (org: string, id: string) => json<Compute>(send(
 export const startCompute = (org: string, id: string) => none(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}/start`, {}));
 export const stopCompute = (org: string, id: string) => none(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}/stop`, {}));
 export const detachCompute = (org: string, id: string) => none(send("DELETE", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}`));
+
+// Saved queries
+export interface SavedQuery {
+  id: string;
+  owner: string;
+  name: string;
+  sql: string;
+  /** The compute it last ran on; empty for none. */
+  target_id: string;
+  created_ms: number;
+  updated_ms: number;
+}
+export interface QueryDraft {
+  name: string;
+  sql: string;
+  target_id?: string;
+}
+export const savedQueries = async (ws: string) => (await json<{ items: SavedQuery[] }>(send("GET", `${W(ws)}/queries`))).items;
+export const savedQuery = (ws: string, id: string) => json<SavedQuery>(send("GET", `${W(ws)}/queries/${enc(id)}`));
+export const saveQuery = (ws: string, d: QueryDraft) => json<SavedQuery>(send("POST", `${W(ws)}/queries`, d));
+export const changeQuery = (ws: string, id: string, d: QueryDraft) => json<SavedQuery>(send("PUT", `${W(ws)}/queries/${enc(id)}`, d));
+export const deleteQuery = (ws: string, id: string) => none(send("DELETE", `${W(ws)}/queries/${enc(id)}`));

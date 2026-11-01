@@ -1,4 +1,4 @@
-import { Cpu, Database, LayoutDashboard, LockKeyhole, Settings as Gear, TerminalSquare, type LucideIcon } from "lucide-react";
+import { Briefcase, Cpu, Database, FileCode2, History, LayoutDashboard, LockKeyhole, Settings as Gear, TerminalSquare, type LucideIcon } from "lucide-react";
 import { Suspense, lazy, type MouseEvent } from "react";
 import { Button, PageEmpty, Page, Sidebar, SidebarGroup, SidebarItem, TopBar, Workbench, cn } from "@/design";
 import * as api from "./api";
@@ -8,11 +8,15 @@ import { Mark } from "./Mark";
 import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import { go, hrefOf, parseRoute, type Route } from "./route";
 import { Catalog } from "./screens/Catalog";
+import { Jobs } from "./screens/Jobs";
+import { Queries } from "./screens/Queries";
+import { Run } from "./screens/Run";
 import { Settings } from "./screens/Settings";
 import { Workspace } from "./screens/Workspace";
 
 // The code editor is the heaviest part of the app and only two screens use it, so they are loaded when first opened.
 const SqlEditor = lazy(() => import("./screens/SqlEditor").then((m) => ({ default: m.SqlEditor })));
+const QueryHistory = lazy(() => import("./screens/QueryHistory").then((m) => ({ default: m.QueryHistory })));
 const Compute = lazy(() => import("./screens/Compute").then((m) => ({ default: m.Compute })));
 
 /** A sidebar link moves without reloading, and still opens in a new tab when asked to. */
@@ -35,8 +39,11 @@ export function WorkspaceShell({ ws }: { ws: string }) {
   const places: { to: Route; label: string; icon: LucideIcon; active: boolean; show: boolean; group: "work" | "sql" | "admin" }[] = [
     { to: { screen: "workspace", ws }, label: "Home", icon: LayoutDashboard, active: route.screen === "workspace", show: true, group: "work" },
     { to: { screen: "catalog", ws, id: null }, label: "Catalog", icon: Database, active: route.screen === "catalog", show: true, group: "work" },
+    { to: { screen: "jobs", ws }, label: "Jobs", icon: Briefcase, active: route.screen === "jobs" || route.screen === "run", show: true, group: "work" },
     { to: { screen: "compute", ws }, label: "Compute", icon: Cpu, active: route.screen === "compute", show: true, group: "work" },
     { to: { screen: "sql", ws }, label: "SQL editor", icon: TerminalSquare, active: route.screen === "sql", show: true, group: "sql" },
+    { to: { screen: "queries", ws }, label: "Queries", icon: FileCode2, active: route.screen === "queries", show: true, group: "sql" },
+    { to: { screen: "history", ws }, label: "Query history", icon: History, active: route.screen === "history", show: true, group: "sql" },
     { to: { screen: "settings", ws }, label: "Settings", icon: Gear, active: route.screen === "settings", show: Boolean(mine?.admin), group: "admin" },
   ];
   const shown = places.filter((p) => p.show);
@@ -93,8 +100,12 @@ export function WorkspaceShell({ ws }: { ws: string }) {
             {route.screen === "catalog" && <Catalog ws={ws} id={route.id} me={me} />}
             <Suspense fallback={null}>
               {route.screen === "sql" && <SqlEditor ws={ws} />}
+              {route.screen === "history" && <QueryHistory ws={ws} me={me} />}
             {route.screen === "compute" && <Compute ws={ws} me={me} />}
             </Suspense>
+            {route.screen === "queries" && <Queries ws={ws} />}
+            {route.screen === "jobs" && <Jobs ws={ws} />}
+            {route.screen === "run" && <Run ws={ws} id={route.id} />}
             {route.screen === "settings" && <Settings ws={ws} me={me} />}
           </>
         )}
