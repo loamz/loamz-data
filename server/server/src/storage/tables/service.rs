@@ -9,7 +9,7 @@ use futures_util::StreamExt;
 use loamz_lake::grants::Credentials;
 use serde_json::{Value, json};
 
-use super::model;
+use super::{manifests, model};
 use crate::{
     governance::{
         audit::{model::Who, service as audit, service::Uow},
@@ -30,6 +30,8 @@ use crate::{
 
 /// Metadata files stay small; one bigger than this is refused rather than read into memory.
 const MAX_METADATA: u64 = 16 * 1024 * 1024;
+/// The most manifests one profile will read.
+const MAX_MANIFESTS: usize = 200;
 /// How long vended credentials last for a person's client.
 const CLIENT_TTL: Duration = Duration::from_mins(15);
 
@@ -186,7 +188,12 @@ pub async fn tables(
     )
 }
 
-async fn read_metadata(app: &App, id: &str, rel: &str) -> Result<Value> {
+/// A metadata file's bytes. They are named by a unique id and never change, so each is read from the bucket once.
+async fn read_bytes(app: &App, id: &str, rel: &str) -> Result<std::sync::Arc<Vec<u8>>> {
+    let key = format!("{id}/{rel}");
+    if let Some(hit) = app.metadata_cache.lock().ok().and_then(|c| c.get(&key)) {
+        return Ok(hit);
+    }
     let (mut stream, size) = app.stores.open(id, rel).await?;
     if size > MAX_METADATA {
         return Err(Error::Internal("a metadata file is too large".into()));
@@ -197,7 +204,15 @@ async fn read_metadata(app: &App, id: &str, rel: &str) -> Result<Value> {
             &chunk.map_err(|e| Error::Internal(format!("reading metadata: {e}")))?,
         );
     }
-    serde_json::from_slice(&bytes)
+    let bytes = std::sync::Arc::new(bytes);
+    if let Ok(mut c) = app.metadata_cache.lock() {
+        c.put(key, bytes.clone());
+    }
+    Ok(bytes)
+}
+
+async fn read_metadata(app: &App, id: &str, rel: &str) -> Result<Value> {
+    serde_json::from_slice(&read_bytes(app, id, rel).await?)
         .map_err(|e| Error::Internal(format!("a metadata file is not JSON: {e}")))
 }
 
@@ -529,6 +544,7 @@ pub async fn describe(app: &App, ask: &Ask<'_>, id: &str) -> Result<Value> {
     Ok(json!({
         "format": "iceberg",
         "location": app.stores.uri(&entry.id)?,
+        "stats": model::table_stats(&meta),
         "columns": model::columns(&meta),
         "snapshots": snapshots,
         "current_snapshot": meta["current-snapshot-id"].to_string(),
@@ -546,4 +562,79 @@ pub async fn locate(app: &App, org: &str, id: &str) -> Result<(String, String)> 
         return Err(nope());
     }
     Ok((app.stores.uri(&entry.id)?, entry.metadata))
+}
+
+/// Per-column counts and ranges of a table, from what its files recorded about themselves: no data is read and no compute is
+/// used. Needs `SELECT`, because a range is a fact about the data.
+///
+/// # Errors
+/// Not allowed, or the table's metadata cannot be read.
+pub async fn column_stats(app: &App, ask: &Ask<'_>, id: &str) -> Result<Value> {
+    let (entry, target) = catalogs::target_in(app, ask.workspace, ask.org, id).await?;
+    if entry.kind != Kind::Table {
+        return Err(nope());
+    }
+    iam::require(
+        app,
+        ask.identity,
+        ask.org,
+        ask.sides,
+        Privilege::Select,
+        &target,
+    )
+    .await?;
+    let meta = read_metadata(app, &entry.id, &entry.metadata).await?;
+    let current = &meta["current-snapshot-id"];
+    let list = meta["snapshots"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|s| &s["snapshot-id"] == current)
+        .and_then(|s| s["manifest-list"].as_str());
+    let base = format!("{}/", app.stores.uri(&entry.id)?);
+    let rel = |path: &str| {
+        path.strip_prefix(&base)
+            .map(str::to_owned)
+            .ok_or_else(|| Error::Internal("a manifest is outside the table's own folder".into()))
+    };
+    let mut files = Vec::new();
+    if let Some(list) = list {
+        let paths = manifests::manifest_paths(&read_bytes(app, &entry.id, &rel(list)?).await?)
+            .map_err(Error::Internal)?;
+        if paths.len() > MAX_MANIFESTS {
+            return Err(Error::Invalid(
+                "this table has too many manifests to profile from its metadata".into(),
+            ));
+        }
+        let reads = paths.iter().map(|path| async {
+            let bytes = read_bytes(app, &entry.id, &rel(path)?).await?;
+            manifests::data_files(&bytes).map_err(Error::Internal)
+        });
+        for found in futures_util::future::join_all(reads).await {
+            files.extend(found?);
+        }
+    }
+    let schema = meta["schemas"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|s| s["schema-id"] == meta["current-schema-id"]);
+    let columns: Vec<(i64, String, String)> = schema
+        .and_then(|s| s["fields"].as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|f| {
+            Some((
+                f["id"].as_i64()?,
+                f["name"].as_str()?.to_owned(),
+                f["type"].as_str()?.to_owned(),
+            ))
+        })
+        .collect();
+    let stats = manifests::combine(&files, &columns);
+    Ok(json!({
+        "records": files.iter().map(|f| f.records).sum::<i64>(),
+        "data_files": files.len(),
+        "columns": stats.iter().map(|c| json!({"id": c.id, "name": c.name, "values": c.values, "nulls": c.nulls, "min": c.min, "max": c.max})).collect::<Vec<_>>(),
+    }))
 }

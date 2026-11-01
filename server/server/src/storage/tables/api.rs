@@ -280,6 +280,12 @@ async fn make_table(
     Ok((StatusCode::CREATED, Json(json!({"id": made.id}))))
 }
 
+async fn column_stats(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
+    Ok(Json(
+        service::column_stats(&app, &ask(&c), &param(&c, "id")?).await?,
+    ))
+}
+
 async fn describe(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
     Ok(Json(
         service::describe(&app, &ask(&c), &param(&c, "id")?).await?,
@@ -319,4 +325,5 @@ pub fn routes() -> Routes {
         )
         .post("/api/v1/workspaces/{ws}/tables", make_table)
         .get("/api/v1/workspaces/{ws}/tables/{id}", describe)
+        .get("/api/v1/workspaces/{ws}/tables/{id}/stats", column_stats)
 }

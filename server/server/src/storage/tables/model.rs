@@ -492,6 +492,105 @@ pub fn columns(meta: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+/// What the current snapshot says about the whole table, with no data read: rows, files, bytes and when it was written.
+#[must_use]
+pub fn table_stats(meta: &Value) -> Value {
+    let current = &meta["current-snapshot-id"];
+    let snapshot = meta["snapshots"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|s| &s["snapshot-id"] == current);
+    let number = |key: &str| {
+        snapshot
+            .and_then(|s| s["summary"][key].as_str())
+            .and_then(|v| v.parse::<i64>().ok())
+    };
+    json!({
+        "records": number("total-records"),
+        "data_files": number("total-data-files"),
+        "size_bytes": number("total-files-size"),
+        "at_ms": snapshot.map(|s| s["timestamp-ms"].clone()),
+    })
+}
+
+/// A column bound as it compares: every value of one column decodes to the same kind.
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub enum Bound {
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    Text(String),
+}
+
+/// A bound as people read it: dates and timestamps in words, the rest as they are.
+#[must_use]
+pub fn show_bound(ty: &str, b: &Bound) -> String {
+    match (ty, b) {
+        ("date", Bound::Int(days)) => civil(*days),
+        ("timestamp" | "timestamptz" | "timestamp_ns" | "timestamptz_ns", Bound::Int(t)) => {
+            let micros = if ty.ends_with("_ns") { *t / 1000 } else { *t };
+            let (days, rest) = (
+                micros.div_euclid(86_400_000_000),
+                micros.rem_euclid(86_400_000_000),
+            );
+            let secs = rest / 1_000_000;
+            format!(
+                "{} {:02}:{:02}:{:02}",
+                civil(days),
+                secs / 3600,
+                secs % 3600 / 60,
+                secs % 60
+            )
+        }
+        (_, Bound::Int(i)) => i.to_string(),
+        (_, Bound::Float(f)) => f.to_string(),
+        (_, Bound::Bool(v)) => v.to_string(),
+        (_, Bound::Text(t)) => t.clone(),
+    }
+}
+
+/// Days since 1970-01-01 as `YYYY-MM-DD` (the proleptic Gregorian calendar).
+fn civil(days: i64) -> String {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Decodes a lower or upper bound as Iceberg stores it (a single value, little endian). Types whose bounds this does not read
+/// (decimals, binary, nested) give None, which only means "not shown".
+#[must_use]
+pub fn decode_bound(ty: &str, bytes: &[u8]) -> Option<Bound> {
+    match ty {
+        "boolean" => bytes.first().map(|b| Bound::Bool(*b != 0)),
+        "int" | "date" => <[u8; 4]>::try_from(bytes)
+            .ok()
+            .map(|b| Bound::Int(i64::from(i32::from_le_bytes(b)))),
+        "long" | "time" | "timestamp" | "timestamptz" | "timestamp_ns" | "timestamptz_ns" => {
+            <[u8; 8]>::try_from(bytes)
+                .ok()
+                .map(|b| Bound::Int(i64::from_le_bytes(b)))
+        }
+        "float" => <[u8; 4]>::try_from(bytes)
+            .ok()
+            .map(|b| Bound::Float(f64::from(f32::from_le_bytes(b)))),
+        "double" => <[u8; 8]>::try_from(bytes)
+            .ok()
+            .map(|b| Bound::Float(f64::from_le_bytes(b))),
+        "string" => std::str::from_utf8(bytes)
+            .ok()
+            .map(|t| Bound::Text(t.to_owned())),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -650,6 +749,61 @@ mod tests {
         assert_eq!(
             next_metadata_path("", "x"),
             "metadata/00000-x.metadata.json"
+        );
+    }
+
+    #[test]
+    fn bounds_are_decoded_by_their_type_and_shown_in_words() {
+        assert_eq!(
+            decode_bound("long", &120_i64.to_le_bytes()),
+            Some(Bound::Int(120))
+        );
+        assert_eq!(
+            decode_bound("int", &(-3_i32).to_le_bytes()),
+            Some(Bound::Int(-3))
+        );
+        assert_eq!(
+            decode_bound("string", b"north"),
+            Some(Bound::Text("north".into()))
+        );
+        assert_eq!(
+            decode_bound("double", &1.5_f64.to_le_bytes()),
+            Some(Bound::Float(1.5))
+        );
+        assert_eq!(
+            decode_bound("long", &[1, 2]),
+            None,
+            "a bound of the wrong size is not guessed at"
+        );
+        assert_eq!(decode_bound("decimal(10,2)", &[0]), None);
+        assert_eq!(show_bound("date", &Bound::Int(0)), "1970-01-01");
+        assert_eq!(show_bound("date", &Bound::Int(20_000)), "2024-10-04");
+        assert_eq!(
+            show_bound("timestamp", &Bound::Int(86_400_000_000 + 3_661_000_000)),
+            "1970-01-02 01:01:01"
+        );
+        assert!(
+            Bound::Int(2) < Bound::Int(10) && Bound::Text("a".into()) < Bound::Text("b".into())
+        );
+    }
+
+    #[test]
+    fn the_whole_table_is_described_from_the_current_snapshot_alone() {
+        let m = json!({"current-snapshot-id": 7, "snapshots": [
+            {"snapshot-id": 6, "timestamp-ms": 1, "summary": {"total-records": "1"}},
+            {"snapshot-id": 7, "timestamp-ms": 9, "summary": {"total-records": "3", "total-data-files": "1", "total-files-size": "800"}}]});
+        let s = table_stats(&m);
+        assert_eq!(
+            (
+                s["records"].as_i64(),
+                s["data_files"].as_i64(),
+                s["size_bytes"].as_i64(),
+                s["at_ms"].as_i64()
+            ),
+            (Some(3), Some(1), Some(800), Some(9))
+        );
+        assert!(
+            table_stats(&json!({"current-snapshot-id": -1, "snapshots": []}))["records"].is_null()
         );
     }
 }

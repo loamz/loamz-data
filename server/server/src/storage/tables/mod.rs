@@ -3,5 +3,6 @@
 //! data and manifest files themselves; the server writes the metadata file, so a commit is one atomic move of the pointer.
 
 pub mod api;
+pub mod manifests;
 pub mod model;
 pub mod service;
