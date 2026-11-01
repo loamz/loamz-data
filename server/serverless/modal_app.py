@@ -5,11 +5,13 @@ exactly those tables' folders. It reads the tables straight from the bucket, ans
 storage key of the product, no data of its own.
 
   modal deploy server/serverless/modal_app.py          (once; needs the secret `loamz-sql` with LOAMZ_TOKEN, see CLAUDE.md)
+  LOAMZ_SQL_REGION=ap-south modal deploy …              (the region it runs in: pick the one nearest the bucket)
 
 The statement has already been parsed and every table authorized by the Data server. Here DuckDB is locked down a second time."""
 
 import hmac
 import os
+import time
 
 import modal
 
@@ -43,6 +45,8 @@ with image.imports():
     timeout=300,
     scaledown_window=60,
     max_containers=2,
+    # Close to the bucket: reading an Iceberg table is several small round trips, and each is far slower across an ocean.
+    region=os.environ.get("LOAMZ_SQL_REGION", "ap-southeast"),
 )
 @modal.fastapi_endpoint(method="POST")
 def sql(body: dict, request: Request):
@@ -59,6 +63,7 @@ def sql(body: dict, request: Request):
         modal.experimental.stop_fetching_inputs()
         return {"stopping": True}
 
+    began = time.perf_counter()
     storage, limit = body["storage"], int(body["limit"])
     con = duckdb.connect(
         ":memory:",
@@ -72,6 +77,7 @@ def sql(body: dict, request: Request):
     )
     con.execute("LOAD iceberg")
     con.execute("LOAD httpfs")
+    loaded = time.perf_counter()
     host = storage["endpoint"].split("://", 1)[1]
     con.execute(
         f"CREATE SECRET (TYPE s3, KEY_ID {lit(storage['key_id'])}, SECRET {lit(storage['secret'])}, "
@@ -98,9 +104,18 @@ def sql(body: dict, request: Request):
             )
         except Exception as e:  # noqa: BLE001
             return {"error": f"{t['name']} could not be read: {e}"}
+    attached = time.perf_counter()
     # From here the statement reaches only those tables' folders, and cannot change any of this.
     allowed = ", ".join(lit(r) for r in roots)
     con.execute(f"SET allowed_directories = [{allowed}]")
     con.execute("SET enable_external_access = false")
     con.execute("SET lock_configuration = true")
-    return answer(con, body["sql"], limit)
+    result = answer(con, body["sql"], limit)
+    done = time.perf_counter()
+    # Where the time went inside the container, in milliseconds, so a slow statement can be explained.
+    result["timings_ms"] = {
+        "extensions": round((loaded - began) * 1000),
+        "tables": round((attached - loaded) * 1000),
+        "statement": round((done - attached) * 1000),
+    }
+    return result

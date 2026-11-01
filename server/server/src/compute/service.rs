@@ -559,7 +559,9 @@ async fn queue(app: &App, ctx: &Ctx<'_>, run: &Run, action: &str) -> Result<()> 
         "ok",
     )
     .await?;
-    uow.commit().await
+    uow.commit().await?;
+    app.queued.notify_one();
+    Ok(())
 }
 
 /// Reads a table the statement names, if the person may. Anything else, missing or not theirs to read, is the same answer.
