@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use sqlx::{Any, Executor, Row};
 
-use super::model::{Run, Target};
+use super::model::{Run, RunFilter, Target};
 use crate::kernel::error::Result;
 
 const TARGET: &str = "id, org_id, name, kind, endpoint, max_memory_mb, max_cpu_millis, created_by, created_ms, last_seen_ms";
@@ -213,21 +213,6 @@ pub async fn run_by_id<'e, E: Executor<'e, Database = Any>>(e: E, id: &str) -> R
         .fetch_optional(e)
         .await?;
     Ok(r.as_ref().map(run).transpose()?)
-}
-
-/// What a list of runs is narrowed to. Every field left empty narrows nothing.
-#[derive(Default, Clone)]
-pub struct RunFilter {
-    /// What one person asked for (their own, or what ran on their behalf).
-    pub by: Option<String>,
-    /// `sql` or `job`.
-    pub kind: Option<String>,
-    pub target: Option<String>,
-    pub state: Option<String>,
-    /// Started asking at or after this time.
-    pub since_ms: Option<i64>,
-    /// Started asking before this time (also the page cursor: the oldest `created_ms` of the page before).
-    pub before_ms: Option<i64>,
 }
 
 /// Newest first. The result, output and spec are left out of a list (they can be large): ask for the one run to read them.

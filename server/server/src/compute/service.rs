@@ -13,8 +13,8 @@ use serde_json::{Value, json};
 use super::{
     model::{
         AGENT, DEFAULT_ROWS, LEASE_MS, Limits, MAX_OUTPUT, MAX_RESULT, MAX_ROWS, QUEUE_MS, Run,
-        SERVERLESS, Target, cap, hash_secret, is_final_report, is_terminal, job_title, limits_for,
-        mount_names, valid_target_name,
+        RunFilter, SERVERLESS, Target, cap, hash_secret, is_final_report, is_terminal, job_title,
+        limits_for, mount_names, valid_target_name,
     },
     sql, store,
 };
@@ -723,12 +723,7 @@ pub async fn get(app: &App, ctx: &Ctx<'_>, id: &str) -> Result<Run> {
 ///
 /// # Errors
 /// The database could not be read.
-pub async fn list(
-    app: &App,
-    ctx: &Ctx<'_>,
-    mut filter: store::RunFilter,
-    limit: i64,
-) -> Result<Vec<Run>> {
+pub async fn list(app: &App, ctx: &Ctx<'_>, mut filter: RunFilter, limit: i64) -> Result<Vec<Run>> {
     if !ctx.standing.is_admin() {
         filter.by = Some(ctx.identity.subject.clone());
     }
