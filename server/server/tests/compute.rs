@@ -928,3 +928,35 @@ async fn an_agent_needs_the_sql_entitlement_too(s: Server) {
     assert_eq!(r.status, 403);
 }
 both!(an_agent_needs_the_sql_entitlement_too);
+
+async fn the_kinds_of_compute_that_can_be_created_say_whether_they_are_available(s: Server) {
+    let l = lab(&s).await;
+    let r = s
+        .get(
+            &format!("/api/v1/workspaces/{}/compute/providers", l.ws),
+            &ana(),
+        )
+        .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    let items = items(&r);
+    let find = |id: &str| items.iter().find(|p| p["id"] == id).unwrap().clone();
+    assert_eq!(find("machine")["available"], true);
+    assert_eq!(
+        find("serverless")["available"],
+        false,
+        "this server has no token for a serverless endpoint"
+    );
+    assert_eq!(find("serverless")["idle_stop_s"], 60);
+
+    // Without a token, creating serverless compute says what is missing.
+    let made = s
+        .post(
+            &format!("/api/v1/orgs/{ACME}/compute/targets"),
+            &ana(),
+            json!({"name": "warehouse", "kind": "serverless"}),
+        )
+        .await;
+    assert_eq!(made.status, 400);
+    assert!(made.text().contains("serverless token"));
+}
+both!(the_kinds_of_compute_that_can_be_created_say_whether_they_are_available);

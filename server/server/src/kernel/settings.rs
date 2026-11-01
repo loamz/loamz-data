@@ -21,6 +21,8 @@ pub struct Settings {
     pub web_dir: Option<PathBuf>,
     /// A mounted file holding the token serverless compute endpoints expect.
     pub serverless_token_file: Option<PathBuf>,
+    /// The https address of the deployed serverless SQL endpoint (Modal), so compute can be created without typing it.
+    pub serverless_endpoint: Option<String>,
     /// Keycloak clients that act for people (the agents server): a person's token issued to one is that agent acting for them.
     pub agent_clients: Vec<String>,
 }
@@ -160,6 +162,7 @@ impl Settings {
             max_upload_bytes: max_mb.saturating_mul(1024 * 1024),
             web_dir: var("LOAMZ_DATA_WEB_DIR").map(Into::into),
             serverless_token_file: var("LOAMZ_DATA_SERVERLESS_TOKEN_FILE").map(Into::into),
+            serverless_endpoint: var("LOAMZ_DATA_SERVERLESS_ENDPOINT"),
             agent_clients: var("LOAMZ_DATA_AGENT_CLIENTS")
                 .map(|v| {
                     v.split(',')

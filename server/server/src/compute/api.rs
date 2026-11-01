@@ -65,20 +65,42 @@ fn run_view(r: &Run, detail: bool) -> Value {
     v
 }
 
-fn target_view(t: &Target, now: i64) -> Value {
-    json!({"id": t.id, "name": t.name, "kind": t.kind, "online": t.online(now), "max_memory_mb": t.max_memory_mb, "max_cpu_millis": t.max_cpu_millis, "last_seen_ms": t.last_seen_ms, "created_ms": t.created_ms})
+fn target_view(t: &Target, now: i64, last_used_ms: i64) -> Value {
+    json!({"id": t.id, "name": t.name, "kind": t.kind, "online": t.online(now), "max_memory_mb": t.max_memory_mb, "max_cpu_millis": t.max_cpu_millis, "last_seen_ms": t.last_seen_ms, "last_used_ms": last_used_ms, "created_ms": t.created_ms})
+}
+
+async fn listed(
+    app: &Shared,
+    identity: &crate::kernel::auth::Identity,
+    org: &str,
+) -> Result<Vec<Value>> {
+    let now = now_ms();
+    let used = service::last_used(app, org).await?;
+    Ok(service::targets(app, identity, org)
+        .await?
+        .iter()
+        .map(|t| target_view(t, now, used.get(&t.id).copied().unwrap_or(0)))
+        .collect())
+}
+
+fn provider_view(p: &service::Provider) -> Value {
+    json!({"id": p.id, "name": p.name, "description": p.description, "available": p.available, "max_memory_mb": p.max_memory_mb, "max_cpu_millis": p.max_cpu_millis, "idle_stop_s": p.idle_stop_s})
+}
+
+async fn org_providers(State(app): State<Shared>, _c: OrgCtx) -> Json<Value> {
+    Json(json!({"items": service::providers(&app).iter().map(provider_view).collect::<Vec<_>>()}))
+}
+
+async fn providers(State(app): State<Shared>, _c: WsCtx) -> Json<Value> {
+    Json(json!({"items": service::providers(&app).iter().map(provider_view).collect::<Vec<_>>()}))
 }
 
 // ---- people ------------------------------------------------------------------------------------------------------
 
 async fn list_targets(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
-    let now = now_ms();
-    let items: Vec<Value> = service::targets(&app, &c.identity, c.org())
-        .await?
-        .iter()
-        .map(|t| target_view(t, now))
-        .collect();
-    Ok(Json(json!({"items": items})))
+    Ok(Json(
+        json!({"items": listed(&app, &c.identity, c.org()).await?}),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -165,13 +187,9 @@ async fn cancel_run(State(app): State<Shared>, c: WsCtx) -> Result<(StatusCode, 
 
 async fn account_targets(State(app): State<Shared>, c: OrgCtx) -> Result<Json<Value>> {
     crate::governance::orgs::service::require_admin(&app, &c.identity, &c.org).await?;
-    let now = now_ms();
-    let items: Vec<Value> = service::targets(&app, &c.identity, &c.org)
-        .await?
-        .iter()
-        .map(|t| target_view(t, now))
-        .collect();
-    Ok(Json(json!({"items": items})))
+    Ok(Json(
+        json!({"items": listed(&app, &c.identity, &c.org).await?}),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -198,12 +216,12 @@ async fn attach(
             &c.identity,
             &c.org,
             &req.name,
-            req.endpoint.as_deref().unwrap_or_default(),
+            req.endpoint.as_deref(),
             req.max_memory_mb.unwrap_or(2048),
             req.max_cpu_millis.unwrap_or(1000),
         )
         .await?;
-        return Ok((StatusCode::CREATED, Json(target_view(&t, now_ms()))));
+        return Ok((StatusCode::CREATED, Json(target_view(&t, now_ms(), 0))));
     }
     let e = service::add_target(
         &app,
@@ -214,14 +232,14 @@ async fn attach(
         req.max_cpu_millis.unwrap_or(1000),
     )
     .await?;
-    let mut v = target_view(&e.target, now_ms());
+    let mut v = target_view(&e.target, now_ms(), 0);
     v["secret"] = json!(e.secret);
     Ok((StatusCode::CREATED, Json(v)))
 }
 
 async fn rotate(State(app): State<Shared>, c: OrgCtx) -> Result<Json<Value>> {
     let e = service::new_secret(&app, &c.identity, &c.org, &param(&c.params, "id")?).await?;
-    let mut v = target_view(&e.target, now_ms());
+    let mut v = target_view(&e.target, now_ms(), 0);
     v["secret"] = json!(e.secret);
     Ok(Json(v))
 }
@@ -311,11 +329,13 @@ async fn complete(
 pub fn routes() -> Routes {
     Routes::new()
         .get("/api/v1/workspaces/{ws}/compute/targets", list_targets)
+        .get("/api/v1/workspaces/{ws}/compute/providers", providers)
         .post("/api/v1/workspaces/{ws}/sql/statements", statement)
         .post("/api/v1/workspaces/{ws}/runs", submit_job)
         .get("/api/v1/workspaces/{ws}/runs", list_runs)
         .get("/api/v1/workspaces/{ws}/runs/{id}", get_run)
         .post("/api/v1/workspaces/{ws}/runs/{id}/cancel", cancel_run)
+        .get("/api/v1/orgs/{org}/compute/providers", org_providers)
         .get("/api/v1/orgs/{org}/compute/targets", account_targets)
         .post("/api/v1/orgs/{org}/compute/targets", attach)
         .post("/api/v1/orgs/{org}/compute/targets/{id}/secret", rotate)
