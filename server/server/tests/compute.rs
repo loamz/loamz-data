@@ -662,6 +662,80 @@ async fn runs_belong_to_the_people_who_asked(s: Server) {
 }
 both!(runs_belong_to_the_people_who_asked);
 
+async fn runs_can_be_narrowed_and_paged(s: Server) {
+    let l = lab(&s).await;
+    attach(&s).await;
+    s.assign(&l.ws, &[&bob()]).await;
+    s.put(
+        &format!("/api/v1/workspaces/{}/entitlements", l.ws),
+        &ana(),
+        json!({"principal": "user:bob", "entitlement": "sql-access"}),
+    )
+    .await;
+    let url = format!("/api/v1/workspaces/{}/sql/statements", l.ws);
+    for (who, n) in [(ana(), 1), (ana(), 2), (bob(), 3)] {
+        s.post(
+            &url,
+            &who,
+            json!({"sql": format!("SELECT {n}"), "wait_s": 0}),
+        )
+        .await;
+        // Runs are told apart by the millisecond they were asked.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let list = |q: &'static str, who: Who| {
+        let (s, ws) = (&s, l.ws.clone());
+        async move {
+            items(
+                &s.get(&format!("/api/v1/workspaces/{ws}/runs?{q}"), &who)
+                    .await,
+            )
+        }
+    };
+    assert_eq!(list("", ana()).await.len(), 3);
+    assert_eq!(
+        list("by=bob", ana()).await.len(),
+        1,
+        "an admin narrows to one person"
+    );
+    assert_eq!(
+        list("by=ana", bob()).await.len(),
+        1,
+        "anyone else is still only shown their own"
+    );
+    assert_eq!(list("state=queued", ana()).await.len(), 3);
+    assert_eq!(list("state=succeeded", ana()).await.len(), 0);
+    assert_eq!(list("kind=job", ana()).await.len(), 0);
+    let page = list("limit=2", ana()).await;
+    assert_eq!(page.len(), 2);
+    let cursor = page[1]["created_ms"].as_i64().unwrap();
+    let rest = items(
+        &s.get(
+            &format!(
+                "/api/v1/workspaces/{}/runs?limit=2&before_ms={cursor}",
+                l.ws
+            ),
+            &ana(),
+        )
+        .await,
+    );
+    assert_eq!(rest.len(), 1, "the cursor continues where the page ended");
+    assert_eq!(
+        rest[0]["queued_ms"], -1,
+        "a run that has not started has no wait yet"
+    );
+    assert_eq!(
+        s.get(
+            &format!("/api/v1/workspaces/{}/runs?state=sleeping", l.ws),
+            &ana()
+        )
+        .await
+        .status,
+        400
+    );
+}
+both!(runs_can_be_narrowed_and_paged);
+
 async fn a_run_can_be_stopped(s: Server) {
     let l = lab(&s).await;
     let (secret, _) = attach(&s).await;

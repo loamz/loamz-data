@@ -1138,6 +1138,36 @@ paths:
         required: false
         schema:
           type: string
+      - name: by
+        in: query
+        required: false
+        description: Only what this person asked for (a workspace admin's narrowing; everyone else is shown their own).
+        schema:
+          type: string
+      - name: target
+        in: query
+        required: false
+        description: Only runs on this compute.
+        schema:
+          type: string
+      - name: state
+        in: query
+        required: false
+        description: queued, running, succeeded, failed, cancelled or timed_out.
+        schema:
+          type: string
+      - name: since_ms
+        in: query
+        required: false
+        description: Only runs asked for at or after this time.
+        schema:
+          type: integer
+      - name: before_ms
+        in: query
+        required: false
+        description: 'The page cursor: the created_ms of the oldest run of the page before.'
+        schema:
+          type: integer
       - name: limit
         in: query
         required: false

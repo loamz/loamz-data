@@ -215,32 +215,66 @@ pub async fn run_by_id<'e, E: Executor<'e, Database = Any>>(e: E, id: &str) -> R
     Ok(r.as_ref().map(run).transpose()?)
 }
 
-/// Newest first. `by` limits it to what one person asked for; `kind` to statements or jobs. The result, output and spec are left out of
-/// a list (they can be large): ask for the one run to read them.
+/// What a list of runs is narrowed to. Every field left empty narrows nothing.
+#[derive(Default, Clone)]
+pub struct RunFilter {
+    /// What one person asked for (their own, or what ran on their behalf).
+    pub by: Option<String>,
+    /// `sql` or `job`.
+    pub kind: Option<String>,
+    pub target: Option<String>,
+    pub state: Option<String>,
+    /// Started asking at or after this time.
+    pub since_ms: Option<i64>,
+    /// Started asking before this time (also the page cursor: the oldest `created_ms` of the page before).
+    pub before_ms: Option<i64>,
+}
+
+/// Newest first. The result, output and spec are left out of a list (they can be large): ask for the one run to read them.
 pub async fn runs_list<'e, E: Executor<'e, Database = Any>>(
     e: E,
     workspace: &str,
-    by: Option<&str>,
-    kind: Option<&str>,
+    f: &RunFilter,
     limit: i64,
 ) -> Result<Vec<Run>> {
     let mut sql = format!("SELECT {RUN} FROM runs WHERE workspace_id = $1");
     let mut n = 1;
-    if by.is_some() {
+    let mut text: Vec<&str> = Vec::new();
+    let mut number: Vec<i64> = Vec::new();
+    // Text filters first, then numbers: the placeholders are numbered in the order they are bound.
+    if let Some(b) = &f.by {
         n += 1;
         let _ = write!(sql, " AND (requested_by = ${n} OR on_behalf_of = ${n})");
+        text.push(b);
     }
-    if kind.is_some() {
+    for (value, column) in [
+        (&f.kind, "kind"),
+        (&f.target, "target_id"),
+        (&f.state, "state"),
+    ] {
+        if let Some(v) = value {
+            n += 1;
+            let _ = write!(sql, " AND {column} = ${n}");
+            text.push(v);
+        }
+    }
+    if let Some(t) = f.since_ms {
         n += 1;
-        let _ = write!(sql, " AND kind = ${n}");
+        let _ = write!(sql, " AND created_ms >= ${n}");
+        number.push(t);
+    }
+    if let Some(t) = f.before_ms {
+        n += 1;
+        let _ = write!(sql, " AND created_ms < ${n}");
+        number.push(t);
     }
     let _ = write!(sql, " ORDER BY created_ms DESC LIMIT ${}", n + 1);
     let mut q = sqlx::query(&sql).bind(workspace);
-    if let Some(b) = by {
-        q = q.bind(b);
+    for t in text {
+        q = q.bind(t);
     }
-    if let Some(k) = kind {
-        q = q.bind(k);
+    for t in number {
+        q = q.bind(t);
     }
     let rows = q.bind(limit).fetch_all(e).await?;
     rows.iter()
