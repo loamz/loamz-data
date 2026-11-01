@@ -878,3 +878,53 @@ async fn compute_is_attached_by_the_account(s: Server) {
     assert_eq!((seen.len(), seen[0]["online"].clone()), (1, json!(false)));
 }
 both!(compute_is_attached_by_the_account);
+
+/// An agent acting for an admin is not an admin: running SQL needs the entitlement on both sides, the person's and the agent's.
+async fn an_agent_needs_the_sql_entitlement_too(s: Server) {
+    let l = lab(&s).await;
+    attach(&s).await;
+    s.put(
+        &format!("/api/v1/workspaces/{}/members", l.ws),
+        &ana(),
+        json!({"principal": "sp:agent-1", "role": "user"}),
+    )
+    .await;
+    s.grant(&l.ws, &ana(), &l.orders, "sp:agent-1", "reader")
+        .await;
+    let url = format!("/api/v1/workspaces/{}/sql/statements", l.ws);
+    let pair = ana().acting_as("agent-1");
+    let ask = || async {
+        s.post(
+            &url,
+            &pair,
+            json!({"sql": "SELECT * FROM sales.raw.orders", "wait_s": 0}),
+        )
+        .await
+    };
+
+    assert_eq!(
+        ask().await.status,
+        403,
+        "ana may, the agent may not: the pair may not"
+    );
+    s.put(
+        &format!("/api/v1/workspaces/{}/entitlements", l.ws),
+        &ana(),
+        json!({"principal": "sp:agent-1", "entitlement": "sql-access"}),
+    )
+    .await;
+    assert_eq!(ask().await.status, 202, "both may");
+    // The agent's own entitlement is not the person's: bob, who has none, is refused with the same agent.
+    s.assign(&l.ws, &[&bob()]).await;
+    s.grant(&l.ws, &ana(), &l.orders, "user:bob", "reader")
+        .await;
+    let r = s
+        .post(
+            &url,
+            &bob().acting_as("agent-1"),
+            json!({"sql": "SELECT * FROM sales.raw.orders", "wait_s": 0}),
+        )
+        .await;
+    assert_eq!(r.status, 403);
+}
+both!(an_agent_needs_the_sql_entitlement_too);
