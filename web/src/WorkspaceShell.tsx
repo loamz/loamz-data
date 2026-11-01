@@ -78,7 +78,7 @@ export function WorkspaceShell({ ws }: { ws: string }) {
         </Sidebar>
       }
     >
-      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-20 flex items-center justify-around border-t border-border bg-sidebar px-2 py-1.5 md:hidden">
+      <nav aria-label="Pages" className="fixed inset-x-0 bottom-0 z-20 flex items-center justify-around border-t border-border bg-sidebar px-2 py-1.5 md:hidden">
         {shown.map(({ to, label, icon: Icon, active }) => (
           <Button key={label} asChild variant="ghost" size="icon" className={cn(active && "bg-accent/20 text-accent hover:bg-accent/20")}>
             <Link to={to} aria-label={label} aria-current={active ? "page" : undefined}>

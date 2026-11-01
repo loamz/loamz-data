@@ -38,6 +38,15 @@ def principal(page, kind, ident):
     page.get_by_label("Id", exact=True).fill(ident)
 
 
+def nav(page, name):
+    """A link of the workspace sidebar."""
+    return page.get_by_label("Main", exact=True).get_by_role("link", name=name, exact=True)
+
+
+def new(page):
+    return page.get_by_role("button", name="New", exact=True).first
+
+
 def shot(page, name):
     if shots:
         page.screenshot(path=f"{shots}/{name}.png")
@@ -71,31 +80,31 @@ with sync_playwright() as p:
     ana.get_by_role("button", name="Open").click()
     ana.wait_for_url(WS_HOST, timeout=30000)
     expect(ana.get_by_role("heading", name="Finance")).to_be_visible(); step("opening a workspace goes to the workspace's own site, signed in without asking again")
-    expect(ana.get_by_text("Jobs and runs")).to_be_visible(); expect(ana.get_by_text("SQL editor")).to_be_visible()
-    step("its overview lists what can be done there")
-    expect(ana.get_by_label("Main").get_by_label("Catalog")).to_be_visible(); step("and the rail has the workspace's own things")
-    for out in ("Home", "All workspaces", "Account console"):
-        expect(ana.get_by_label("Main").get_by_label(out)).to_have_count(0)
+    expect(ana.get_by_role("heading", name="Catalogs")).to_be_visible()
+    step("its home lists the catalogs")
+    expect(nav(ana, "Catalog")).to_be_visible(); expect(nav(ana, "SQL editor")).to_be_visible(); expect(nav(ana, "Query history")).to_be_visible(); step("and the sidebar has the workspace's own things")
+    for out in ("All workspaces", "Account console"):
+        expect(nav(ana, out)).to_have_count(0)
     ana.get_by_label("Account menu").click()
     expect(ana.get_by_role("menuitem", name="Sign out")).to_be_visible()
     expect(ana.get_by_role("menuitem")).to_have_count(1); step("inside a workspace the only way out is Sign out")
     ana.keyboard.press("Escape")
     assert ana.evaluate("[...document.querySelectorAll('a[href]')].every(a => new URL(a.href, location.href).origin === location.origin)"); step("and no link on the page leaves this site")
-    ana.get_by_label("Main").get_by_label("Workspace settings").click()
+    nav(ana, "Settings").click()
     expect(ana.get_by_role("heading", name="Finance")).to_be_visible()
     principal(ana, "Group", "/finance/analysts"); ana.get_by_role("button", name="Assign").click()
     expect(ana.get_by_text("/finance/analysts").first).to_be_visible(); step("a Keycloak group is assigned to the workspace")
     shot(ana, "workspace-settings")
 
     # -- the catalog
-    ana.get_by_label("Main").get_by_label("Catalog").click()
-    ana.get_by_role("button", name="New", exact=True).click(); ana.get_by_placeholder("sales_2026").fill("Bad Name")
+    nav(ana, "Catalog").click()
+    new(ana).click(); ana.get_by_placeholder("sales_2026").fill("Bad Name")
     expect(ana.get_by_role("button", name="Create")).to_be_disabled(); step("a name the server would refuse cannot be submitted")
     ana.get_by_placeholder("sales_2026").fill("sales"); ana.get_by_role("button", name="Create").click()
     expect(ana.get_by_role("heading", name="sales")).to_be_visible(); step("a catalog is created")
-    ana.get_by_role("button", name="New", exact=True).click(); ana.get_by_placeholder("sales_2026").fill("raw"); ana.get_by_role("button", name="Create").click()
+    new(ana).click(); ana.get_by_placeholder("sales_2026").fill("raw"); ana.get_by_role("button", name="Create").click()
     expect(ana.get_by_role("heading", name="raw")).to_be_visible()
-    ana.get_by_role("button", name="New", exact=True).click(); ana.get_by_label("Kind").click(); ana.get_by_role("option", name="Volume").click()
+    new(ana).click(); ana.get_by_label("Kind").click(); ana.get_by_role("option", name="Volume").click()
     ana.get_by_placeholder("sales_2026").fill("uploads"); ana.get_by_role("button", name="Create").click()
     expect(ana.get_by_role("heading", name="uploads")).to_be_visible(); step("a schema and a volume inside it")
 
@@ -108,17 +117,17 @@ with sync_playwright() as p:
     assert open(dl.value.path()).read() == "hello from the browser"; step("the downloaded bytes are the uploaded bytes")
     shot(ana, "volume-files")
 
-    ana.get_by_label("Main").get_by_label("Workspace overview").click()
-    expect(ana.get_by_role("button", name="sales")).to_be_visible(); step("the overview lists the workspace's catalogs")
+    nav(ana, "Home").click()
+    expect(ana.get_by_text("sales", exact=True).first).to_be_visible(); step("home lists the workspace's catalogs")
     ana.goto(SITE + "/")
     expect(ana.get_by_role("heading", name="Welcome, Ana")).to_be_visible(); step("the account site is its own address, and you are signed in there too")
     ana.get_by_role("button", name=re.compile("Finance")).first.click()
     ana.wait_for_url(WS_HOST, timeout=30000)
-    ana.get_by_label("Main").get_by_label("Catalog").click()
+    nav(ana, "Catalog").click()
     ana.get_by_role("button", name="sales", exact=True).click()
 
     # -- access: give the group read on the catalog
-    ana.get_by_role("tab", name="Access").click()
+    ana.get_by_role("tab", name="Permissions").click()
     principal(ana, "Group", "/finance/analysts"); ana.get_by_role("button", name="Give access").click()
     expect(ana.get_by_text("SELECT").first).to_be_visible(); step("a group is given the Reader role on the catalog")
     shot(ana, "catalog-access")
@@ -141,7 +150,7 @@ with sync_playwright() as p:
     ana.get_by_role("button", name="Compute", exact=True).click()
     expect(ana.get_by_text("No compute attached").first).to_be_visible(); step("an organization starts with no compute, and the console says so")
     ana.get_by_role("button", name="Attach compute").first.click()
-    ana.get_by_placeholder("oracle").fill("this-machine"); ana.get_by_role("button", name="Attach", exact=True).click()
+    ana.get_by_placeholder("oracle").fill("this-machine"); ana.get_by_role("button", name="Create", exact=True).click()
     expect(ana.get_by_text("Start the agent on this-machine")).to_be_visible()
     secret = re.search(r"agt_[0-9a-f]+", ana.locator("pre").first.inner_text()).group(0)
     secret_file = os.path.join(tempfile.mkdtemp(), "agent.secret"); open(secret_file, "w").write(secret); os.chmod(secret_file, 0o600)
@@ -150,15 +159,15 @@ with sync_playwright() as p:
            "LOAMZ_ROOTFS": f"{CACHE}/rootfs", "LOAMZ_WORK": tempfile.mkdtemp(), "LOAMZ_PLATFORM": os.environ.get("LOAMZ_PLATFORM", "ptrace")}
     agent = subprocess.Popen([os.path.join(ROOT, "target/release/loamz-runner"), "agent"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ana.keyboard.press("Escape")
-    expect(ana.get_by_text("online", exact=True).first).to_be_visible(timeout=30000); step("the machine shows as online once its agent connects out")
+    expect(ana.get_by_text("Running", exact=True).first).to_be_visible(timeout=30000); step("the machine shows as running once its agent connects out")
     ana.reload(); expect(ana.get_by_text("this-machine")).to_be_visible()
     expect(ana.get_by_text(secret)).to_have_count(0); step("and the secret is not shown again")
 
     # -- a table, with a few rows, and a query on it
     ana.goto(SITE + "/"); ana.get_by_role("button", name=re.compile("Finance")).first.click(); ana.wait_for_url(WS_HOST, timeout=30000)
-    ana.get_by_label("Main").get_by_label("Catalog").click()
+    nav(ana, "Catalog").click()
     ana.get_by_label("Expand sales").click(); ana.get_by_role("button", name="raw", exact=True).click()
-    ana.get_by_role("button", name="New", exact=True).click()
+    new(ana).click()
     ana.get_by_label("Kind").click(); ana.get_by_role("option", name="Table").click()
     ana.get_by_placeholder("sales_2026").fill("orders")
     ana.get_by_label("Column 1 name").fill("order_id")
@@ -174,7 +183,7 @@ with sync_playwright() as p:
     seed = subprocess.run([duck, os.path.join(ROOT, "scripts/iceberg_seed.py"), f"http://127.0.0.1:8020/api/v1/workspaces/{ws_id}/iceberg", "sales", "raw.orders", "-"],
                           input=json.dumps([[1, "north", 120], [2, "south", 80], [3, "north", 200], [4, "east", 50], [5, "south", 300]]), text=True, capture_output=True, env={**os.environ, "LZ_TOKEN": tok})
     assert seed.returncode == 0, seed.stderr[-400:]
-    ana.reload(); expect(ana.get_by_text("5 rows")).to_be_visible(timeout=30000); step("five rows are added with DuckDB through the catalog, and the table's history shows them")
+    ana.reload(); ana.get_by_role("tab", name="History").click(); expect(ana.get_by_role("cell", name="5", exact=True).first).to_be_visible(timeout=30000); step("five rows are added with DuckDB through the catalog, and the table's history shows them")
     ana.get_by_role("button", name="Query").click()
     expect(ana.locator(".cm-content")).to_contain_text("SELECT * FROM sales.raw.orders LIMIT 100"); step("Query opens the SQL editor with a statement ready")
     ana.get_by_role("button", name="Run", exact=True).click()
@@ -190,12 +199,13 @@ with sync_playwright() as p:
     expect(ana.get_by_text("table functions are not allowed")).to_be_visible(); step("a statement that reads a file is refused, in words")
     ana.locator(".cm-content").click(); ana.keyboard.press("Control+A"); ana.keyboard.type("SELECT nope FROM sales.raw.orders"); ana.keyboard.press("Control+Enter")
     expect(ana.get_by_text("The statement failed")).to_be_visible(timeout=60000); expect(ana.get_by_text("nope").first).to_be_visible(); step("a mistake in the SQL is shown as the database's own message")
-    ana.get_by_role("button", name="History").click()
-    expect(ana.get_by_text("SELECT region, sum(amount)").first).to_be_visible(); step("history lists what was run, newest first")
+    nav(ana, "Query history").click()
+    expect(ana.get_by_text("SELECT region, sum(amount)").first).to_be_visible(); step("query history lists what was run, newest first, with how long each took")
+    nav(ana, "SQL editor").click()
     ana.reload(); expect(ana.locator(".cm-content")).to_contain_text("SELECT nope"); step("the open tabs survive a reload")
 
     # -- a job: a script that reads the table and writes a file to a volume
-    ana.get_by_label("Main").get_by_label("Compute").click()
+    nav(ana, "Jobs").click()
     ana.get_by_role("button", name="New job").first.click()
     ana.get_by_label("Writes to").click() if False else None
     ana.locator("input[type=checkbox]").first.check()
@@ -216,21 +226,21 @@ with sync_playwright() as p:
     cyd.get_by_text("Finance", exact=True).first.click()
     cyd.wait_for_url(WS_HOST, timeout=30000)
     expect(cyd.get_by_role("heading", name="Finance")).to_be_visible()
-    expect(cyd.get_by_role("button", name="sales")).to_be_visible(); step("they open it and see the catalog the group was given on its overview")
+    expect(cyd.get_by_text("sales", exact=True).first).to_be_visible(); step("they open it and see the catalog the group was given on its home")
     expect(cyd.get_by_text("Members, entitlements and catalogs")).to_have_count(0); step("without the admin's settings link")
-    cyd.get_by_label("Main").get_by_label("Catalog").click()
+    nav(cyd, "Catalog").click()
     cyd.get_by_label("Expand sales").click(); cyd.get_by_label("Expand raw").click(); cyd.get_by_role("button", name="uploads").click()
     expect(cyd.get_by_text(name, exact=True)).to_be_visible(); step("and can read its files")
     cyd.locator("input[type=file]").set_input_files(src.name)
     expect(cyd.get_by_text("Could not upload")).to_be_visible(); step("but a reader's upload is refused with a clear message")
-    cyd.get_by_role("tab", name="Access").click()
+    cyd.get_by_role("tab", name="Permissions").click()
     expect(cyd.get_by_text("Only managers can see who has access")).to_be_visible(); step("and is told access is for managers")
-    expect(cyd.get_by_label("Main").get_by_label("Workspace settings")).to_have_count(0); step("a non-admin has no workspace settings in the rail")
+    expect(nav(cyd, "Settings")).to_have_count(0); step("a non-admin has no workspace settings in the rail")
     cyd.goto(cyd.evaluate("location.origin") + "/settings")
     expect(cyd.get_by_text("Only admins can change this")).to_be_visible(); step("and typing the settings address gives them a plain refusal")
     shot(cyd, "reader-view")
 
-    cyd.get_by_label("Main").get_by_label("SQL editor").click()
+    nav(cyd, "SQL editor").click()
     cyd.locator(".cm-content").click(); cyd.keyboard.type("SELECT * FROM sales.raw.orders")
     cyd.keyboard.press("Control+Enter")
     expect(cyd.get_by_text("This could not be run")).to_be_visible(); expect(cyd.get_by_text("permission").first).to_be_visible(); step("someone without the SQL entitlement is refused, even though they can read the table")
