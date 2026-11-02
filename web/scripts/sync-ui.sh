@@ -8,5 +8,5 @@ src=${UI_SOURCE:-$here/../../loamz-ui/packages/conversation/src}
 [ -d "$src" ] || { echo "loamz-ui source not found: $src" >&2; exit 2; }
 rm -rf "$here/src/conversation" && mkdir -p "$here/src/conversation"
 cp -R "$src"/. "$here/src/conversation/"
-rm -f "$here/src/conversation/"*.test.ts   # its tests run in loamz-ui
+rm -rf "$here/src/conversation/"*.test.ts "$here/src/conversation/vectors"   # tests and vectors run in loamz-ui
 echo "conversation copied from $src"
