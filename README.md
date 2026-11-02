@@ -1,12 +1,27 @@
 # Loamz Data
 
-The data platform: catalog, SQL, files, documents, memory and databases. `server/engine` is the embeddable storage engine
-(`loamz-engine`, package `loamz.engine`), `server/server` the platform (`loamz-data-server`, `loamz.server.data`),
-`server/reader` the document reader, `apps/data-workspace` the web workspace and `specs/data` the API contract.
+Loamz Data is the governed data service for Loamz. The current server and runner are Rust; the Python `loamz-engine` package remains for existing Agents consumers. Data is independent of Chat and Agents.
 
-Loamz Data knows nothing of Loamz Agents. Token verification comes from `loamz-identity[server]` in
-[loamz-python](https://github.com/loamz/loamz-python). Split out of `loamz-server` with its history kept; see `SPLIT.md`.
+The implementation includes organization and workspace access, a catalog, managed Iceberg tables, object storage, audit, SQL queries, and sandboxed Python jobs. It is under development and is **not yet production ready**. See the [readiness baseline](docs/guides/enterprise-readiness.md) and [production roadmap](docs/production-roadmap.md) before relying on a capability.
 
-    uv sync --all-packages --all-groups
-    make test
-    uv run lint-imports --config .importlinter
+## Components
+
+- `server/server`: governed HTTP API and Iceberg REST catalog; its contract is `specs/data/v1/openapi.yaml`.
+- `server/lake`: metadata database and file/object storage.
+- `server/runner`: outbound compute agent and gVisor sandbox runner.
+- `web`: React workbench.
+- `server/engine`: retained Python engine used by Agents.
+- `deploy/dev`: development PostgreSQL and Keycloak.
+
+## Local checks
+
+Install the Rust toolchain in `rust-toolchain.toml`, Node 22, pnpm, and `uv`, then run:
+
+```sh
+cd web && pnpm install --frozen-lockfile && cd ..
+make check
+```
+
+`make check` covers formatting, Clippy, SQLite tests, frontend types/tests and the Python import contract. PostgreSQL integration, a real sandbox, R2 and browser tests require separate services and configuration; they do not run as part of the default check. See the [readiness baseline](docs/guides/enterprise-readiness.md) for commands and limitations.
+
+For local identity and PostgreSQL, start `docker compose -f deploy/dev/compose.yml up -d` after preparing the development realm as described in `deploy/dev`. The web development server and Data API share an origin through Vite's proxy. Deployment to a public service requires additional infrastructure and validation.

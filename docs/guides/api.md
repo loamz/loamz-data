@@ -1,5 +1,7 @@
 # API conventions (Loamz Agents and Loamz Data)
 
+> Historical Python-era guidance. This document has not been validated against the current Rust service. See the [current readiness baseline](enterprise-readiness.md) before relying on any capability or procedure.
+
 Both servers follow the same rules, adapted from Google's API Improvement Proposals. A new endpoint that breaks one
 needs a reason in its pull request.
 

@@ -2,6 +2,8 @@
 
 Status: proposed system design, 2026-10-25. Audience: Loamz platform and agent engineers.
 
+This proposal predates the current Rust Data service. References to existing planner, policy, and gateway implementations describe the earlier Python code and must be revalidated before implementation. The [readiness baseline](../guides/enterprise-readiness.md) records the current service's limits.
+
 Build a model-independent analysis service over Loamz Data. Give agents governed SQL and arbitrary Python execution in isolated workspaces, with uploads, external data, charts, derived datasets and reproducible runs. Expose the service through HTTP, a Python SDK and a thin MCP adapter. Loamz Agents, Claude and ChatGPT should call the same service rather than each implementing data access and execution differently.
 
 **The agent chooses the analysis. Loamz decides what data enters execution and where its outputs may go.** Broad transformation freedom applies to authorized inputs inside an isolated workspace; it does not grant warehouse administration, arbitrary network access or unrestricted disclosure.

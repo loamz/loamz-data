@@ -1,5 +1,7 @@
 # Tool servers
 
+> Historical Python-era guidance. This document has not been validated against the current Rust service. See the [current readiness baseline](enterprise-readiness.md) before relying on any capability or procedure.
+
 Agents get new abilities from **tool servers**: programs that speak the Model Context Protocol (MCP) and offer tools such
 as "show my positions" or "summarise my mail". You connect a server to a deployment; you then decide, agent by agent,
 which of its tools that agent may use. Anything risky waits for a person's approval.

@@ -1,5 +1,7 @@
 # Security model
 
+> Historical Python-era guidance. This document has not been validated against the current Rust service. See the [current readiness baseline](enterprise-readiness.md) before relying on any capability or procedure.
+
 What the platform enforces, where, and how to check it.
 
 ## Identity and access

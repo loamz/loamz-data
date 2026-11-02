@@ -1,5 +1,7 @@
 # Incident response
 
+> Historical control material, not evidence of current Rust implementation, deployment, or certification. See the [readiness baseline](../guides/enterprise-readiness.md).
+
 For a security or availability incident affecting a cell or this project's supply chain. Operators of a cell adopt it as
 their runbook and fill in their own contacts.
 

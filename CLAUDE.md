@@ -30,9 +30,11 @@ The governed data platform of Loamz, in Rust. Design: `docs/charter.md`. Plan: `
 - Every change and its audit entry are one database transaction (`audit::service::Uow`); each organization has its own hash chain.
 - Erase and drop are durable tasks (lease, retry, verify, audit). Never a best-effort call.
 - A statement is parsed (`compute/sql.rs`): one plain query, every table named `catalog.schema.table` and authorized (`SELECT`) before it is queued. DuckDB inside the sandbox is a second, separate lock.
+- Run details recheck current access to inputs. If access is lost, history retains status and timings, and a direct submitter can still see their SQL; results, logs and errors stay hidden. Delegated submissions do not expose SQL in the restricted view.
 - Compute agents connect out; the server never connects to a machine. An agent holds only its own secret (shown once, kept as a hash). A serverless target is the one exception: the server calls the provider's https endpoint, which takes SQL only, only over data classified `normal`.
 - A person's token issued to a client named in `LOAMZ_DATA_AGENT_CLIENTS` (the agents server's, reached only by token exchange) is that agent acting for the person: `act` is not needed, and the pair gets what both may do. Deploy: `loamz-agents` client in the realm template (standard token exchange on; local: `deploy/dev/agents_client.py`).
 - A machine never holds the bucket's key: a run is given credentials for exactly its tables' folders, read-only, for its time limit plus five minutes (a statement has no job token at all; only a job's volume files go through the API with one).
+- Queued and running work is capped per organization (`LOAMZ_DATA_MAX_ACTIVE_RUNS`, default 32). Admission takes a database row lock so concurrent server instances respect the same cap. This is a safety ceiling, not billing or a storage quota.
 - SQL is written once in the portable subset (TEXT ids, BIGINT numbers, `$1`, NOT NULL columns); every database test runs on SQLite and on Postgres.
 - Errors are RFC 9457; the API is versioned (`/api/v1`); the OpenAPI document and the router must agree (a test checks it).
 - No backward compatibility, and no stand-ins in the product: nothing that skips real sign-in, and no authorization from the environment. Delete old code instead of shimming.
@@ -40,9 +42,9 @@ The governed data platform of Loamz, in Rust. Design: `docs/charter.md`. Plan: `
 
 ## Commands
 
-- `make check`: fmt, clippy, tests on SQLite, web types and tests, import contract. Postgres too: `docker compose -f deploy/dev/compose.yml up -d postgres`, then `LOAMZ_TEST_POSTGRES_URL=postgres://data:data-dev-only@127.0.0.1:55434/data cargo test --workspace -- --include-ignored`.
+- `make check`: fmt, clippy, tests on SQLite, web types and tests, import contract. PostgreSQL tests create databases and do not remove them: use a throwaway instance, then `LOAMZ_TEST_POSTGRES_URL=postgres://data:data-dev-only@127.0.0.1:55434/data cargo test -p loamz-data-server -- --include-ignored`.
 - The local stack: `docker compose -f deploy/dev/compose.yml up -d`, then `deploy/dev/seed.py` (passwords go to `.dev/accounts.json`, never printed).
-- Sandbox pieces, once per machine: `scripts/fetch-runsc.sh` and `server/runner/rootfs/build.sh`. gVisor tests: `LOAMZ_PLATFORM=ptrace LOAMZ_RUNSC=~/.cache/loamz/runsc LOAMZ_ROOTFS=~/.cache/loamz/rootfs LOAMZ_ROOTLESS=1 cargo test -p loamz-runner --test gvisor` (`ptrace` on WSL2; drop it and run as root on a real server to test the memory and process limits).
+- Sandbox pieces, once per machine: `scripts/fetch-runsc.sh` and `server/runner/rootfs/build.sh`. gVisor tests are ignored by default; set `LOAMZ_RUNSC` and `LOAMZ_ROOTFS` and run `cargo test -p loamz-runner --test gvisor -- --ignored --test-threads=1`. Memory and process limit tests require cgroup enforcement, not `LOAMZ_ROOTLESS`.
 - Web: `cd web && pnpm install && pnpm test && pnpm build`; `scripts/dev.sh` runs the server and the app; `web/scripts/e2e.sh` is the browser test (real sign-ins, a real agent; needs Python Playwright in `PLAYWRIGHT_PY`, the release builds of the server and the runner, and the sandbox pieces above).
 - `scripts/compute-smoke.py`: a query and a job, end to end, without a browser. With `REMOTE=user@host KEY=…` the agent runs on that machine instead.
 - `scripts/budget.sh`: idle memory under 30 MB, ready under 200 ms. `scripts/smoke.sh`: the governance path with `curl`.

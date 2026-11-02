@@ -1,7 +1,8 @@
 # SOC 2 Trust Services Criteria
 
-Legend: **Product**: implemented in the software. **Repo**: enforced by this repository's process. **Org**: the operating
-organization must provide it (policy, people, evidence); nothing here substitutes for it.
+> Historical control material, not evidence of current Rust implementation, deployment, or certification. See the [readiness baseline](../guides/enterprise-readiness.md).
+
+Legend: **Product**, **Repo**, and **Org** identify proposed responsibility, not verified implementation. Every row and reference below must be reassessed against the current service, repository settings, and operating organization before use as audit evidence.
 
 ## Security (Common Criteria)
 | Criteria | Control | Owner | Where |
