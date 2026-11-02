@@ -22,6 +22,11 @@ export const StateBadge = ({ state }: { state: api.RunState }) => <Badge tone={s
 
 export const who = (r: Pick<api.Run, "requested_by" | "on_behalf_of">) => principalLabel(`user:${r.on_behalf_of || r.requested_by}`);
 
+export function RestrictedOutput({ run }: { run: api.Run }) {
+  if (run.result_access !== "restricted") return null;
+  return <p className="text-sm text-muted">Output is unavailable because access to the input data could not be verified.</p>;
+}
+
 /** One run, read from the server and kept current while it goes. */
 export function useRun(ws: string, id: string | null) {
   const run = useLoad(() => (id ? api.run(ws, id) : Promise.resolve(null)), `${ws}/${id ?? "-"}`);

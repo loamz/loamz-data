@@ -2,7 +2,7 @@ import { History } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Body, Button, DataTable, DetailBlock, ObjectHeader, Select, WithRail, type Column } from "@/design";
 import * as api from "@/api";
-import { RunFacts, StateBadge, StopButton, Text, span, useRun, who } from "@/components/RunBits";
+import { RestrictedOutput, RunFacts, StateBadge, StopButton, Text, span, useRun, who } from "@/components/RunBits";
 import { when } from "@/format";
 import { useLoad } from "@/hooks";
 import { openInEditor } from "@/sqlTabs";
@@ -118,6 +118,7 @@ function Detail({ ws, id, name }: { ws: string; id: string; name: (id: string) =
         )}
       </div>
       <RunFacts run={r} computeName={name} />
+      <RestrictedOutput run={r} />
       {r.error && <DetailBlock title="Error"><p className="whitespace-pre-wrap text-danger">{r.error}</p></DetailBlock>}
       <Text title="Statement" text={r.spec?.sql ?? ""} />
       <Text title="Output" text={r.stdout ?? ""} />

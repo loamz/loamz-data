@@ -1,7 +1,7 @@
 import { Briefcase, Database } from "lucide-react";
 import { Body, ObjectHeader, Page, PageEmpty, WithRail } from "@/design";
 import * as api from "@/api";
-import { RunFacts, StopButton, Text, useRun } from "@/components/RunBits";
+import { RestrictedOutput, RunFacts, StopButton, Text, useRun } from "@/components/RunBits";
 import { useLoad } from "@/hooks";
 import { go } from "@/route";
 
@@ -29,8 +29,9 @@ export function Run({ ws, id }: { ws: string; id: string }) {
       />
       <WithRail rail={<RunFacts run={r} computeName={(t) => computes.data?.find((c) => c.id === t)?.name ?? "removed"} />}>
         <div className="flex flex-col gap-4">
+          <RestrictedOutput run={r} />
           {r.error && <p className="whitespace-pre-wrap text-sm text-danger">{r.error}</p>}
-          {r.kind === "job" && r.state === "succeeded" && <p className="text-sm text-muted">Its files are in the output volume, under <span className="font-mono">runs/{r.id}/</span>.</p>}
+          {r.kind === "job" && r.state === "succeeded" && r.result_access !== "restricted" && <p className="text-sm text-muted">Its files are in the output volume, under <span className="font-mono">runs/{r.id}/</span>.</p>}
           <Text title="Output" text={r.stdout ?? ""} />
           <Text title="Errors" text={r.stderr ?? ""} danger />
           {r.kind === "job" && <Text title="Script" text={r.spec?.script ?? ""} />}

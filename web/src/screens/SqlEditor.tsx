@@ -183,6 +183,8 @@ export function SqlEditor({ ws }: { ws: string }) {
         <div className="min-h-0 flex-1">
           {out?.error ? (
             <Problem title="This could not be run" text={out.error} />
+          ) : out?.run?.result_access === "restricted" ? (
+            <Problem title="Results unavailable" text="Access to the input data could not be verified." />
           ) : failed ? (
             <Problem title={out.run?.state === "timed_out" ? "It took too long" : "The statement failed"} text={out.run?.error || out.run?.stderr || "No details were reported."} />
           ) : out?.run?.state === "cancelled" ? (
