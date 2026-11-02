@@ -8,6 +8,12 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
-  server: { proxy: { "/api": process.env.DATA_URL ?? "http://127.0.0.1:8020" } },
+  server: {
+    proxy: {
+      "/api": process.env.DATA_URL ?? "http://127.0.0.1:8020",
+      // The optional ask box on Home: with VITE_AGENTS_URL=/agents the browser reaches an agents server on this origin too.
+      "/agents": { target: process.env.AGENTS_URL ?? "http://127.0.0.1:8000", rewrite: (p: string) => p.replace(/^\/agents/, "") },
+    },
+  },
   test: { environment: "node" },
 });

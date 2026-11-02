@@ -1,6 +1,8 @@
 import { Database } from "lucide-react";
 import { Body, DataTable, ObjectHeader, Page, PageEmpty, type Column } from "@/design";
 import * as api from "@/api";
+import { agentsUrl } from "@/agents";
+import { Ask } from "@/components/Ask";
 import { Principal } from "@/components/Principal";
 import { when } from "@/format";
 import { useLoad } from "@/hooks";
@@ -36,6 +38,7 @@ export function Workspace({ ws }: { ws: string; me: api.Me | undefined }) {
   return (
     <Body>
       <ObjectHeader title={w.data?.name ?? "Workspace"} />
+      {agentsUrl && <Ask base={agentsUrl} ws={ws} catalogs={(catalogs.data ?? []).map((c) => c.name)} />}
       {lately.length > 0 && (
         <section className="flex flex-col gap-2">
           <h2 className="text-sm font-semibold">Recents</h2>

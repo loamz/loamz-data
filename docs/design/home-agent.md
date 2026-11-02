@@ -1,6 +1,6 @@
 # An agent on the workspace Home
 
-- **Status:** design, with slice 1 built (on the Agents side) and tested. Slices 2 to 5 are not started.
+- **Status:** slices 1 to 4 built and unit-tested; slice 5 (an end-to-end run with a real model against the NYC week) has **not** been run. Slice 3 is a small shared core (`@loamz/conversation` in loamz-ui), not the Chat console's 2.6k-line UI, which was not extracted.
 - **Applies to:** `loamz-data/web` (Home), `loamz-agents` (chat API and data tools), `loamz-chat/web` (the shared conversation UI), `loamz-deploy` (identity and routing).
 
 ## What is wanted
@@ -28,9 +28,9 @@ The dependency points one way, from the web app and from Agents to Data's public
 1. **Built.** A chat names the workspace and catalogs: `ChatRequest.data = {workspace, catalogs[]}`, validated at the edge and passed into the run as user attributes. The three tools honour the catalogs. Tests in `loamz-agents`: 330 pass (1 skipped), and the data tool tests pass against the local rewritten client.
    - The catalog choice narrows what the agent is shown and may name. It is not a boundary: Data decides what the person may read, and a choice can only take away from that.
    - It does not yet narrow the code interpreter's `sd.sql(...)`. That path needs the gateway's policy to read the statement.
-2. **Identity and routing.** The Data web's access token must be accepted by Agents (an audience mapper on its Keycloak client, in the realm template), and the browser must reach Agents from the workspace origin (a same-origin path through the dev proxy and the edge, or CORS for `*.data.loamz.com`).
-3. **The conversation UI, shared.** Do not copy the console. Move what a conversation needs (thread, message bubble, composer, the tool-call and approval cards, the event-stream reader) out of Chat into the part that is already copied between products, then use it from Data. The console's own screens (agents, groups, settings, marketplace) stay in Chat.
-4. **Home.** The ask box, the catalog filter (a choice among the catalogs the person can see), and an answer that shows the SQL it ran and its rows.
+2. **Identity and routing (registry and proxy done; production routing not).** `data.yml` has `web_extra_audiences: [loamz-agents]` (an optional browser-only edge, `_optional_web` in `edges.yml`) and the Vite dev proxy has `/agents`; the production edge and CORS for `w-<id>.data.loamz.com` (Agents' `cors_origins` takes exact origins only) are not done. Originally: The Data web's access token must be accepted by Agents (an audience mapper on its Keycloak client, in the realm template), and the browser must reach Agents from the workspace origin (a same-origin path through the dev proxy and the edge, or CORS for `*.data.loamz.com`).
+3. **The conversation UI, shared (small core built).** `web/scripts/sync-ui.sh` copies `@loamz/conversation` (stream reader, turn state, plain thread). The tool-call event carries no arguments, so the answer cannot yet show the SQL it ran, only the tool name and its output. Originally: Do not copy the console. Move what a conversation needs (thread, message bubble, composer, the tool-call and approval cards, the event-stream reader) out of Chat into the part that is already copied between products, then use it from Data. The console's own screens (agents, groups, settings, marketplace) stay in Chat.
+4. **Home (built: `web/src/components/Ask.tsx`, shown only when `VITE_AGENTS_URL` is set).** Originally: The ask box, the catalog filter (a choice among the catalogs the person can see), and an answer that shows the SQL it ran and its rows.
 5. **Checks.** The independence tests above, and one end-to-end run with a real model against the NYC week.
 
 ## Known gaps to close along the way
