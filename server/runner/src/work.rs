@@ -94,6 +94,32 @@ const MAX_FILES: usize = 200;
 const MAX_TABLE: u64 = 1 << 30;
 const MAX_RESULT: u64 = 4 << 20;
 
+/// Bound listing as it is read, rather than collecting an arbitrarily large bucket response first.
+async fn table_objects(
+    store: &dyn object_store::ObjectStore,
+    prefix: &object_store::path::Path,
+    id: &str,
+) -> Result<Vec<object_store::ObjectMeta>, String> {
+    use futures::StreamExt;
+    let mut list = store.list(Some(prefix));
+    let mut objects = Vec::new();
+    let mut bytes = 0_u64;
+    while let Some(item) = list.next().await {
+        let object = item.map_err(|e| format!("listing the table {id}: {e}"))?;
+        if objects.len() == MAX_FILES {
+            return Err(format!("{id} has too many files for one run"));
+        }
+        bytes = bytes
+            .checked_add(object.size)
+            .ok_or_else(|| format!("{id} is too large to read on this machine"))?;
+        if bytes > MAX_TABLE {
+            return Err(format!("{id} is too large to read on this machine"));
+        }
+        objects.push(object);
+    }
+    Ok(objects)
+}
+
 /// The Data API, as one run's token sees it.
 struct Api {
     http: reqwest::Client,
@@ -216,7 +242,10 @@ impl Api {
 /// credentials, and writes where its current metadata is beside it. The sandbox then reads the folder from disk.
 async fn fetch_table(storage: &Value, id: &str, folder: &Path) -> Result<(), String> {
     use futures::StreamExt;
-    use object_store::{ObjectStore, aws::AmazonS3Builder, path::Path as Key};
+    use object_store::{ObjectStoreExt, aws::AmazonS3Builder, path::Path as Key};
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
     let text = |k: &str| {
         storage[k]
             .as_str()
@@ -236,22 +265,11 @@ async fn fetch_table(storage: &Value, id: &str, folder: &Path) -> Result<(), Str
         .as_str()
         .ok_or_else(|| format!("the lease does not say where {id} is"))?;
     let prefix = Key::from(id);
-    let objects: Vec<_> = s3
-        .list(Some(&prefix))
-        .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .collect::<Result<_, _>>()
-        .map_err(|e| format!("listing the table {id}: {e}"))?;
-    if objects.len() > MAX_FILES {
-        return Err(format!("{id} has too many files for one run"));
-    }
-    if objects.iter().map(|o| o.size).sum::<u64>() > MAX_TABLE {
-        return Err(format!("{id} is too large to read on this machine"));
-    }
+    let objects = table_objects(&s3, &prefix, id).await?;
     tokio::fs::create_dir_all(folder)
         .await
         .map_err(|e| e.to_string())?;
+    let mut downloaded = 0_u64;
     for o in objects {
         let rel = o
             .location
@@ -272,11 +290,23 @@ async fn fetch_table(storage: &Value, id: &str, folder: &Path) -> Result<(), Str
         let mut file = tokio::fs::File::create(&to)
             .await
             .map_err(|e| e.to_string())?;
+        let mut object_bytes = 0_u64;
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| format!("reading {rel}: {e}"))?;
+            let n = u64::try_from(chunk.len()).map_err(|e| e.to_string())?;
+            downloaded = downloaded.checked_add(n).ok_or("table size overflow")?;
+            object_bytes = object_bytes.checked_add(n).ok_or("file size overflow")?;
+            if downloaded > MAX_TABLE || object_bytes > o.size {
+                return Err(format!(
+                    "{id} changed or exceeded its size limit while downloading"
+                ));
+            }
             tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
                 .await
                 .map_err(|e| e.to_string())?;
+        }
+        if object_bytes != o.size {
+            return Err(format!("{id} changed while downloading"));
         }
     }
     tokio::fs::write(
@@ -298,6 +328,9 @@ async fn files_under(dir: &Path) -> Result<Vec<String>, String> {
             if t.is_dir() {
                 stack.push(e.path());
             } else if let (true, Ok(rel)) = (t.is_file(), e.path().strip_prefix(dir)) {
+                if out.len() == MAX_FILES {
+                    return Err("the job produced too many files".into());
+                }
                 out.push(rel.to_string_lossy().into_owned());
             }
         }
@@ -526,11 +559,21 @@ async fn collect(
     let output = lease.run.spec["output"]
         .as_str()
         .ok_or("the job has no output volume")?;
-    for rel in files_under(workspace).await?.into_iter().take(MAX_FILES) {
-        let path = workspace.join(&rel);
-        if tokio::fs::metadata(&path).await.map_err(io)?.len() > MAX_FILE {
-            continue;
+    let files = files_under(workspace).await?;
+    let mut total = 0_u64;
+    for rel in &files {
+        let path = workspace.join(rel);
+        let size = tokio::fs::metadata(&path).await.map_err(io)?.len();
+        if size > MAX_FILE {
+            return Err(format!("an output file exceeds the {MAX_FILE} byte limit"));
         }
+        total = total.checked_add(size).ok_or("job output size overflow")?;
+        if total > MAX_TABLE {
+            return Err(format!("the job output exceeds the {MAX_TABLE} byte limit"));
+        }
+    }
+    for rel in files {
+        let path = workspace.join(&rel);
         api.upload(
             "volumes",
             output,
@@ -547,6 +590,51 @@ async fn collect(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn table_listing_stops_when_it_exceeds_the_file_limit() {
+        use object_store::{ObjectStoreExt, memory::InMemory, path::Path as Key};
+        let store = InMemory::new();
+        let prefix = Key::from("table");
+        for i in 0..MAX_FILES {
+            store
+                .put(&Key::from(format!("table/{i}")), "x".into())
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            table_objects(&store, &prefix, "table").await.unwrap().len(),
+            MAX_FILES
+        );
+        store
+            .put(&Key::from("table/extra"), "x".into())
+            .await
+            .unwrap();
+        assert!(
+            table_objects(&store, &prefix, "table")
+                .await
+                .unwrap_err()
+                .contains("too many files")
+        );
+    }
+
+    #[tokio::test]
+    async fn too_many_outputs_fail_instead_of_silently_dropping_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "loamz-output-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        for i in 0..=MAX_FILES {
+            tokio::fs::write(dir.join(format!("{i}")), b"x")
+                .await
+                .unwrap();
+        }
+        let result = files_under(&dir).await;
+        tokio::fs::remove_dir_all(&dir).await.unwrap();
+        assert!(result.unwrap_err().contains("too many files"));
+    }
 
     #[test]
     fn paths_from_the_server_stay_under_the_folder() {

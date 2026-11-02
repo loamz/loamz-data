@@ -1,5 +1,6 @@
 #![allow(
     clippy::unwrap_used,
+    clippy::expect_used,
     clippy::doc_markdown,
     clippy::duration_suboptimal_units
 )]
@@ -13,14 +14,13 @@ use loamz_lake::{
     grants::Issuer,
     objects::{Bucket, Store},
 };
-use object_store::{ObjectStore, aws::AmazonS3Builder, path::Path};
+use object_store::{ObjectStore, ObjectStoreExt, aws::AmazonS3Builder, path::Path};
 
 #[tokio::test]
 #[ignore = "needs LOAMZ_TEST_R2_DIR"]
 async fn issued_credentials_reach_one_volume_only() {
-    let Ok(dir) = std::env::var("LOAMZ_TEST_R2_DIR") else {
-        return;
-    };
+    let dir = std::env::var("LOAMZ_TEST_R2_DIR")
+        .expect("set LOAMZ_TEST_R2_DIR for the R2 integration test");
     let r = |n: &str| {
         std::fs::read_to_string(format!("{dir}/{n}"))
             .unwrap()
