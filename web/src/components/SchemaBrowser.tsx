@@ -24,7 +24,7 @@ export function SchemaBrowser({ ws, onPick, onNames }: { ws: string; onPick: (fu
     onNames([...known.current].sort());
   };
   return (
-    <div className="scroll-area min-h-0 flex-1 px-2 pb-3" role="tree" aria-label="Tables">
+    <div className="scroll-area min-h-0 flex-1 px-2 pb-3" role="tree" aria-label="Catalog">
       {failed ? (
         <p className="px-2 py-2 text-xs text-danger">{failed}</p>
       ) : roots?.length === 0 ? (
