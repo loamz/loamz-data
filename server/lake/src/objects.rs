@@ -8,7 +8,7 @@ use std::{sync::Arc, time::Duration};
 use bytes::Bytes;
 use futures::{StreamExt, TryStreamExt, stream::BoxStream};
 use object_store::{
-    ObjectStore, WriteMultipart,
+    ObjectStore, ObjectStoreExt, WriteMultipart,
     aws::{AmazonS3, AmazonS3Builder},
     path::Path as Key,
     signer::Signer,
@@ -40,6 +40,13 @@ pub enum Store {
 
 pub type Reading = BoxStream<'static, std::io::Result<Bytes>>;
 
+/// Install the ring provider if the host has not selected a TLS provider already.
+pub fn install_tls_provider() {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+}
+
 impl Store {
     #[must_use]
     pub fn folder(root: impl Into<std::path::PathBuf>) -> Self {
@@ -49,6 +56,7 @@ impl Store {
     /// # Errors
     /// The bucket settings are not usable.
     pub fn bucket(b: &Bucket) -> Result<Self, FileError> {
+        install_tls_provider();
         let s3 = AmazonS3Builder::new()
             .with_endpoint(&b.endpoint)
             .with_bucket_name(&b.name)

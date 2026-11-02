@@ -19,13 +19,15 @@ struct Lab {
     rootless: bool,
 }
 
-fn lab() -> Option<Lab> {
-    let runsc = PathBuf::from(std::env::var("LOAMZ_RUNSC").ok()?);
-    let rootfs = PathBuf::from(std::env::var("LOAMZ_ROOTFS").ok()?);
+fn lab() -> Lab {
+    let runsc =
+        PathBuf::from(std::env::var("LOAMZ_RUNSC").expect("set LOAMZ_RUNSC to run gVisor tests"));
+    let rootfs =
+        PathBuf::from(std::env::var("LOAMZ_ROOTFS").expect("set LOAMZ_ROOTFS to run gVisor tests"));
     let rootless = std::env::var("LOAMZ_ROOTLESS").is_ok();
     let dir = std::env::temp_dir().join(format!("loamz-runner-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    Some(Lab {
+    Lab {
         gv: Gvisor {
             runsc,
             state: dir.join("state"),
@@ -35,7 +37,7 @@ fn lab() -> Option<Lab> {
         rootfs,
         dir,
         rootless,
-    })
+    }
 }
 
 impl Lab {
@@ -109,10 +111,9 @@ impl Drop for Lab {
 }
 
 #[tokio::test]
+#[ignore = "requires a configured gVisor runtime and root filesystem"]
 async fn code_runs_and_writes_only_to_its_workspace() {
-    let Some(lab) = lab() else {
-        return println!("skipped: LOAMZ_RUNSC / LOAMZ_ROOTFS not set");
-    };
+    let lab = lab();
     let code = "open('/workspace/out.txt','w').write('chart'); print(6*7)\ntry:\n open('/etc/evil','w')\nexcept OSError as e: print('root is read-only')";
     let (o, ws) = lab.python("write", code, 512 << 20, 64, 60).await;
     let text =
@@ -130,8 +131,9 @@ async fn code_runs_and_writes_only_to_its_workspace() {
 }
 
 #[tokio::test]
+#[ignore = "requires a configured gVisor runtime and root filesystem"]
 async fn code_has_no_network() {
-    let Some(lab) = lab() else { return };
+    let lab = lab();
     let code = "import socket\ns=socket.socket(); s.settimeout(3)\ntry:\n s.connect(('1.1.1.1',53)); print('REACHED')\nexcept OSError as e: print('no network')";
     let (o, _) = lab.python("net", code, 512 << 20, 64, 60).await;
     let text = String::from_utf8_lossy(&o.stdout).into_owned();
@@ -142,8 +144,9 @@ async fn code_has_no_network() {
 }
 
 #[tokio::test]
+#[ignore = "requires a configured gVisor runtime and root filesystem"]
 async fn a_program_that_will_not_stop_is_killed_and_its_container_removed() {
-    let Some(lab) = lab() else { return };
+    let lab = lab();
     let started = std::time::Instant::now();
     let (o, _) = lab
         .python("loop", "while True: pass", 512 << 20, 64, 4)
@@ -163,11 +166,13 @@ async fn a_program_that_will_not_stop_is_killed_and_its_container_removed() {
 }
 
 #[tokio::test]
+#[ignore = "requires gVisor with enforced cgroup limits"]
 async fn the_memory_limit_stops_a_program_that_asks_for_too_much() {
-    let Some(lab) = lab() else { return };
-    if lab.rootless {
-        return println!("skipped: memory limits need root (runsc makes its own cgroup)");
-    }
+    let lab = lab();
+    assert!(
+        !lab.rootless,
+        "memory limits need root (runsc makes its own cgroup)"
+    );
     // The control: a modest allocation under the same limit works, so a failure below is the limit and nothing else.
     let (ok, _) = lab
         .python(
@@ -209,11 +214,10 @@ async fn the_memory_limit_stops_a_program_that_asks_for_too_much() {
 /// fork bomb, fail-closed, and this test proves it: a small number of forks works under the limit (the control), the bomb
 /// does not get to the end, and nothing of it is left on the host afterwards.
 #[tokio::test]
+#[ignore = "requires gVisor with enforced cgroup limits"]
 async fn the_process_limit_stops_a_fork_bomb() {
-    let Some(lab) = lab() else { return };
-    if lab.rootless {
-        return println!("skipped: process limits need root");
-    }
+    let lab = lab();
+    assert!(!lab.rootless, "process limits need root");
     let program = |max: u32| {
         format!(
             "import os,time\nn=0\ntry:\n while n<{max}:\n  if os.fork()==0:\n   time.sleep(2); os._exit(0)\n  n+=1\nexcept OSError as e: print('refused')\nprint('forks', n)"
@@ -253,8 +257,9 @@ async fn the_process_limit_stops_a_fork_bomb() {
 
 /// The second layer behind the server's parser: even a statement that got past it cannot reach a file, write one, or unlock `DuckDB`.
 #[tokio::test]
+#[ignore = "requires a configured gVisor runtime and root filesystem"]
 async fn duckdb_is_locked_down_even_if_a_statement_got_past_the_parser() {
-    let Some(lab) = lab() else { return };
+    let lab = lab();
     let attacks = [
         "SELECT * FROM read_text('/etc/hosts')",
         "SELECT * FROM read_csv('/etc/passwd')",
@@ -274,8 +279,9 @@ async fn duckdb_is_locked_down_even_if_a_statement_got_past_the_parser() {
             .to_string();
         let script =
             loamz_runner::work::RUN_SQL.replace("/inputs/job/spec.json", "/workspace/spec.json");
+        let helper = loamz_runner::work::LOAMZ_SQL;
         let code = format!(
-            "open('/workspace/spec.json','w').write({spec:?})\nexec(compile({script:?}, 'run_sql', 'exec'))"
+            "import sys\nsys.path.insert(0, '/workspace')\nopen('/workspace/loamz_sql.py','w').write({helper:?})\nopen('/workspace/spec.json','w').write({spec:?})\nexec(compile({script:?}, 'run_sql', 'exec'))"
         );
         let (o, ws) = lab
             .python(&format!("lock-{i}"), &code, 512 << 20, 64, 60)
@@ -296,8 +302,9 @@ async fn duckdb_is_locked_down_even_if_a_statement_got_past_the_parser() {
     let spec = serde_json::json!({"sql": "SELECT 6 * 7 AS answer", "limit": 10, "tables": [], "memory_mb": 256}).to_string();
     let script =
         loamz_runner::work::RUN_SQL.replace("/inputs/job/spec.json", "/workspace/spec.json");
+    let helper = loamz_runner::work::LOAMZ_SQL;
     let code = format!(
-        "open('/workspace/spec.json','w').write({spec:?})\nexec(compile({script:?}, 'run_sql', 'exec'))"
+        "import sys\nsys.path.insert(0, '/workspace')\nopen('/workspace/loamz_sql.py','w').write({helper:?})\nopen('/workspace/spec.json','w').write({spec:?})\nexec(compile({script:?}, 'run_sql', 'exec'))"
     );
     let (_, ws) = lab.python("lock-ok", &code, 512 << 20, 64, 60).await;
     let v: serde_json::Value =
