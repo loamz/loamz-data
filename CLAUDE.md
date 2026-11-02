@@ -25,6 +25,7 @@ The governed data platform of Loamz, in Rust. Design: `docs/charter.md`. Plan: `
 ## Rules
 
 - Services form one line: audit < orgs < workspaces < iam < catalogs < volumes < tables < compute < queries < lifecycle. A service uses only those before it. `server/server/tests/layering.rs` checks this, and that `model.rs` files are pure.
+- Data depends on no Agents code, in Rust or in the web app: Agents is a customer of Data's public API. The only link is configuration (`LOAMZ_DATA_AGENT_CLIENTS`, names of clients). `layering.rs` fails if a manifest, a source file or `web/package.json` names an agents dependency.
 - Only `iam::service` decides who may do what, using `kernel::authz` (Unity Catalog privileges and ownership). Nothing else reads grants. A job's own token (`jt_…`) is the person's rights narrowed to what the run declared, checked in the same place (`iam::require`), and only the file routes (`FileCtx`) accept one.
 - A caller who may not see a thing gets 404, never 403. Every refusal is audited. SQL never says whether a table exists: missing and forbidden are the same answer.
 - Every change and its audit entry are one database transaction (`audit::service::Uow`); each organization has its own hash chain.

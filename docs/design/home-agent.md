@@ -14,7 +14,7 @@ The dependency points one way, from the web app and from Agents to Data's public
 - **Data server:** no agent code and no agent concept. It offers catalog, SQL statements, sandboxed jobs and scoped tokens. The only link is the existing allowlist of client names (`LOAMZ_DATA_AGENT_CLIENTS`), which is configuration: an agent's token is the person's rights narrowed to what the agent may also do.
 - **Agents server:** owns conversations, the model and the tool loop. It reaches Data as a client, with a credential obtained for the person at each call (token exchange), so it holds none.
 - **Data web:** shows the ask box only when an Agents address is configured. Without one, Home is what it is now (Recents and Catalogs) and Data works alone.
-- **Checks to add:** a test that the Data server crate depends on no agents crate, and a web test that Home renders with no Agents address.
+- **Checks:** done: `server/server/tests/layering.rs` (`data_depends_on_no_agents_code`) fails if a Cargo manifest, a Rust source file or `web/package.json` names an agents dependency. Still to add: a web test that Home renders with no Agents address.
 
 ## What already exists (read in the code, 2 November 2026)
 

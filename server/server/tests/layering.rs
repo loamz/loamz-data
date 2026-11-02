@@ -119,3 +119,62 @@ fn services_form_one_line_with_no_loop() {
     }
     assert_eq!(checked, order.len());
 }
+
+/// Data works without Agents, and never depends on it: Agents is a customer of Data's public API. The only link is configuration
+/// (the names of clients whose tokens are an agent acting for a person), which is a string, not a dependency.
+#[test]
+fn data_depends_on_no_agents_code() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let is_agents = |name: &str| name.to_ascii_lowercase().contains("agents");
+
+    // No Rust crate of ours or anyone's with "agents" in its name is a dependency.
+    for manifest in [
+        "Cargo.toml",
+        "server/lake/Cargo.toml",
+        "server/runner/Cargo.toml",
+        "server/server/Cargo.toml",
+    ] {
+        let text = fs::read_to_string(root.join(manifest)).unwrap();
+        let mut in_dependencies = false;
+        for line in text.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                in_dependencies = line.contains("dependencies");
+            } else if in_dependencies {
+                let name = line.split(['=', '.']).next().unwrap_or("").trim();
+                assert!(
+                    !is_agents(name),
+                    "{manifest} depends on {name}: Data must not depend on Agents"
+                );
+            }
+        }
+    }
+
+    // No source file reaches for an Agents crate.
+    for crate_dir in ["server/lake/src", "server/runner/src", "server/server/src"] {
+        let mut files = Vec::new();
+        sources(&root.join(crate_dir), &mut files);
+        for (path, src) in files {
+            assert!(
+                !code(&src).contains("loamz_agents"),
+                "{path} uses an Agents crate: Data must not depend on Agents"
+            );
+        }
+    }
+
+    // The web app does not depend on an Agents package either (talking to an Agents address, when one is configured, is a call, not a dependency).
+    let package: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join("web/package.json")).unwrap()).unwrap();
+    for section in ["dependencies", "devDependencies"] {
+        for name in package[section]
+            .as_object()
+            .into_iter()
+            .flat_map(|m| m.keys())
+        {
+            assert!(
+                !is_agents(name),
+                "web/package.json depends on {name}: Data must not depend on Agents"
+            );
+        }
+    }
+}
