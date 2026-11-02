@@ -23,7 +23,7 @@ export function Workbench({ top, side, children }: { top: ReactNode; side: React
 /** Left: who and where. Center: search. Right: the person's own controls. */
 export function TopBar({ left, center, right }: { left: ReactNode; center?: ReactNode; right?: ReactNode }) {
   return (
-    <header className="grid h-14 shrink-0 grid-cols-[1fr_minmax(0,40rem)_1fr] items-center gap-3 border-b border-border px-3">
+    <header className="grid h-12 shrink-0 grid-cols-[1fr_minmax(0,40rem)_1fr] items-center gap-3 border-b border-border px-3">
       <div className="flex min-w-0 items-center gap-2">{left}</div>
       <div className="min-w-0">{center}</div>
       <div className="flex items-center justify-end gap-1">{right}</div>
@@ -45,15 +45,15 @@ export function SearchField({ placeholder, hint, value, onChange, onFocus }: { p
 export function Sidebar({ children, footer, label = "Main" }: { children: ReactNode; footer?: ReactNode; label?: string }) {
   return (
     <nav aria-label={label} className="hidden w-52 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
-      <div className="scroll-area flex min-h-0 flex-1 flex-col gap-0.5 p-2">{children}</div>
-      {footer && <div className="flex flex-col gap-0.5 border-t border-border p-2">{footer}</div>}
+      <div className="scroll-area flex min-h-0 flex-1 flex-col gap-0.5 px-2 py-1.5">{children}</div>
+      {footer && <div className="flex flex-col gap-0.5 border-t border-border px-2 py-1.5">{footer}</div>}
     </nav>
   );
 }
 
 export function SidebarGroup({ label, children }: { label?: string; children: ReactNode }) {
   return (
-    <div className="mt-3 flex flex-col gap-0.5 first:mt-0">
+    <div className="mt-2 flex flex-col gap-0.5 first:mt-0">
       {label && <p className="px-2.5 pb-1 text-2xs font-medium uppercase tracking-wide text-muted">{label}</p>}
       {children}
     </div>
@@ -95,7 +95,7 @@ export interface Crumb {
  */
 export function ObjectHeader({ crumbs, icon: Icon, title, tools, actions }: { crumbs?: Crumb[]; icon?: LucideIcon; title: string; tools?: ReactNode; actions?: ReactNode }) {
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-0.5">
       {crumbs && crumbs.length > 0 && (
         <ol className="flex flex-wrap items-center gap-1 text-sm">
           {crumbs.map((c, i) => (
@@ -132,7 +132,7 @@ export function ObjectHeader({ crumbs, icon: Icon, title, tools, actions }: { cr
 export function Body({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div className="scroll-area @container h-full min-h-0 w-full">
-      <div className={cn("flex min-h-full flex-col gap-4 px-6 py-4", className)}>{children}</div>
+      <div className={cn("flex min-h-full flex-col gap-3 px-6 py-3", className)}>{children}</div>
     </div>
   );
 }
@@ -140,9 +140,9 @@ export function Body({ children, className }: { children: ReactNode; className?:
 /** A main column with a `DetailRail` beside it (under it on a narrow screen). */
 export function WithRail({ children, rail }: { children: ReactNode; rail: ReactNode }) {
   return (
-    <div className="flex flex-col gap-4 @4xl:flex-row @4xl:items-start">
+    <div className="flex flex-col gap-3 @4xl:flex-row @4xl:items-start">
       <div className="min-w-0 flex-1">{children}</div>
-      <aside className="flex w-full shrink-0 flex-col gap-5 @4xl:w-80">{rail}</aside>
+      <aside className="flex w-full shrink-0 flex-col gap-4 @4xl:w-80">{rail}</aside>
     </div>
   );
 }
@@ -173,7 +173,7 @@ export function DetailRow({ label, children }: { label: string; children: ReactN
 export function TreePane({ title, actions, note, filter, onFilter, children }: { title: string; actions?: ReactNode; note?: ReactNode; filter?: string; onFilter?: (v: string) => void; children: ReactNode }) {
   return (
     <div className="flex h-full min-h-0 w-72 shrink-0 flex-col border-r border-border">
-      <div className="flex h-control-lg items-center justify-between gap-2 px-3 pt-2">
+      <div className="flex h-control-lg items-center justify-between gap-2 px-3 pt-1">
         <h2 className="text-sm font-semibold">{title}</h2>
         <div className="flex items-center gap-0.5">{actions}</div>
       </div>

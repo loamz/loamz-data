@@ -54,18 +54,19 @@ export function WorkspaceShell({ ws }: { ws: string }) {
   );
 
   return (
+    <div className="workspace-shell h-full">
     <Workbench
       top={
         <TopBar
           left={
-            <>
-              <Mark />
-              {me && <WorkspaceSwitcher current={ws} all={me.workspaces} />}
-            </>
+            <span className="inline-flex items-center gap-2.5 text-lg font-extrabold text-foreground">
+              <Mark size={26} /> Loamz Data
+            </span>
           }
           right={
             <>
               <ThemeButton />
+              {me && <WorkspaceSwitcher current={ws} all={me.workspaces} />}
               <UserMenu me={me} note={mine ? `${mine.name} · ${mine.org_alias === "Personal" ? "your own space" : mine.org_alias}` : undefined} />
             </>
           }
@@ -78,9 +79,9 @@ export function WorkspaceShell({ ws }: { ws: string }) {
         </Sidebar>
       }
     >
-      <nav aria-label="Pages" className="fixed inset-x-0 bottom-0 z-20 flex items-center justify-around border-t border-border bg-sidebar px-2 py-1.5 md:hidden">
+      <nav aria-label="Pages" className="fixed inset-x-0 bottom-0 z-20 flex items-center justify-start gap-1 overflow-x-auto border-t border-border bg-sidebar px-2 py-1 md:hidden">
         {shown.map(({ to, label, icon: Icon, active }) => (
-          <Button key={label} asChild variant="ghost" size="icon" className={cn(active && "bg-accent/20 text-accent hover:bg-accent/20")}>
+          <Button key={label} asChild variant="ghost" size="icon" className={cn("shrink-0", active && "bg-accent/20 text-accent hover:bg-accent/20")}>
             <Link to={to} aria-label={label} aria-current={active ? "page" : undefined}>
               <Icon />
             </Link>
@@ -101,7 +102,7 @@ export function WorkspaceShell({ ws }: { ws: string }) {
             <Suspense fallback={null}>
               {route.screen === "sql" && <SqlEditor ws={ws} />}
               {route.screen === "history" && <QueryHistory ws={ws} me={me} />}
-            {route.screen === "compute" && <Compute ws={ws} me={me} />}
+              {route.screen === "compute" && <Compute ws={ws} me={me} />}
             </Suspense>
             {route.screen === "queries" && <Queries ws={ws} />}
             {route.screen === "jobs" && <Jobs ws={ws} />}
@@ -111,5 +112,6 @@ export function WorkspaceShell({ ws }: { ws: string }) {
         )}
       </div>
     </Workbench>
+    </div>
   );
 }
