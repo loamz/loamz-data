@@ -556,6 +556,22 @@ fn new_run(ctx: &Ctx<'_>, kind: &str, title: &str, target: &Target, spec: &Value
 
 async fn queue(app: &App, ctx: &Ctx<'_>, run: &Run, action: &str) -> Result<()> {
     let mut uow = Uow::begin(app).await?;
+    if !store::has_capacity(&mut uow.tx, &run.org_id, app.max_active_runs).await? {
+        drop(uow);
+        crate::governance::audit::service::record(
+            app,
+            &run.org_id,
+            &Who::of(ctx.identity),
+            action,
+            &format!("workspace {}", run.workspace_id),
+            "denied",
+        )
+        .await?;
+        return Err(Error::TooManyRequests(
+            "this organization has reached its active run limit; try again when a run finishes"
+                .into(),
+        ));
+    }
     store::insert_run(&mut *uow.tx, run).await?;
     uow.audit(
         &run.org_id,
@@ -598,6 +614,11 @@ async fn readable_table(
     )
     .await
     .map_err(|_| nope())?;
+    if entry.classification == "sealed" {
+        return Err(Error::Invalid(
+            "sealed data cannot be used by compute".into(),
+        ));
+    }
     Ok((entry.id, rel.join("."), entry.classification))
 }
 
@@ -652,6 +673,7 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
     let mut inputs = Vec::new();
     let mut reads = Vec::new();
     let mut names = Vec::new();
+    let mut has_personal = false;
     for id in &req.inputs {
         let (entry, target) = catalogs::target_in(app, &ctx.workspace.id, org, id).await?;
         let need = match entry.kind {
@@ -665,6 +687,12 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
             }
         };
         iam::require(app, ctx.identity, org, ctx.sides, need, &target).await?;
+        if entry.classification == "sealed" {
+            return Err(Error::Invalid(
+                "sealed data cannot be used by compute".into(),
+            ));
+        }
+        has_personal |= entry.classification == "personal";
         names.push(entry.name.clone());
         inputs.push((entry.id.clone(), entry.kind));
         reads.push(entry.id);
@@ -688,6 +716,14 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
         &out_target,
     )
     .await?;
+    if out.classification == "sealed" {
+        return Err(Error::Invalid("compute cannot write to sealed data".into()));
+    }
+    if has_personal && out.classification != "personal" {
+        return Err(Error::Invalid(
+            "personal inputs require a personal output volume".into(),
+        ));
+    }
     let target = pick(
         app,
         org,
@@ -723,6 +759,56 @@ pub async fn get(app: &App, ctx: &Ctx<'_>, id: &str) -> Result<Run> {
     } else {
         Err(Error::NotFound("no such run".into()))
     }
+}
+
+/// A run can contain rows and output from its inputs. Recheck the viewer's access before exposing its details.
+/// Status and cancellation are available separately so a revoked user can still stop their own run.
+pub async fn require_detail(app: &App, ctx: &Ctx<'_>, run: &Run) -> Result<()> {
+    let hidden = || Error::NotFound("no such run".into());
+    let spec: Value = serde_json::from_str(&run.spec).map_err(|_| hidden())?;
+    let (items, entitlement) = match run.kind.as_str() {
+        "sql" => (spec["tables"].as_array().ok_or_else(hidden)?, "sql-access"),
+        "job" => (
+            spec["inputs"].as_array().ok_or_else(hidden)?,
+            "compute-create",
+        ),
+        _ => return Err(hidden()),
+    };
+    let (workspace, standing) = workspaces::open(app, ctx.identity, &run.workspace_id)
+        .await
+        .map_err(|_| hidden())?;
+    if workspace.org_id != run.org_id
+        || !workspaces::entitled(app, ctx.identity, &workspace.id, standing, entitlement)
+            .await
+            .map_err(|_| hidden())?
+    {
+        return Err(hidden());
+    }
+    let sides = orgs::sides(app, ctx.identity, &run.org_id)
+        .await
+        .map_err(|_| hidden())?;
+    for item in items {
+        let id = item["id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(hidden)?;
+        let (entry, target) = catalogs::target_in(app, &workspace.id, &run.org_id, id)
+            .await
+            .map_err(|_| hidden())?;
+        let need = match (run.kind.as_str(), entry.kind) {
+            ("sql", Kind::Table) => Privilege::Select,
+            ("job", Kind::Table) if item["kind"] == "table" => Privilege::Select,
+            ("job", Kind::Volume) if item["kind"] == "volume" => Privilege::ReadVolume,
+            _ => return Err(hidden()),
+        };
+        if entry.classification == "sealed" {
+            return Err(hidden());
+        }
+        iam::require(app, ctx.identity, &run.org_id, &sides, need, &target)
+            .await
+            .map_err(|_| hidden())?;
+    }
+    Ok(())
 }
 
 /// The workspace's runs, newest first: the person's own, or everyone's for an admin (who may narrow it to one person).
@@ -863,6 +949,114 @@ async fn storage_for(app: &App, org: &str, ids: &[String], timeout_s: i64) -> Re
     }))
 }
 
+/// Check the current workspace, entitlements and object grants before handing a queued run to a worker.
+/// Groups in the original identity are a snapshot; changes at the identity provider are not yet refreshed.
+async fn authorize_lease(app: &App, target: &Target, run: &Run, spec: &Value) -> Result<()> {
+    let invalid = || Error::Internal("invalid queued run specification".into());
+    let (items, entitlement) = match run.kind.as_str() {
+        "sql" => (spec["tables"].as_array().ok_or_else(invalid)?, "sql-access"),
+        "job" => (
+            spec["inputs"].as_array().ok_or_else(invalid)?,
+            "compute-create",
+        ),
+        _ => return Err(invalid()),
+    };
+    let mut reads = Vec::with_capacity(items.len());
+    for item in items {
+        reads.push(
+            item["id"]
+                .as_str()
+                .filter(|id| !id.is_empty())
+                .ok_or_else(invalid)?
+                .to_owned(),
+        );
+    }
+    let writes = if run.kind == "job" {
+        vec![
+            spec["output"]
+                .as_str()
+                .filter(|id| !id.is_empty())
+                .ok_or_else(invalid)?
+                .to_owned(),
+        ]
+    } else {
+        vec![]
+    };
+    let who: As = serde_json::from_value(spec["as"].clone()).map_err(|_| invalid())?;
+    let identity = who.identity(
+        &run.org_id,
+        Scope {
+            run: run.id.clone(),
+            reads,
+            writes,
+        },
+    );
+    let (workspace, standing) = workspaces::open(app, &identity, &run.workspace_id).await?;
+    if workspace.org_id != run.org_id
+        || !workspaces::entitled(app, &identity, &workspace.id, standing, entitlement).await?
+    {
+        return Err(Error::Unauthorized);
+    }
+    let sides = orgs::sides(app, &identity, &run.org_id).await?;
+    let mut has_personal = false;
+    for item in items {
+        let id = item["id"].as_str().ok_or_else(invalid)?;
+        let (entry, securable) =
+            catalogs::target_in(app, &run.workspace_id, &run.org_id, id).await?;
+        let need = match (run.kind.as_str(), entry.kind) {
+            ("sql", Kind::Table) => Privilege::Select,
+            ("job", Kind::Table) if item["kind"] == "table" => Privilege::Select,
+            ("job", Kind::Volume) if item["kind"] == "volume" => Privilege::ReadVolume,
+            _ => return Err(invalid()),
+        };
+        iam::require(app, &identity, &run.org_id, &sides, need, &securable).await?;
+        if entry.classification == "sealed"
+            || (target.serverless() && entry.classification != "normal")
+        {
+            return Err(Error::Unauthorized);
+        }
+        has_personal |= entry.classification == "personal";
+    }
+    if run.kind == "job" {
+        let id = spec["output"].as_str().ok_or_else(invalid)?;
+        let (entry, securable) =
+            catalogs::target_in(app, &run.workspace_id, &run.org_id, id).await?;
+        if entry.kind != Kind::Volume
+            || entry.classification == "sealed"
+            || (has_personal && entry.classification != "personal")
+        {
+            return Err(Error::Unauthorized);
+        }
+        iam::require(
+            app,
+            &identity,
+            &run.org_id,
+            &sides,
+            Privilege::WriteVolume,
+            &securable,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn fail_unauthorized_lease(app: &App, target: &Target, run: &Run) -> Result<()> {
+    complete(
+        app,
+        target,
+        &run.id,
+        Report {
+            state: "failed".into(),
+            exit_code: -1,
+            stdout: String::new(),
+            stderr: String::new(),
+            result: String::new(),
+            error: "the run could not be authorized when it started".into(),
+        },
+    )
+    .await
+}
+
 /// Hands the target its next queued run, with the token that run's files are read and written with. None if nothing is waiting.
 ///
 /// # Errors
@@ -876,6 +1070,11 @@ pub async fn lease(app: &App, target: &Target) -> Result<Option<Lease>> {
     let Some(run) = leased else { return Ok(None) };
     let spec: Value = serde_json::from_str(&run.spec)
         .map_err(|e| Error::Internal(format!("a run has a spec that is not JSON: {e}")))?;
+    if let Err(error) = authorize_lease(app, target, &run, &spec).await {
+        tracing::warn!(run = %run.id, error = ?error, "queued work could not be authorized");
+        fail_unauthorized_lease(app, target, &run).await?;
+        return Ok(None);
+    }
     let limits = Limits {
         memory_mb: spec["memory_mb"].as_i64().unwrap_or(1024),
         cpu_millis: spec["cpu_millis"].as_i64().unwrap_or(1000),

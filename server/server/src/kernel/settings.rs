@@ -17,6 +17,8 @@ pub struct Settings {
     /// The Keycloak realm that signs people in, such as `https://auth.loamz.com/realms/loamz`.
     pub issuer: String,
     pub max_upload_bytes: u64,
+    /// Maximum queued and running SQL statements and jobs per organization.
+    pub max_active_runs: i64,
     /// The built web app, served by this server when set.
     pub web_dir: Option<PathBuf>,
     /// A mounted file holding the token serverless compute endpoints expect.
@@ -118,17 +120,34 @@ fn var(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.trim().is_empty())
 }
 
+/// HTTP is allowed only for an exact local development host, never a look-alike hostname.
+fn valid_issuer(value: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(value) else {
+        return false;
+    };
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return false;
+    }
+    matches!(
+        (url.scheme(), url.host_str()),
+        ("https", Some(_)) | ("http", Some("localhost" | "127.0.0.1" | "[::1]"))
+    )
+}
+
 impl Settings {
     /// # Errors
     /// A required setting is missing or malformed.
     pub fn from_env() -> Result<Self, String> {
         let need = |name: &str| var(name).ok_or_else(|| format!("{name} is not set"));
         let issuer = need("LOAMZ_DATA_OIDC_ISSUER")?;
-        if !(issuer.starts_with("https://")
-            || issuer.starts_with("http://127.0.0.1")
-            || issuer.starts_with("http://localhost"))
-        {
-            return Err("LOAMZ_DATA_OIDC_ISSUER must be an https address".into());
+        if !valid_issuer(&issuer) {
+            return Err(
+                "LOAMZ_DATA_OIDC_ISSUER must be an https URL, or an http URL on localhost".into(),
+            );
         }
         let max_mb = match var("LOAMZ_DATA_MAX_UPLOAD_MB") {
             Some(v) => v
@@ -136,6 +155,12 @@ impl Settings {
                 .map_err(|_| "LOAMZ_DATA_MAX_UPLOAD_MB is not a number")?,
             None => 1024,
         };
+        let max_active_runs = var("LOAMZ_DATA_MAX_ACTIVE_RUNS")
+            .map_or(Ok(32), |v| v.parse::<i64>())
+            .map_err(|_| "LOAMZ_DATA_MAX_ACTIVE_RUNS must be a positive integer")?;
+        if max_active_runs < 1 {
+            return Err("LOAMZ_DATA_MAX_ACTIVE_RUNS must be a positive integer".into());
+        }
         Ok(Self {
             listen: var("LOAMZ_DATA_LISTEN")
                 .unwrap_or_else(|| "127.0.0.1:8020".into())
@@ -160,6 +185,7 @@ impl Settings {
             },
             issuer,
             max_upload_bytes: max_mb.saturating_mul(1024 * 1024),
+            max_active_runs,
             web_dir: var("LOAMZ_DATA_WEB_DIR").map(Into::into),
             serverless_token_file: var("LOAMZ_DATA_SERVERLESS_TOKEN_FILE").map(Into::into),
             serverless_endpoint: var("LOAMZ_DATA_SERVERLESS_ENDPOINT"),
@@ -172,5 +198,33 @@ impl Settings {
                 })
                 .unwrap_or_default(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_issuer;
+
+    #[test]
+    fn http_issuers_are_restricted_to_exact_local_hosts() {
+        for value in [
+            "https://identity.example/realms/loamz",
+            "http://localhost:8082/realms/loamz",
+            "http://127.0.0.1:8082/realms/loamz",
+            "http://[::1]:8082/realms/loamz",
+        ] {
+            assert!(valid_issuer(value), "{value}");
+        }
+        for value in [
+            "http://localhost.evil.example/realm",
+            "http://127.0.0.1.evil.example/realm",
+            "http://localhost@evil.example/realm",
+            "https://user@example.com/realm",
+            "https://example.com/realm?x=1",
+            "https://example.com/realm#x",
+            "https://",
+        ] {
+            assert!(!valid_issuer(value), "{value}");
+        }
     }
 }

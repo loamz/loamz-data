@@ -226,6 +226,10 @@ pub async fn server(db: Db) -> Server {
 }
 
 pub async fn server_with(db: Db, max_upload: u64) -> Server {
+    server_with_limits(db, max_upload, 32).await
+}
+
+pub async fn server_with_limits(db: Db, max_upload: u64, max_active_runs: i64) -> Server {
     let dir = std::env::temp_dir().join(format!("loamz-data-stores-{}", new_id()));
     let settings = Settings {
         listen: "127.0.0.1:0".parse().unwrap(),
@@ -233,6 +237,7 @@ pub async fn server_with(db: Db, max_upload: u64) -> Server {
         storage: Storage::Folder(dir.clone()),
         issuer: ISSUER.into(),
         max_upload_bytes: max_upload,
+        max_active_runs,
         web_dir: None,
         serverless_token_file: None,
         serverless_endpoint: Some("https://sql.example.test/run".into()),

@@ -19,6 +19,7 @@ pub struct App {
     /// One pooled connection to the serverless endpoints, so a statement does not pay for a new TLS handshake each time.
     pub serverless_http: reqwest::Client,
     pub max_upload: u64,
+    pub max_active_runs: i64,
     /// The bearer token serverless endpoints accept, read from a mounted file. None: serverless compute is off.
     pub serverless_token: Option<String>,
     /// Where the serverless SQL endpoint is (https); with the token, it makes serverless compute creatable.
@@ -47,6 +48,7 @@ impl App {
                 .build()
                 .unwrap_or_default(),
             max_upload: settings.max_upload_bytes,
+            max_active_runs: settings.max_active_runs,
             serverless_token: settings.serverless_token()?,
             serverless_endpoint: settings.serverless_endpoint.clone(),
             write: Mutex::new(()),

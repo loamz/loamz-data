@@ -165,6 +165,27 @@ pub async fn touch<'e, E: Executor<'e, Database = Any>>(e: E, id: &str, now: i64
 
 // ---- runs -------------------------------------------------------------------------------------------------------
 
+/// Serializes admission per organization across `PostgreSQL` instances and `SQLite` connections.
+/// The no-op update takes a row lock until the surrounding transaction commits.
+pub async fn has_capacity(c: &mut sqlx::AnyConnection, org: &str, limit: i64) -> Result<bool> {
+    let locked = sqlx::query("UPDATE orgs SET id = id WHERE id = $1")
+        .bind(org)
+        .execute(&mut *c)
+        .await?;
+    if locked.rows_affected() != 1 {
+        return Err(crate::kernel::error::Error::Internal(
+            "run organization is missing".into(),
+        ));
+    }
+    let active: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM runs WHERE org_id = $1 AND state IN ('queued', 'running')",
+    )
+    .bind(org)
+    .fetch_one(&mut *c)
+    .await?;
+    Ok(active < limit)
+}
+
 pub async fn insert_run<'e, E: Executor<'e, Database = Any>>(e: E, r: &Run) -> Result<()> {
     sqlx::query(&format!("INSERT INTO runs ({RUN}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)"))
         .bind(&r.id)
