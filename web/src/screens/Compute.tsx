@@ -1,8 +1,9 @@
 import { Cpu, MoreHorizontal, Plus, Server, TerminalSquare, Trash2, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Badge, Body, Button, DataTable, Menu, MenuContent, MenuItem, MenuTrigger, ObjectHeader, Tabs, TabsContent, TabsList, TabsTrigger, confirmAction, toast, type Column } from "@/design";
+import { Body, Button, DataTable, Menu, MenuContent, MenuItem, MenuTrigger, ObjectHeader, Tabs, TabsContent, TabsList, TabsTrigger, confirmAction, toast, type Column } from "@/design";
 import * as api from "@/api";
 import { CreateCompute } from "@/components/CreateCompute";
+import { StateDot } from "@/components/StateDot";
 import { PowerButton } from "@/components/PowerButton";
 import { computeState, sizeLabel, stateLabel, type ComputeState } from "@/computeState";
 import { go } from "@/route";
@@ -33,7 +34,7 @@ export function Compute({ ws, me }: { ws: string; me: api.Me | undefined }) {
       header: "State",
       cell: (c) => {
         const s: ComputeState = computeState(c, now);
-        return <Badge tone={s === "running" ? "success" : s === "starting" ? "accent" : "neutral"}>{stateLabel[s]}</Badge>;
+        return <span className="inline-flex items-center gap-2"><StateDot state={s} />{stateLabel[s]}</span>;
       },
     },
     { key: "name", header: "Name", width: "fill", cell: (c) => <span className="inline-flex items-center gap-2">{c.kind === "serverless" ? <Zap className="text-muted" aria-hidden /> : <Server className="text-muted" aria-hidden />}<span className="font-medium">{c.name}</span></span> },

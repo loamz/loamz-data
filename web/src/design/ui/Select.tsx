@@ -3,11 +3,14 @@
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { cva, type VariantProps } from "class-variance-authority";
 import { Check, ChevronDown } from "lucide-react";
+import type { ReactNode } from "react";
 import { cn } from "../cn";
 
 export interface SelectOption {
   value: string;
   label: string;
+  /** Shown before the label, in the list and in the closed control (a status dot, a kind icon). */
+  leading?: ReactNode;
 }
 
 export interface SelectGroup {
@@ -81,7 +84,12 @@ function SelectItem({ option }: { option: SelectOption }) {
         "data-[highlighted]:bg-card-hover data-[state=checked]:font-medium",
       )}
     >
-      <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
+      <SelectPrimitive.ItemText>
+        <span className="flex min-w-0 items-center gap-2">
+          {option.leading}
+          {option.label}
+        </span>
+      </SelectPrimitive.ItemText>
       <SelectPrimitive.ItemIndicator>
         <Check className="size-3.5 text-accent" />
       </SelectPrimitive.ItemIndicator>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button, Dialog, DialogContent, DialogFooter, Select, toast } from "@/design";
 import * as api from "@/api";
 import { computeState, stateLabel } from "@/computeState";
+import { StateDot } from "@/components/StateDot";
 import { useLoad } from "@/hooks";
 
 const key = (ws: string) => `loamz.compute.${ws}`;
@@ -70,7 +71,7 @@ export function ComputePicker({ compute, className = "w-52" }: { compute: Return
       placeholder="Select compute"
       value={target ?? ""}
       onValueChange={choose}
-      options={all.map((c) => ({ value: c.id, label: `${c.name} · ${c.kind === "serverless" ? "serverless" : "machine"} · ${stateLabel[computeState(c, Date.now())]}` }))}
+      options={all.map((c) => ({ value: c.id, label: `${c.name} · ${c.kind === "serverless" ? "serverless" : "machine"}`, leading: <StateDot state={computeState(c, Date.now())} /> }))}
     />
   );
 }
@@ -96,7 +97,7 @@ export function AttachCompute({ ws, compute, open, onOpenChange }: { ws: string;
             placeholder={compute.all.length === 0 ? "No compute yet" : "Select compute"}
             value={pick}
             onValueChange={setPick}
-            options={compute.all.map((c) => ({ value: c.id, label: `${c.name} · ${stateLabel[computeState(c, Date.now())]}` }))}
+            options={compute.all.map((c) => ({ value: c.id, label: c.name, leading: <StateDot state={computeState(c, Date.now())} /> }))}
           />
           {chosen && stopped && !canStart && <p className="text-xs text-muted">{chosen.name} is stopped. A workspace admin has to start it.</p>}
           <DialogFooter>
