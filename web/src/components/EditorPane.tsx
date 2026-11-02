@@ -7,12 +7,12 @@ import { go } from "@/route";
 import { stateWords, span } from "./RunBits";
 import { SchemaBrowser } from "./SchemaBrowser";
 
-type Pane = "tables" | "queries" | "history";
+type Pane = "catalog" | "queries" | "history";
 
 const dot = (s: api.RunState) => (s === "succeeded" ? "bg-success" : s === "failed" || s === "timed_out" ? "bg-danger" : s === "running" || s === "queued" ? "animate-pulse bg-accent" : "bg-muted/50");
 
 /**
- * The left side of the SQL editor, as in Databricks: the tables to click into a statement, the queries you saved, and the statements you ran,
+ * The left side of the SQL editor, as in Databricks: the catalog, to click a table into a statement, the queries you saved, and the statements you ran,
  * one at a time. `refreshKey` changes when a run starts, ends or a query is saved, so the lists are never behind what you just did.
  */
 export function EditorPane({
@@ -30,18 +30,18 @@ export function EditorPane({
   onOpenQuery: (q: api.SavedQuery) => void;
   onOpenStatement: (sql: string) => void;
 }) {
-  const [pane, setPane] = useState<Pane>("tables");
+  const [pane, setPane] = useState<Pane>("catalog");
   return (
     <div className="flex h-full min-h-0 w-60 shrink-0 flex-col border-r border-border">
       <Tabs value={pane} onValueChange={(v) => setPane(v as Pane)} className="shrink-0 px-2 pt-1">
         <TabsList variant="line">
-          <TabsTrigger value="tables">Tables</TabsTrigger>
+          <TabsTrigger value="catalog">Catalog</TabsTrigger>
           <TabsTrigger value="queries">Queries</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
       </Tabs>
-      {/* The tables stay mounted, so the folders you opened are still open when you come back. */}
-      <div className={cn("flex min-h-0 flex-1 flex-col pt-1", pane !== "tables" && "hidden")}>
+      {/* The catalog stays mounted, so the folders you opened are still open when you come back. */}
+      <div className={cn("flex min-h-0 flex-1 flex-col pt-1", pane !== "catalog" && "hidden")}>
         <SchemaBrowser ws={ws} onPick={onPick} onNames={onNames} />
       </div>
       {pane === "queries" && <Saved ws={ws} refreshKey={refreshKey} onOpen={onOpenQuery} />}
