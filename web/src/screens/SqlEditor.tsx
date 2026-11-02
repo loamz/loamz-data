@@ -135,7 +135,7 @@ export function SqlEditor({ ws }: { ws: string }) {
       </div>
 
       <section className="flex min-w-0 flex-1 flex-col">
-        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-sidebar px-2 py-1.5">
+        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-sidebar px-2 py-1">
           {state.tabs.map((t) => (
             <div key={t.id} className={cn("group flex h-control-sm shrink-0 items-center rounded-md text-xs transition-colors", t.id === tab.id ? "bg-card text-foreground shadow-sm" : "text-muted hover:text-foreground")}>
               <button type="button" className="h-full max-w-48 cursor-pointer truncate pl-3 pr-1.5" onClick={() => update({ ...state, active: t.id })}>
@@ -153,17 +153,17 @@ export function SqlEditor({ ws }: { ws: string }) {
           </Button>
         </div>
 
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-1">
           {out?.running ? (
-            <Button variant="secondary" onClick={() => void stop()}>
+            <Button variant="secondary" size="sm" onClick={() => void stop()}>
               <Square /> Stop
             </Button>
           ) : (
-            <Button variant="primary" onClick={() => void run(handle.current?.selection() ?? null)} disabled={!tab.sql.trim() || !picked.target} title={picked.target ? (picked.running ? undefined : "Start the compute first") : "Choose a compute first"}>
+            <Button variant="primary" size="sm" onClick={() => void run(handle.current?.selection() ?? null)} disabled={!tab.sql.trim() || !picked.target} title={picked.target ? (picked.running ? undefined : "Start the compute first") : "Choose a compute first"}>
               <Play /> Run
             </Button>
           )}
-          <Button variant="secondary" disabled={!tab.sql.trim() || !dirty} onClick={() => (tab.saved ? void saveAs(tab.saved.name) : setNaming(titleOf(tab.sql, tab.title)))}>
+          <Button variant="secondary" size="sm" disabled={!tab.sql.trim() || !dirty} onClick={() => (tab.saved ? void saveAs(tab.saved.name) : setNaming(titleOf(tab.sql, tab.title)))}>
             <Save /> Save
           </Button>
           <span className="flex-1" />

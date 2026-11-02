@@ -1,4 +1,5 @@
 import { FileCode2, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { Body, Button, DataTable, Menu, MenuContent, MenuItem, MenuTrigger, ObjectHeader, confirmAction, toast, type Column } from "@/design";
 import * as api from "@/api";
 import { Principal } from "@/components/Principal";
@@ -10,7 +11,8 @@ import { blank, load, openSaved, save } from "@/sqlTabs";
 /** The SQL people saved to come back to: your own, or everyone's for a workspace admin. */
 export function Queries({ ws }: { ws: string }) {
   const list = useLoad(() => api.savedQueries(ws), ws);
-  const rows = list.data ?? [];
+  const [filter, setFilter] = useState("");
+  const rows = (list.data ?? []).filter((q) => q.name.toLowerCase().includes(filter.trim().toLowerCase()));
   const columns: Column<api.SavedQuery>[] = [
     { key: "name", header: "Name", width: "fill", cell: (q) => <span className="inline-flex items-center gap-2"><FileCode2 className="text-muted" aria-hidden /><span className="font-medium text-accent">{q.name}</span></span> },
     { key: "owner", header: "Owner", cell: (q) => <Principal id={q.owner} /> },
@@ -67,7 +69,7 @@ export function Queries({ ws }: { ws: string }) {
           </Button>
         }
       />
-      <DataTable columns={columns} rows={rows} rowKey={(q) => q.id} onOpen={(q) => openSaved(ws, q)} count={list.loading && !list.data ? "Loading…" : `${rows.length} ${rows.length === 1 ? "query" : "queries"}`} empty="Nothing saved yet. Write SQL in the editor and press Save." />
+      <DataTable columns={columns} rows={rows} rowKey={(q) => q.id} onOpen={(q) => openSaved(ws, q)} filter={filter} onFilter={setFilter} count={list.loading && !list.data ? "Loading…" : `${rows.length} ${rows.length === 1 ? "query" : "queries"}`} empty={list.error?.message ?? (filter ? "No matching queries." : "Nothing saved yet. Write SQL in the editor and press Save.")} />
     </Body>
   );
 }

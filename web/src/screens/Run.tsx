@@ -28,7 +28,7 @@ export function Run({ ws, id }: { ws: string; id: string }) {
         actions={<StopButton ws={ws} run={r} onStopped={run.reload} />}
       />
       <WithRail rail={<RunFacts run={r} computeName={(t) => computes.data?.find((c) => c.id === t)?.name ?? "removed"} />}>
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3">
           <RestrictedOutput run={r} />
           {r.error && <p className="whitespace-pre-wrap text-sm text-danger">{r.error}</p>}
           {r.kind === "job" && r.state === "succeeded" && r.result_access !== "restricted" && <p className="text-sm text-muted">Its files are in the output volume, under <span className="font-mono">runs/{r.id}/</span>.</p>}

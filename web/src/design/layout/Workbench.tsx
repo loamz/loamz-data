@@ -44,7 +44,7 @@ export function SearchField({ placeholder, hint, value, onChange, onFocus }: { p
 
 export function Sidebar({ children, footer, label = "Main" }: { children: ReactNode; footer?: ReactNode; label?: string }) {
   return (
-    <nav aria-label={label} className="hidden w-52 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
+    <nav aria-label={label} className="hidden w-44 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
       <div className="scroll-area flex min-h-0 flex-1 flex-col gap-0.5 px-2 py-1.5">{children}</div>
       {footer && <div className="flex flex-col gap-0.5 border-t border-border px-2 py-1.5">{footer}</div>}
     </nav>
@@ -132,7 +132,7 @@ export function ObjectHeader({ crumbs, icon: Icon, title, tools, actions }: { cr
 export function Body({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div className="scroll-area @container h-full min-h-0 w-full">
-      <div className={cn("flex min-h-full flex-col gap-3 px-6 py-3", className)}>{children}</div>
+      <div className={cn("flex min-h-full flex-col gap-3 px-4 py-3", className)}>{children}</div>
     </div>
   );
 }
@@ -142,7 +142,7 @@ export function WithRail({ children, rail }: { children: ReactNode; rail: ReactN
   return (
     <div className="flex flex-col gap-3 @4xl:flex-row @4xl:items-start">
       <div className="min-w-0 flex-1">{children}</div>
-      <aside className="flex w-full shrink-0 flex-col gap-4 @4xl:w-80">{rail}</aside>
+      <aside className="flex w-full shrink-0 flex-col gap-4 @4xl:w-72">{rail}</aside>
     </div>
   );
 }
@@ -172,7 +172,7 @@ export function DetailRow({ label, children }: { label: string; children: ReactN
 /** The left pane of a browser (a catalog tree, a schema list): a header with small actions, a filter, then the rows. */
 export function TreePane({ title, actions, note, filter, onFilter, children }: { title: string; actions?: ReactNode; note?: ReactNode; filter?: string; onFilter?: (v: string) => void; children: ReactNode }) {
   return (
-    <div className="flex h-full min-h-0 w-72 shrink-0 flex-col border-r border-border">
+    <div className="flex h-full min-h-0 w-60 shrink-0 flex-col border-r border-border">
       <div className="flex h-control-lg items-center justify-between gap-2 px-3 pt-1">
         <h2 className="text-sm font-semibold">{title}</h2>
         <div className="flex items-center gap-0.5">{actions}</div>

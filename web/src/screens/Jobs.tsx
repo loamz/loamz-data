@@ -11,10 +11,12 @@ import { go } from "@/route";
 /** Python scripts that ran over the workspace's data, each in a sandbox of its own: newest first. */
 export function Jobs({ ws }: { ws: string }) {
   const [creating, setCreating] = useState(false);
+  const [filter, setFilter] = useState("");
   const runs = useLoad(() => api.runs(ws, { kind: "job", limit: 100 }), ws);
   const computes = useLoad(() => api.computeTargets(ws), ws);
-  const rows = runs.data ?? [];
-  const live = rows.some(api.isRunning);
+  const all = runs.data ?? [];
+  const rows = all.filter((r) => r.title.toLowerCase().includes(filter.trim().toLowerCase()));
+  const live = all.some(api.isRunning);
   const { reload } = runs;
   useEffect(() => {
     if (!live) return;
@@ -40,7 +42,7 @@ export function Jobs({ ws }: { ws: string }) {
           </Button>
         }
       />
-      <DataTable columns={columns} rows={rows} rowKey={(r) => r.id} onOpen={(r) => go({ screen: "run", ws, id: r.id })} count={runs.loading && !runs.data ? "Loading…" : `${rows.length} ${rows.length === 1 ? "run" : "runs"}`} empty="No jobs yet. A job runs a Python script over tables and volumes you choose, and saves what it writes." />
+      <DataTable columns={columns} rows={rows} rowKey={(r) => r.id} onOpen={(r) => go({ screen: "run", ws, id: r.id })} filter={filter} onFilter={setFilter} count={runs.loading && !runs.data ? "Loading…" : `${rows.length} ${rows.length === 1 ? "run" : "runs"}`} empty={runs.error?.message ?? (filter ? "No matching jobs." : "No jobs yet. A job runs a Python script over tables and volumes you choose, and saves what it writes.")} />
       <NewJob
         ws={ws}
         open={creating}
