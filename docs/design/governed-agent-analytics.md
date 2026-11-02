@@ -74,7 +74,7 @@ The current server checkout contains these implementation paths. They establish 
 
 New work: independent analysis contracts and workers, governed scratch datasets, artifact lineage and release checks, per-user MCP authorization, safe connector ingestion, and cross-client conformance tests. Existing file and table permissions are building blocks; they do not establish these complete workflows by themselves.
 
-This proposal extends [ADR 0004](../adr/0004-agent-runtime-versus-governed-data.md) and [ADR 0007](../adr/0007-keycloak-identity-and-agent-delegation.md). Some older ADR terminology predates Loamz naming. [ADR 0002](../adr/0002-sandbox-data-transport.md) also contains historical token-file transport; the current gateway code and this design keep credentials outside generated code.
+This proposal extends [ADR 0004](https://github.com/loamz/loamz-deploy/blob/main/docs/adr/0004-agent-runtime-versus-governed-data.md) and [ADR 0007](https://github.com/loamz/loamz-deploy/blob/main/docs/adr/0007-keycloak-identity-and-agent-delegation.md). Some older ADR terminology predates Loamz naming. [ADR 0002](https://github.com/loamz/loamz-deploy/blob/main/docs/adr/0002-sandbox-data-transport.md) also contains historical token-file transport; the current gateway code and this design keep credentials outside generated code.
 
 ## What freedom means
 
