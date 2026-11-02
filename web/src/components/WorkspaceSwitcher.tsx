@@ -15,7 +15,7 @@ export function WorkspaceSwitcher({ current, all }: { current: string; all: Work
           <ChevronsUpDown className="shrink-0 text-muted" aria-hidden />
         </button>
       </MenuTrigger>
-      <MenuContent>
+      <MenuContent align="end">
         {orgs.map((org, i) => (
           <div key={org}>
             {i > 0 && <MenuSeparator />}
