@@ -1,15 +1,20 @@
-import { Trash2, UserMinus } from "lucide-react";
-import { useState } from "react";
-import { Badge, Button, Input, Page, PageEmpty, Section, Select, SettingGroup, SettingRow, confirmAction, toast } from "@/design";
+import { Building2, Database, KeyRound, Trash2, UserMinus, Users, type LucideIcon } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { Badge, Body, Button, DataTable, Input, ObjectHeader, Page, PageEmpty, Select, SidebarItem, confirmAction, toast, type Column } from "@/design";
 import * as api from "@/api";
 import { Principal } from "@/components/Principal";
 import { PrincipalField } from "@/components/PrincipalField";
-import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
 import { useLoad } from "@/hooks";
+import { hrefOf, navigate, type Route, type SettingsTab } from "@/route";
 import { centralOrigin } from "@/site";
 
+const ROLES = [
+  { value: "user", label: "User" },
+  { value: "admin", label: "Admin" },
+];
+
 /** A workspace's members, what they are entitled to, and which catalogs it can see. For the workspace's admins. */
-export function Settings({ ws, me }: { ws: string; me: api.Me | undefined }) {
+export function Settings({ ws, tab }: { ws: string; tab: SettingsTab; me: api.Me | undefined }) {
   const w = useLoad(() => api.workspace(ws), ws);
   const here = w.data;
   if (w.error) {
@@ -20,25 +25,56 @@ export function Settings({ ws, me }: { ws: string; me: api.Me | undefined }) {
     );
   }
   if (!here) return <Page title="Workspace settings">{null}</Page>;
-  return (
-    <Page
-      title={here.name}
-      subtitle={here.admin ? "Who works here, what they may do, and which catalogs they can see." : "You are a user of this workspace. Admins manage who works here."}
-      actions={me && <WorkspaceSwitcher current={ws} all={me.workspaces} />}
-    >
-      {here.admin ? (
-        <>
-          <Members ws={ws} />
-          <Entitlements ws={ws} />
-          <Bindings ws={ws} accountAdmin={here.account_admin} />
-          {here.account_admin && <Danger ws={ws} workspace={here} />}
-        </>
-      ) : (
+  if (!here.admin) {
+    return (
+      <Body>
         <PageEmpty icon={UserMinus} title="Only admins can change this">
           Ask an admin of {here.name}.
         </PageEmpty>
-      )}
-    </Page>
+      </Body>
+    );
+  }
+  // Renaming and deleting belong to account admins; for anyone else that page is not offered, and its address shows the first one.
+  const sections: { tab: SettingsTab; label: string; icon: LucideIcon }[] = [
+    { tab: "members", label: "Members", icon: Users },
+    { tab: "entitlements", label: "Entitlements", icon: KeyRound },
+    { tab: "catalogs", label: "Catalogs", icon: Database },
+    ...(here.account_admin ? [{ tab: "workspace" as const, label: "Workspace", icon: Building2 }] : []),
+  ];
+  const now = sections.find((s) => s.tab === tab)?.tab ?? "members";
+  const to = (t: SettingsTab): Route => ({ screen: "settings", ws, tab: t });
+  return (
+    <Body>
+      <ObjectHeader crumbs={[{ label: "Workspace settings" }]} title={here.name} />
+      <div className="flex flex-col gap-3 md:flex-row md:gap-6">
+        <nav aria-label="Settings" className="flex shrink-0 gap-0.5 overflow-x-auto md:w-44 md:flex-col">
+          {sections.map((s) => (
+            <SidebarItem key={s.tab} icon={s.icon} active={s.tab === now} href={hrefOf(to(s.tab))} onClick={navigate(to(s.tab))}>
+              {s.label}
+            </SidebarItem>
+          ))}
+        </nav>
+        <div className="min-w-0 max-w-3xl flex-1">
+          {now === "members" && <Members ws={ws} />}
+          {now === "entitlements" && <Entitlements ws={ws} />}
+          {now === "catalogs" && <Bindings ws={ws} accountAdmin={here.account_admin} />}
+          {now === "workspace" && <Danger ws={ws} workspace={here} />}
+        </div>
+      </div>
+    </Body>
+  );
+}
+
+/** One page of the settings: its name and one line on what it does, then the form and the list. */
+function Section({ title, note, children }: { title: string; note: string; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-3">
+      <div>
+        <h2 className="text-base font-semibold">{title}</h2>
+        <p className="text-sm text-muted">{note}</p>
+      </div>
+      {children}
+    </section>
   );
 }
 
@@ -46,10 +82,56 @@ function Members({ ws }: { ws: string }) {
   const list = useLoad(() => api.members(ws), ws);
   const [principal, setPrincipal] = useState("");
   const [role, setRole] = useState("user");
+  const columns: Column<api.Member>[] = [
+    { key: "who", header: "Member", width: "fill", cell: (m) => <Principal id={m.principal} /> },
+    {
+      key: "role",
+      header: "Role",
+      cell: (m) => (
+        <Select
+          className="w-28"
+          size="sm"
+          aria-label={`Role of ${m.principal}`}
+          value={m.role}
+          onValueChange={async (r) => {
+            try {
+              await api.assignMember(ws, m.principal, r as "admin" | "user");
+              list.reload();
+            } catch (err) {
+              toast.error("Could not change the role", (err as Error).message);
+            }
+          }}
+          options={ROLES}
+        />
+      ),
+    },
+    {
+      key: "remove",
+      header: "",
+      cell: (m) => (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`Remove ${m.principal}`}
+          onClick={async () => {
+            if (!(await confirmAction({ title: "Remove from the workspace?", description: "They can no longer open it. Their access to data is unchanged.", confirmLabel: "Remove", danger: true }))) return;
+            try {
+              await api.removeMember(ws, m.principal);
+              list.reload();
+            } catch (err) {
+              toast.error("Could not remove", (err as Error).message);
+            }
+          }}
+        >
+          <UserMinus />
+        </Button>
+      ),
+    },
+  ];
   return (
-    <Section title="Members" description="People, groups and service principals assigned to this workspace. An admin manages the workspace; a user works in it.">
+    <Section title="Members" note="People, groups and service principals assigned to this workspace. Admins manage it; users work in it.">
       <form
-        className="mb-3 flex flex-wrap items-center gap-2"
+        className="flex flex-wrap items-center gap-2"
         onSubmit={async (e) => {
           e.preventDefault();
           if (!principal) return;
@@ -62,52 +144,13 @@ function Members({ ws }: { ws: string }) {
           }
         }}
       >
-        <PrincipalField onChange={setPrincipal} className="min-w-72" />
-        <Select className="w-32" aria-label="Role" value={role} onValueChange={setRole} options={[{ value: "user", label: "User" }, { value: "admin", label: "Admin" }]} />
+        <PrincipalField onChange={setPrincipal} className="w-full sm:w-auto sm:min-w-80 sm:flex-1" />
+        <Select className="w-28" aria-label="Role" value={role} onValueChange={setRole} options={ROLES} />
         <Button variant="primary" type="submit" disabled={!principal}>
           Assign
         </Button>
       </form>
-      <div className="divide-y divide-border rounded-lg border border-border">
-        {(list.data ?? []).map((m) => (
-          <div key={m.principal} className="flex items-center gap-3 px-4 py-2.5">
-            <span className="min-w-0 flex-1">
-              <Principal id={m.principal} />
-            </span>
-            <Select
-              className="w-28"
-              size="sm"
-              aria-label={`Role of ${m.principal}`}
-              value={m.role}
-              onValueChange={async (r) => {
-                try {
-                  await api.assignMember(ws, m.principal, r as "admin" | "user");
-                  list.reload();
-                } catch (err) {
-                  toast.error("Could not change the role", (err as Error).message);
-                }
-              }}
-              options={[{ value: "user", label: "User" }, { value: "admin", label: "Admin" }]}
-            />
-            <Button
-              variant="danger"
-              size="icon-sm"
-              aria-label={`Remove ${m.principal}`}
-              onClick={async () => {
-                if (!(await confirmAction({ title: "Remove from the workspace?", description: "They can no longer open it. Their access to data is unchanged.", confirmLabel: "Remove", danger: true }))) return;
-                try {
-                  await api.removeMember(ws, m.principal);
-                  list.reload();
-                } catch (err) {
-                  toast.error("Could not remove", (err as Error).message);
-                }
-              }}
-            >
-              <UserMinus />
-            </Button>
-          </div>
-        ))}
-      </div>
+      <DataTable columns={columns} rows={list.data ?? []} rowKey={(m) => m.principal} count={`${(list.data ?? []).length} assigned`} empty="Nobody is assigned yet." />
     </Section>
   );
 }
@@ -118,10 +161,31 @@ function Entitlements({ ws }: { ws: string }) {
   const [who, setWho] = useState("");
   const [what, setWhat] = useState("");
   const available = ent.data?.available ?? [];
+  const columns: Column<{ principal: string; entitlement: string }>[] = [
+    { key: "who", header: "Member", width: "fill", cell: (e) => <Principal id={e.principal} /> },
+    { key: "what", header: "Entitlement", cell: (e) => <Badge>{e.entitlement}</Badge> },
+    {
+      key: "take",
+      header: "",
+      cell: (e) => (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`Take ${e.entitlement} from ${e.principal}`}
+          onClick={async () => {
+            await api.unentitle(ws, e.principal, e.entitlement).catch((err: Error) => toast.error("Could not take it", err.message));
+            ent.reload();
+          }}
+        >
+          <UserMinus />
+        </Button>
+      ),
+    },
+  ];
   return (
-    <Section title="Entitlements" description="What a member may do here beyond opening it. Workspace admins have them all.">
+    <Section title="Entitlements" note="What a member may do here beyond opening it. Workspace admins have them all.">
       <form
-        className="mb-3 flex flex-wrap items-center gap-2"
+        className="flex flex-wrap items-center gap-2"
         onSubmit={async (e) => {
           e.preventDefault();
           try {
@@ -132,34 +196,13 @@ function Entitlements({ ws }: { ws: string }) {
           }
         }}
       >
-        <Select className="min-w-64 flex-1" aria-label="Member" placeholder="Member" value={who} onValueChange={setWho} options={(members.data ?? []).map((m) => ({ value: m.principal, label: m.principal }))} />
-        <Select className="w-48" aria-label="Entitlement" placeholder="Entitlement" value={what} onValueChange={setWhat} options={available.map((a) => ({ value: a, label: a }))} />
+        <Select className="w-full sm:w-64" aria-label="Member" placeholder="Member" value={who} onValueChange={setWho} options={(members.data ?? []).map((m) => ({ value: m.principal, label: m.principal }))} />
+        <Select className="w-44" aria-label="Entitlement" placeholder="Entitlement" value={what} onValueChange={setWhat} options={available.map((a) => ({ value: a, label: a }))} />
         <Button variant="primary" type="submit" disabled={!who || !what}>
           Give
         </Button>
       </form>
-      <div className="divide-y divide-border rounded-lg border border-border">
-        {(ent.data?.items ?? []).length === 0 && <p className="px-4 py-5 text-center text-xs text-muted">No entitlements given.</p>}
-        {(ent.data?.items ?? []).map((e) => (
-          <div key={`${e.principal}/${e.entitlement}`} className="flex items-center gap-3 px-4 py-2.5">
-            <span className="min-w-0 flex-1">
-              <Principal id={e.principal} />
-            </span>
-            <Badge>{e.entitlement}</Badge>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={`Take ${e.entitlement} from ${e.principal}`}
-              onClick={async () => {
-                await api.unentitle(ws, e.principal, e.entitlement).catch((err: Error) => toast.error("Could not take it", err.message));
-                ent.reload();
-              }}
-            >
-              <UserMinus />
-            </Button>
-          </div>
-        ))}
-      </div>
+      <DataTable columns={columns} rows={ent.data?.items ?? []} rowKey={(e) => `${e.principal}/${e.entitlement}`} count={`${(ent.data?.items ?? []).length} given`} empty="No entitlements given." />
     </Section>
   );
 }
@@ -169,11 +212,34 @@ function Bindings({ ws, accountAdmin }: { ws: string; accountAdmin: boolean }) {
   const catalogs = useLoad(() => api.list(ws, ""), ws);
   const [pick, setPick] = useState("");
   const names = Object.fromEntries((catalogs.data ?? []).map((c) => [c.id, c.name]));
+  const columns: Column<string>[] = [
+    { key: "name", header: "Catalog", width: "fill", cell: (id) => names[id] ?? id },
+    ...(accountAdmin
+      ? [
+          {
+            key: "unbind",
+            header: "",
+            cell: (id: string) => (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={async () => {
+                  await api.unbindCatalog(ws, id).catch((e: Error) => toast.error("Could not unbind", e.message));
+                  bound.reload();
+                }}
+              >
+                Unbind
+              </Button>
+            ),
+          },
+        ]
+      : []),
+  ];
   return (
-    <Section title="Catalogs" description="A catalog bound to workspaces shows only in those. A catalog bound to none shows in every workspace of the organization.">
+    <Section title="Catalogs" note="A catalog bound to workspaces shows only in those. One bound to none shows in every workspace of the organization.">
       {accountAdmin && (
-        <div className="mb-3 flex items-center gap-2">
-          <Select className="min-w-64 flex-1" aria-label="Catalog" placeholder="Bind a catalog here" value={pick} onValueChange={setPick} options={(catalogs.data ?? []).filter((c) => !(bound.data ?? []).includes(c.id)).map((c) => ({ value: c.id, label: c.name }))} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Select className="w-full sm:w-64" aria-label="Catalog" placeholder="Bind a catalog here" value={pick} onValueChange={setPick} options={(catalogs.data ?? []).filter((c) => !(bound.data ?? []).includes(c.id)).map((c) => ({ value: c.id, label: c.name }))} />
           <Button
             variant="primary"
             disabled={!pick}
@@ -191,19 +257,7 @@ function Bindings({ ws, accountAdmin }: { ws: string; accountAdmin: boolean }) {
           </Button>
         </div>
       )}
-      <div className="divide-y divide-border rounded-lg border border-border">
-        {(bound.data ?? []).length === 0 && <p className="px-4 py-5 text-center text-xs text-muted">No catalog is bound here, so all of the organization's catalogs show.</p>}
-        {(bound.data ?? []).map((id) => (
-          <div key={id} className="flex items-center gap-3 px-4 py-2.5">
-            <span className="min-w-0 flex-1 truncate text-sm text-foreground">{names[id] ?? id}</span>
-            {accountAdmin && (
-              <Button variant="ghost" size="sm" onClick={async () => { await api.unbindCatalog(ws, id).catch((e: Error) => toast.error("Could not unbind", e.message)); bound.reload(); }}>
-                Unbind
-              </Button>
-            )}
-          </div>
-        ))}
-      </div>
+      <DataTable columns={columns} rows={bound.data ?? []} rowKey={(id) => id} count={`${(bound.data ?? []).length} bound`} empty="No catalog is bound here, so all of the organization's catalogs show." />
     </Section>
   );
 }
@@ -211,9 +265,9 @@ function Bindings({ ws, accountAdmin }: { ws: string; accountAdmin: boolean }) {
 function Danger({ ws, workspace }: { ws: string; workspace: api.Workspace }) {
   const [name, setName] = useState(workspace.name);
   return (
-    <SettingGroup title="Workspace" description="Only account admins can rename or delete a workspace. Deleting it does not touch the organization's catalogs.">
-      <SettingRow label="Name">
-        <Input className="w-56" value={name} onChange={(e) => setName(e.target.value)} aria-label="Workspace name" />
+    <Section title="Workspace" note="Only account admins can rename or delete a workspace. Deleting it does not touch the organization's catalogs.">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input className="w-64" value={name} onChange={(e) => setName(e.target.value)} aria-label="Workspace name" />
         <Button
           disabled={!name.trim() || name === workspace.name}
           onClick={async () => {
@@ -228,8 +282,12 @@ function Danger({ ws, workspace }: { ws: string; workspace: api.Workspace }) {
         >
           Rename
         </Button>
-      </SettingRow>
-      <SettingRow label="Delete this workspace" description="Everyone is unassigned and its settings go. Data stays in the catalogs.">
+      </div>
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
+        <div>
+          <h3 className="text-sm font-semibold">Delete this workspace</h3>
+          <p className="text-sm text-muted">Everyone is unassigned and its settings go. Data stays in the catalogs.</p>
+        </div>
         <Button
           variant="danger"
           onClick={async () => {
@@ -245,7 +303,7 @@ function Danger({ ws, workspace }: { ws: string; workspace: api.Workspace }) {
         >
           <Trash2 /> Delete
         </Button>
-      </SettingRow>
-    </SettingGroup>
+      </div>
+    </Section>
   );
 }

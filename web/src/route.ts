@@ -10,8 +10,11 @@
 //                   /jobs                    jobs that ran, and the button to start one
 //                   /runs/<id>               one run: how it went and what it printed
 //                   /compute                 the compute work runs on
-//                   /settings                its members, entitlements, bound catalogs
+//                   /settings[/<tab>]        its members, entitlements, bound catalogs (tabs: members, entitlements, catalogs, workspace)
 
+import type { MouseEvent } from "react";
+
+export type SettingsTab = "members" | "entitlements" | "catalogs" | "workspace";
 export type AccountTab = "workspaces" | "compute" | "admins" | "activity" | "erase";
 
 export type Route =
@@ -24,16 +27,17 @@ export type Route =
   | { screen: "run"; ws: string; id: string }
   | { screen: "compute"; ws: string }
   | { screen: "catalog"; ws: string; id: string | null }
-  | { screen: "settings"; ws: string }
+  | { screen: "settings"; ws: string; tab: SettingsTab }
   | { screen: "account"; org: string; tab: AccountTab };
 
+const SETTINGS_TABS: SettingsTab[] = ["members", "entitlements", "catalogs", "workspace"];
 const TABS: AccountTab[] = ["workspaces", "compute", "admins", "activity", "erase"];
 const WS = /^[0-9a-f-]{8,64}$/;
 
 export function parseRoute(path: string, kind: "account" | "workspace", ws = ""): Route {
   const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
   if (kind === "workspace") {
-    if (parts[0] === "settings") return { screen: "settings", ws };
+    if (parts[0] === "settings") return { screen: "settings", ws, tab: SETTINGS_TABS.find((t) => t === parts[1]) ?? "members" };
     if (parts[0] === "sql") return { screen: "sql", ws };
     if (parts[0] === "queries") return { screen: "queries", ws };
     if (parts[0] === "history") return { screen: "history", ws };
@@ -59,7 +63,7 @@ export function hrefOf(r: Route): string {
     case "catalog":
       return `/catalog${r.id ? `/${r.id}` : ""}`;
     case "settings":
-      return "/settings";
+      return r.tab === "members" ? "/settings" : `/settings/${r.tab}`;
     case "sql":
       return "/sql";
     case "queries":
@@ -85,3 +89,10 @@ export function go(r: Route | string): void {
     dispatchEvent(new PopStateEvent("popstate"));
   }
 }
+
+/** The click handler of a link: it moves without reloading, and still opens in a new tab when asked to. */
+export const navigate = (to: Route) => (e: MouseEvent<HTMLElement>) => {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+  e.preventDefault();
+  go(to);
+};
