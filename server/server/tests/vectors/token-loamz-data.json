@@ -1,0 +1,158 @@
+{
+  "about": "Every engine's verifier, configured with this issuer, audience and key set, must give each expected outcome. See spec/conventions.md.",
+  "issuer": "https://auth.example.test/realms/loamz",
+  "audience": "loamz-data",
+  "jwks": {
+    "keys": [
+      {
+        "kty": "RSA",
+        "key_ops": [
+          "verify"
+        ],
+        "n": "mlTd_qEvJImSxpCUvZOYrKwurJcQ7QmUDniPQfudKaJpn10HffgU-MSdhuxIA9xDP4Ap9XihC1TmFYJ45EfBeWGQkAN_3wpmtznB3_vrVAP_wwa96O8N-YEWaM5mwf8t3csTjNng03wfhts3yUsGOt8vc96fta6Es6PGSpFn7YYlewyEEu9bsIHg-prOEJ2dZ0-0OmCKWpG6EPsI9ADzTeCFTjOAEaQ6uJ3wY4NHlGg8o87UTZArKwoX3DaE_ObapMNhNB74LwH0NXA1oNT9T1MSbm3WwrPjQczFlmNV6RtIBVZlyJsuj5xSlX7ALZs0NLDTccMwRvUpGaSR4f-sxw",
+        "e": "AQAB",
+        "kid": "k1",
+        "use": "sig",
+        "alg": "RS256"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "a person with an organization and groups",
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS50ZXN0L3JlYWxtcy9sb2FteiIsImF1ZCI6ImxvYW16LWRhdGEiLCJzdWIiOiJhbmEtMSIsImV4cCI6NDEwMjQ0NDgwMCwiYXpwIjoibG9hbXotd2ViIiwibmFtZSI6IkFuYSIsImVtYWlsIjoiYW5hQGFjbWUudGVzdCIsIm9yZ2FuaXphdGlvbiI6WyJhY21lIl0sImdyb3VwcyI6WyIvZmluYW5jZS9hbmFseXN0cyIsIi9maW5hbmNlL2FuYWx5c3RzIl19.JJjwt8L2UKavfGn0GriD7tZebnUkwk9fFzF5-_q8aZUwATnIyN-iAqFP4_9TczZB_1h_g5FS2gDFrpYq-aEjcU8jsBjOKIf5VXPwKCov0FlJA28-huIPAVLjPJ774czkmMbNcR323m-BYrn2VfYVk44kghLl7QbhFgJhNm0JbfUdFdpZ8nUrS2-2IUGdBbRNLq9QIWNhay00A4XPyU1WXUh5JXZRahWrO8Ex5VFvpoNTsmWSRG3sdrocNdHSCawWjxHtriPnY1YpKCL78E9BR6llrkrpX-bs3zs-0Y5KXRYk3aqvL7FJVWkpniECFrxsSJ25pYn62Ft_Xqu_KVmWJA",
+      "expect": {
+        "ok": true,
+        "subject": "ana-1",
+        "kind": "person",
+        "client": "loamz-web",
+        "orgs": [
+          "acme"
+        ],
+        "groups": [
+          "/finance/analysts"
+        ],
+        "actor": null
+      }
+    },
+    {
+      "name": "a person with no organization",
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS50ZXN0L3JlYWxtcy9sb2FteiIsImF1ZCI6ImxvYW16LWRhdGEiLCJzdWIiOiJhbmEtMSIsImV4cCI6NDEwMjQ0NDgwMCwiYXpwIjoibG9hbXotd2ViIn0.MtKRU22kZQzu17wAeQoTR8pAGUx7r8_BcjkBwSMC1-btWHGd6x7FCAe8wJsWgDitKdIy6VAjlg9GY4AVuc4yEhrzGe-uTCovvZisGGHdoi50HN1B86D4BDjdAMMPdNnRA203c6zubWLizGWBFP-RQ6mah46MyFqMDL9dr2r78HTY6H_psEh5-mTflyAI8PpBvjVBdr7tLFAt4d2JMx1RaNbaxZhQTRm9nb4c9AFc8BgDEXpI6mNTcKhfvlme5zYK7ltkKNBjN3qNMiJQyCMol44krl3xOEGujwB1ydfMKyJ74hkvBkdVuZN8z1H__QLH9RW-zXL0_eS08oZK-R9tpA",
+      "expect": {
+        "ok": true,
+        "subject": "ana-1",
+        "kind": "person",
+        "client": "loamz-web",
+        "orgs": [],
+        "groups": [],
+        "actor": null
+      }
+    },
+    {
+      "name": "organizations given as an object are read by alias",
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS50ZXN0L3JlYWxtcy9sb2FteiIsImF1ZCI6ImxvYW16LWRhdGEiLCJzdWIiOiJhbmEtMSIsImV4cCI6NDEwMjQ0NDgwMCwiYXpwIjoibG9hbXotd2ViIiwib3JnYW5pemF0aW9uIjp7ImFjbWUiOnsiaWQiOiJ4In0sImJldGEiOnt9fX0.TdN13B_kyBTh29OUfaudiuX2YTEyiQUFdGNUPIkcbb80N2bW2k4yQNkrC0uJqzzNvUEoVoq0g2ACg5hM-tfEJ2OnOA_MBkBOWTSQoIKkynvZ6GD8g61mxtj758W_7SvW62VM5kSILDYYsHGksqIvWcsjZbkNmQ5kRf26SBbQWMjB_s0IYH3ELKDQzprdZJ2XfbCQJ16fBGFT3kaxGfdDTEZtYjJ8en-bPcXPWUKB2ufUNCWNrXqKTXYZ2NVrLr5KoBKVOqQRT3VnjIpk65iQVHdWIzxH3nZsPPRBhB1A6hHagNv9dbZ9RPTwOWZ6lJU2V9BE0lSR9TpH_3jSi2_Sww",
+      "expect": {
+        "ok": true,
+        "subject": "ana-1",
+        "kind": "person",
+        "client": "loamz-web",
+        "orgs": [
+          "acme",
+          "beta"
+        ],
+        "groups": [],
+        "actor": null
+      }
+    },
+    {
+      "name": "a service account of kind agent",
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS50ZXN0L3JlYWxtcy9sb2FteiIsImF1ZCI6ImxvYW16LWRhdGEiLCJzdWIiOiJzdmMtMSIsImV4cCI6NDEwMjQ0NDgwMCwiYXpwIjoiYWdlbnQtaGVscGVyIiwibG9hbXpfa2luZCI6ImFnZW50In0.QLSmeACRNqWBuf4bzSUqIy807dep7qF4-I0KMQW1tBY9jPHFSBPqO4O8YBuKWSW-QS719-_9qpjRh786rfacE30xlu0-Gbiw13Q-ttek7WtXuDkrZClr5KbKAsNOghPAyiirIuoWIeax4fZeRkKEmYUVXczyyL3RRk4mWVIrmezBQytJZBTZekTHb28Plu7l3z-C_Xh_3COOSk25eDKsSvoABRWcFm-LXJeb6T05XBX5Vhz8lyW8u7bdEKFW6J-RCqR8b3i5gsF9-3ienTAn66t2VUlHMRUFO4AaeCsUV4f0YzJH2r9NAbG4MaFp8ynasQUDgDJD-M_J5te-G2D7kA",
+      "expect": {
+        "ok": true,
+        "subject": "svc-1",
+        "kind": "service",
+        "client": "agent-helper",
+        "orgs": [],
+        "groups": [],
+        "actor": null
+      }
+    },
+    {
+      "name": "a token exchanged for an agent acting for a person (act claim)",
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS50ZXN0L3JlYWxtcy9sb2FteiIsImF1ZCI6ImxvYW16LWRhdGEiLCJzdWIiOiJhbmEtMSIsImV4cCI6NDEwMjQ0NDgwMCwiYXpwIjoibG9hbXotYWdlbnRzIiwiYWN0Ijp7InN1YiI6ImFnZW50LWhlbHBlciJ9fQ.BmkIUZpbqVuqm_SHdm0rp2q-FjuqcQ2cNgOkRe2G4rK_E7qj1XRaUR86Ccyd469vgEG19QhAVoHB7uLS7XA1m1w3voCNDds8uwIBh6ycbUqC6ZWmjHi3uvFqGKK56nUXAWkrvUUppLOcnuVbUAzBpMQRJVs9v7Oma0xB0kWf58jptPXP2uvjISHXpoYBfvz9dslWhhnvBSzW_l5aELDJ-Z0ZcP0MkLSXRAJecWhDjQa29D_mwDFPtUg8GEKP-tgZ6dIEPndgBcFtsdxTOnNtWKOEuqGzkTNHOQZi0ItiIrZe1EKv9CkNsdbLqrOvDv7o1J9RdGpz9uubCfU6hVbhyA",
+      "expect": {
+        "ok": true,
+        "subject": "ana-1",
+        "kind": "person",
+        "client": "loamz-agents",
+        "orgs": [],
+        "groups": [],
+        "actor": "agent-helper"
+      }
+    },
+    {
+      "name": "expired",
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS50ZXN0L3JlYWxtcy9sb2FteiIsImF1ZCI6ImxvYW16LWRhdGEiLCJzdWIiOiJhbmEtMSIsImV4cCI6OTc4MzA3MjAwLCJhenAiOiJsb2Ftei13ZWIifQ.OqITyIyjM_5fyxWIGaxLyYGRNSXuu_dT0spzVJSZfUAkQE8gnFvxX-6b0QarOapSbA6gUY7M4lHK5RqJ_8Qgz2ejFhlwt-GD_DsIcLCWSfjv4rk_jSZu4H6BaShBEo5dxirDt0QxzrsYWNMm3I4RDhzket-IMmEF3xpIzHtzAClH6F3dQTdtqqz-Db1xFwVMdH21tKtY5FauggH5QUQZ51kI-cdacRtqEHKOedPOmf2gZdCli_rokZ13sAt5B2r53VEXNKCXWcLitbt3WNQ9kiZyIXHkRHJVaDx0PVj2t7hrQJcY0C8XVZIMnSGoJMixC0nKqPATsVWZxei4jYaKnw",
+      "expect": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "name": "wrong issuer",
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2V2aWwuZXhhbXBsZS50ZXN0L3JlYWxtcy9sb2FteiIsImF1ZCI6ImxvYW16LWRhdGEiLCJzdWIiOiJhbmEtMSIsImV4cCI6NDEwMjQ0NDgwMCwiYXpwIjoibG9hbXotd2ViIn0.ZfneMSoYA8EgHxst6TdNAR5Z8Q8llNp-bRalysoqUh8UOmSCJJWJHJqkJ5ftcL0dK6_7evp9SWt8HfZKdI3wZjOjYsrgwIAGFEVuliWwhW-ILtqovn32Axnhk8xNf2CHt6dGDb42CFre3Xlr06d8oRuOwkKW1OUNJe3o8-exltdt758LEo3rexCpO0tLUGlcHPflKw1r-0FiZyoBJOXzzDu0bmdVs7tTkgJj73sem5Qj9CAgCqxdndcwDF8xilMokbZRhOlkVBEf_QkjoQCavJb78aeQixxhKO97ueutdWgq2uL9ft6An4J-luUrat_NYF663gOUX1HrpNcolrmdbg",
+      "expect": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "name": "wrong audience",
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS50ZXN0L3JlYWxtcy9sb2FteiIsImF1ZCI6ImxvYW16LW90aGVyIiwic3ViIjoiYW5hLTEiLCJleHAiOjQxMDI0NDQ4MDAsImF6cCI6ImxvYW16LXdlYiJ9.KuuSLi237uKSQeROH06sFvrDDojEA4sRxuSvhmkXREvz0orphzf-Gam4oyTLPygKOyo6BBXXxfZmSymUGefRCManKQIrQ5IYsAusYQN11fXLp_XGtjS-ZUv-HmsBF5kmc3HEyWkypbqcILWhoTNFpdaXBcpGFpsR6jTiaQEUjMNxDsGeIe2MMHx6PUGBFeiwjvQYFk2uEZkeU_COTuExSRQjxTvCCidBZJmuM7FOTg8Qhi9yy8CRz3ITe3Sw88zS6V0Cz6WSMgEAGpPBZ4oft85YtY6xlH0534RygQD8VkRvlEzzrxs9Z6QpaZvQKEWUsx2jVVVK25kscgkPyqMM3g",
+      "expect": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "name": "no subject",
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS50ZXN0L3JlYWxtcy9sb2FteiIsImF1ZCI6ImxvYW16LWRhdGEiLCJleHAiOjQxMDI0NDQ4MDAsImF6cCI6ImxvYW16LXdlYiJ9.lsSZnxE2xpFu_Jka4j8nv5Ux8EtlyGsC7I_VFlMiV9ZcMaHJ-Ha6z57I-hmDkiP3tVsEFHSCt3AKB_erjdWrjUQTJ5RVeHo0H-LG2dG02Dw53FbyKygAGr1y6GoJJI8JGyU_FtwVepzPUHSlg8y9DIl3FApv-FxqIJ3My64XmEqogQr-ob2aBimHcGu3_e2DkYtWOxrBEjgDBPom45X7ktt2JOqLithR8BOni3GWxhoppckUJT3KsddnLdYoteKir4QNptudxLQ3VrbNuGUC8KyaimraXODrqqgH1dqNFvpGtJxsDeshCgzMqeC7-FzlKi8rLs-httaSpbSX1OweQg",
+      "expect": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "name": "a key id the verifier has never seen",
+      "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImstdW5rbm93biIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS50ZXN0L3JlYWxtcy9sb2FteiIsImF1ZCI6ImxvYW16LWRhdGEiLCJzdWIiOiJhbmEtMSIsImV4cCI6NDEwMjQ0NDgwMCwiYXpwIjoibG9hbXotd2ViIn0.dWSoEYgW5r5oEQfv84MNeTEBmAxoVVp0kAH9Ja6_yR7IOmM8BrAuJeyS4dWHwfQbqaKwa-MLzm88GZvO7OQhIjiVYkqDnKuvBzHBmvDTWBRYIyvO1uy20wJc0auTEC0WJKqs1BuKXsKJtqN0wm1tEaiZUeJ83aP44a8Fk9YmBaiOM6CMQlcBe4R2Npn5P5Qsfes7RW9bOp0x0oH4DK1x-dqEqWD2biWMhKiLVDYN-_ts4zREs4CblsRAPn7rV8bFSt9VueFFJSPwUGq5OdGX-XarBu88_GvHm_YlFcVb6mXLL7VJqL45twZovIt3_HK-zHuejufuvt3kOP6_i3AcoQ",
+      "expect": {
+        "ok": false,
+        "error": "unknown_key"
+      }
+    },
+    {
+      "name": "no key id",
+      "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS50ZXN0L3JlYWxtcy9sb2FteiIsImF1ZCI6ImxvYW16LWRhdGEiLCJzdWIiOiJhbmEtMSIsImV4cCI6NDEwMjQ0NDgwMCwiYXpwIjoibG9hbXotd2ViIn0.L1c7K12GgpbGj6RhH-vQ3R-LDAZ7YHJHE6eyxF0Rz1g5b52vd4D31ump0i78vKdK88Y2sxfOz_JkNVtE2Ejl4zIWHD-5zJWbkVl_rP0fE6ZHwv5HDHilJMYKKcqeFeQJWkFJuAPZjfv84IsMN2OP7NrqlWdQ1Pt4qwUigFioErsGHeRUM9XA-2yYuH60aogaO1HBnFn_UVBy8O7nXzCFtwE3kqg6FdM99VJFNw05dO7NirgiJrlHufA6N4aGUBYoWnuN-nXCF7jiQsH7UFoja58riGrVVl3RKNx2zvn8soqfKw4r_DYTu713AWdPVCBABuoMMQL-l_HESSTbvepUNg",
+      "expect": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "name": "signed with HS256 using the public key as the secret (algorithm confusion)",
+      "token": "eyJhbGciOiJIUzI1NiIsImtpZCI6ImsxIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS50ZXN0L3JlYWxtcy9sb2FteiIsImF1ZCI6ImxvYW16LWRhdGEiLCJzdWIiOiJhbmEtMSIsImV4cCI6NDEwMjQ0NDgwMCwiYXpwIjoibG9hbXotd2ViIn0.gUCKwd6Qo0bI_4Con0UgiEPzV8EbzH3dWUk6vI-cBAQ",
+      "expect": {
+        "ok": false,
+        "error": "invalid"
+      }
+    },
+    {
+      "name": "not a token",
+      "token": "not.a.token",
+      "expect": {
+        "ok": false,
+        "error": "invalid"
+      }
+    }
+  ]
+}
