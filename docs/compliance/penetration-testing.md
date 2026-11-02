@@ -1,5 +1,7 @@
 # Penetration testing
 
+> Historical control material, not evidence of current Rust implementation, deployment, or certification. See the [readiness baseline](../guides/enterprise-readiness.md).
+
 ## What we test ourselves, continuously
 Authorization and tenant isolation have dedicated tests: a user or tenant never reads another's resource (404, not
 403); delegated tokens are limited to their scopes; access tokens never act as administrators and cannot create tokens;

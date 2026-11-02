@@ -1,6 +1,8 @@
 # ISO/IEC 27001:2022 Annex A, by theme
 
-**Product** = software control; **Repo** = repository process; **Org** = the operating organization.
+> Historical control material, not evidence of current Rust implementation, deployment, or certification. See the [readiness baseline](../guides/enterprise-readiness.md).
+
+**Product**, **Repo**, and **Org** identify proposed responsibility, not verified implementation. Every mapping below requires reassessment before use as audit evidence.
 
 | Theme | Relevant controls | Owner | Where |
 | --- | --- | --- | --- |

@@ -1,5 +1,7 @@
 # SCIM provisioning
 
+> Historical Python-era guidance. This document has not been validated against the current Rust service. See the [current readiness baseline](enterprise-readiness.md) before relying on any capability or procedure.
+
 Loamz Data serves SCIM 2.0 at `/scim/v2`, so an enterprise identity provider (Okta, Microsoft Entra ID, OneLogin,
 JumpCloud and others) can create, update and remove a tenant's people and groups automatically.
 

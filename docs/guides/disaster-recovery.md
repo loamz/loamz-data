@@ -1,5 +1,7 @@
 # Disaster recovery
 
+> Historical Python-era guidance. This document has not been validated against the current Rust service. See the [current readiness baseline](enterprise-readiness.md) before relying on any capability or procedure.
+
 What can be lost, how to bring it back, and how we prove it works.
 
 ## Objectives (design targets, not a contract)

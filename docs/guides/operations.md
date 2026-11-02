@@ -1,5 +1,7 @@
 # Operations
 
+> Historical Python-era guidance. This document has not been validated against the current Rust service. See the [current readiness baseline](enterprise-readiness.md) before relying on any capability or procedure.
+
 ## Topologies
 - **Laptop or evaluation:** `deploy/compose` (`./gen-env.sh`, `docker compose --profile agents up -d`).
 - **Production:** the `loamz-cell` Helm chart on Kubernetes, with managed PostgreSQL and object storage from the

@@ -1,6 +1,6 @@
 # Agent data path: analyse big data from a code interpreter while moving almost none of it
 
-- **Status:** accepted plan. Slice 1 is built; the rest is ordered below.
+- **Status:** historical plan for the former Python service. Slice 1 was built there; it has not been verified in the current Rust service.
 - **Applies to:** `loamz-server` (gateway, grants, SQL planner, workers) and `loamz-data` (the client the code imports).
 
 ## The problem

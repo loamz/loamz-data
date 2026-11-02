@@ -1,5 +1,7 @@
 # Encryption and customer-managed keys
 
+> Historical Python-era guidance. This document has not been validated against the current Rust service. See the [current readiness baseline](enterprise-readiness.md) before relying on any capability or procedure.
+
 Everything at rest is encrypted by default with the cloud provider's keys. To control the keys yourself (rotation,
 revocation, audit in your key service), give the Terraform module for your cloud a key. The module encrypts the object
 buckets and the PostgreSQL database with it and grants the services what they need to use it.
