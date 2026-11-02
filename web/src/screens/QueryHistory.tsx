@@ -1,6 +1,6 @@
 import { History } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Body, Button, DataTable, DetailBlock, ObjectHeader, Select, WithRail, type Column } from "@/design";
+import { Body, Button, DataTable, DetailBlock, ObjectHeader, Select, type Column } from "@/design";
 import * as api from "@/api";
 import { RestrictedOutput, RunFacts, StateBadge, StopButton, Text, span, useRun, who } from "@/components/RunBits";
 import { when } from "@/format";
@@ -72,7 +72,8 @@ export function QueryHistory({ ws, me }: { ws: string; me: api.Me | undefined })
           <Select size="sm" className="w-36" aria-label="Who" value={mine ? "me" : "all"} onValueChange={(v) => setMine(v === "me")} options={[{ value: "all", label: "Everyone" }, { value: "me", label: "Only me" }]} />
         )}
       </div>
-      <WithRail rail={open ? <Detail ws={ws} id={open} name={name} /> : <></>}>
+      <div className="flex flex-col gap-3 @4xl:flex-row @4xl:items-start">
+        <div className="min-w-0 flex-1">
         <DataTable
           columns={columns}
           rows={rows}
@@ -80,7 +81,7 @@ export function QueryHistory({ ws, me }: { ws: string; me: api.Me | undefined })
           selected={open}
           onOpen={(r) => setOpen(r.id)}
           count={first.loading && !first.data ? "Loading…" : `${rows.length}${more && rows.length >= PAGE ? "+" : ""} ${rows.length === 1 ? "run" : "runs"}`}
-          empty="Nothing ran in this range."
+          empty={first.error?.message ?? (first.loading && !first.data ? "Loading…" : "Nothing ran in this range.")}
         />
         {more && rows.length >= PAGE && rows.length % PAGE === 0 && (
           <div className="mt-2">
@@ -97,7 +98,9 @@ export function QueryHistory({ ws, me }: { ws: string; me: api.Me | undefined })
             </Button>
           </div>
         )}
-      </WithRail>
+        </div>
+        {open && <aside className="flex w-full shrink-0 flex-col gap-3 @4xl:w-80"><Detail ws={ws} id={open} name={name} /></aside>}
+      </div>
     </Body>
   );
 }

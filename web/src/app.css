@@ -26,6 +26,11 @@
 
 /* The one way a region scrolls: smooth, contained, and the bar never shifts the layout. */
 .scroll-area { overflow-y: auto; scroll-behavior: smooth; overscroll-behavior: contain; scrollbar-gutter: stable; }
+/* This workspace has no global search, so give its identity and user controls the whole top bar. */
+.workspace-shell > div > header { grid-template-columns: minmax(0, 1fr) auto; }
+.workspace-shell > div > header > :nth-child(2):empty { display: none; }
+/* Match the Agents sidebar: reserve scrollbar space only when the navigation actually scrolls. */
+.workspace-shell nav[aria-label="Main"] > .scroll-area { scrollbar-gutter: auto; }
 @media (prefers-reduced-motion: reduce) { .scroll-area { scroll-behavior: auto; } }
 
 /* The few motion classes the primitives name. */
