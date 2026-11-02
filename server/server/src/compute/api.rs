@@ -50,7 +50,7 @@ fn run_view(r: &Run, detail: bool) -> Value {
         "id": r.id, "kind": r.kind, "state": r.state, "title": r.title,
         "requested_by": r.requested_by, "on_behalf_of": r.on_behalf_of, "target_id": r.target_id,
         "created_ms": r.created_ms, "started_ms": r.started_ms, "finished_ms": r.finished_ms,
-        "error": r.error, "exit_code": r.exit_code, "cancelling": r.cancel && !is_terminal(&r.state),
+        "error": if detail { &r.error } else { "" }, "exit_code": r.exit_code, "cancelling": r.cancel && !is_terminal(&r.state),
         "queued_ms": waited(r, true), "run_ms": waited(r, false),
     });
     if detail {
@@ -62,8 +62,27 @@ fn run_view(r: &Run, detail: bool) -> Value {
         v["stdout"] = json!(r.stdout);
         v["stderr"] = json!(r.stderr);
         v["result"] = json_of(&r.result);
+        v["result_access"] = json!("available");
     }
     v
+}
+
+/// A history record survives loss of input access, but never includes results or process output.
+/// Only the person or service that directly submitted a SQL statement may see its full text here.
+fn restricted_view(r: &Run, c: &WsCtx) -> Value {
+    let mut view = run_view(r, false);
+    view["result_access"] = json!("restricted");
+    let direct_owner = c.identity.actor.is_none()
+        && r.on_behalf_of.is_empty()
+        && r.requested_by == c.identity.subject;
+    if direct_owner && r.kind == "sql" {
+        if let Some(sql) = json_of(&r.spec)["sql"].as_str() {
+            view["spec"] = json!({"sql": sql});
+        }
+    } else {
+        view["title"] = json!(if r.kind == "sql" { "Query" } else { "Job" });
+    }
+    view
 }
 
 /// How long a run waited before it started (`queued`), or how long it ran (once it has ended); `-1` while that is not known yet.
@@ -174,7 +193,12 @@ async fn statement(State(app): State<Shared>, c: WsCtx, body: Bytes) -> Result<R
     } else {
         StatusCode::ACCEPTED
     };
-    Ok((code, Json(run_view(&run, true))).into_response())
+    let view = if service::require_detail(&app, &k, &run).await.is_ok() {
+        run_view(&run, true)
+    } else {
+        restricted_view(&run, &c)
+    };
+    Ok((code, Json(view)).into_response())
 }
 
 async fn submit_job(
@@ -229,10 +253,14 @@ async fn list_runs(
 }
 
 async fn get_run(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
-    Ok(Json(run_view(
-        &service::get(&app, &ctx(&c), &param(&c.params, "id")?).await?,
-        true,
-    )))
+    let context = ctx(&c);
+    let run = service::get(&app, &context, &param(&c.params, "id")?).await?;
+    let view = if service::require_detail(&app, &context, &run).await.is_ok() {
+        run_view(&run, true)
+    } else {
+        restricted_view(&run, &c)
+    };
+    Ok(Json(view))
 }
 
 async fn cancel_run(State(app): State<Shared>, c: WsCtx) -> Result<(StatusCode, Json<Value>)> {

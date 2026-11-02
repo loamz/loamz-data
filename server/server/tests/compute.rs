@@ -1003,6 +1003,449 @@ async fn an_agent_needs_the_sql_entitlement_too(s: Server) {
 }
 both!(an_agent_needs_the_sql_entitlement_too);
 
+async fn a_queued_run_cannot_use_revoked_access(s: Server) {
+    let l = lab(&s).await;
+    let (secret, _) = attach(&s).await;
+    s.assign(&l.ws, &[&bob()]).await;
+    for entitlement in ["sql-access", "compute-create"] {
+        assert_eq!(
+            s.put(
+                &format!("/api/v1/workspaces/{}/entitlements", l.ws),
+                &ana(),
+                json!({"principal": "user:bob", "entitlement": entitlement}),
+            )
+            .await
+            .status,
+            204
+        );
+    }
+    s.grant(&l.ws, &ana(), &l.orders, "user:bob", "reader")
+        .await;
+    s.grant(&l.ws, &ana(), &l.out, "user:bob", "contributor")
+        .await;
+    let sql = s
+        .post(
+            &format!("/api/v1/workspaces/{}/sql/statements", l.ws),
+            &bob(),
+            json!({"sql": "SELECT * FROM sales.raw.orders", "wait_s": 0}),
+        )
+        .await;
+    assert_eq!(sql.status, 202, "{}", sql.text());
+    let sql_id = sql.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        s.delete(
+            &format!(
+                "/api/v1/workspaces/{}/securables/{}/grants/user:bob",
+                l.ws, l.orders
+            ),
+            &ana(),
+        )
+        .await
+        .status,
+        204
+    );
+    assert_eq!(
+        agent(&s, "POST", "/api/v1/agent/lease?wait_s=0", &secret, None)
+            .await
+            .status,
+        204
+    );
+    let finished = s
+        .get(
+            &format!("/api/v1/workspaces/{}/runs/{sql_id}", l.ws),
+            &ana(),
+        )
+        .await
+        .json();
+    assert_eq!(finished["state"], "failed");
+    assert!(finished["error"].as_str().unwrap().contains("authorized"));
+
+    s.grant(&l.ws, &ana(), &l.orders, "user:bob", "reader")
+        .await;
+    let job = s
+        .post(
+            &format!("/api/v1/workspaces/{}/runs", l.ws),
+            &bob(),
+            json!({"script": "print(1)", "inputs": [l.orders], "output": l.out}),
+        )
+        .await;
+    assert_eq!(job.status, 202, "{}", job.text());
+    let job_id = job.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        s.delete(
+            &format!(
+                "/api/v1/workspaces/{}/securables/{}/grants/user:bob",
+                l.ws, l.out
+            ),
+            &ana(),
+        )
+        .await
+        .status,
+        204
+    );
+    assert_eq!(
+        agent(&s, "POST", "/api/v1/agent/lease?wait_s=0", &secret, None)
+            .await
+            .status,
+        204
+    );
+    let finished = s
+        .get(
+            &format!("/api/v1/workspaces/{}/runs/{job_id}", l.ws),
+            &ana(),
+        )
+        .await
+        .json();
+    assert_eq!(finished["state"], "failed");
+
+    let sql = s
+        .post(
+            &format!("/api/v1/workspaces/{}/sql/statements", l.ws),
+            &bob(),
+            json!({"sql": "SELECT * FROM sales.raw.orders", "wait_s": 0}),
+        )
+        .await;
+    assert_eq!(sql.status, 202);
+    let sql_id = sql.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        s.delete(
+            &format!(
+                "/api/v1/workspaces/{}/entitlements/user:bob/sql-access",
+                l.ws
+            ),
+            &ana(),
+        )
+        .await
+        .status,
+        204
+    );
+    assert_eq!(
+        agent(&s, "POST", "/api/v1/agent/lease?wait_s=0", &secret, None)
+            .await
+            .status,
+        204
+    );
+    let finished = s
+        .get(
+            &format!("/api/v1/workspaces/{}/runs/{sql_id}", l.ws),
+            &ana(),
+        )
+        .await
+        .json();
+    assert_eq!(finished["state"], "failed");
+}
+both!(a_queued_run_cannot_use_revoked_access);
+
+async fn completed_results_require_current_input_access(s: Server) {
+    let l = lab(&s).await;
+    let (secret, _) = attach(&s).await;
+    s.assign(&l.ws, &[&bob()]).await;
+    s.put(
+        &format!("/api/v1/workspaces/{}/entitlements", l.ws),
+        &ana(),
+        json!({"principal": "user:bob", "entitlement": "sql-access"}),
+    )
+    .await;
+    s.grant(&l.ws, &ana(), &l.orders, "user:bob", "reader")
+        .await;
+    let submitted = s
+        .post(
+            &format!("/api/v1/workspaces/{}/sql/statements", l.ws),
+            &bob(),
+            json!({"sql": "SELECT * FROM sales.raw.orders", "wait_s": 0}),
+        )
+        .await;
+    assert_eq!(submitted.status, 202);
+    let id = submitted.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        agent(&s, "POST", "/api/v1/agent/lease?wait_s=0", &secret, None)
+            .await
+            .status,
+        200
+    );
+    let rows =
+        json!({"columns": [{"name": "id", "type": "BIGINT"}], "rows": [[7]], "truncated": false})
+            .to_string();
+    assert_eq!(
+        agent(
+            &s,
+            "POST",
+            &format!("/api/v1/agent/runs/{id}/complete"),
+            &secret,
+            Some(json!({"state": "succeeded", "exit_code": 0, "result": rows, "stdout": "private stdout", "stderr": "private stderr", "error": "private error"}))
+        )
+        .await
+        .status,
+        204
+    );
+    let path = format!("/api/v1/workspaces/{}/runs/{id}", l.ws);
+    assert_eq!(s.get(&path, &bob()).await.json()["result"]["rows"][0][0], 7);
+    assert_eq!(
+        s.delete(
+            &format!(
+                "/api/v1/workspaces/{}/securables/{}/grants/user:bob",
+                l.ws, l.orders
+            ),
+            &ana()
+        )
+        .await
+        .status,
+        204
+    );
+    let restricted = s.get(&path, &bob()).await;
+    assert_eq!(restricted.status, 200);
+    let view = restricted.json();
+    assert_eq!(view["state"], "succeeded");
+    assert_eq!(view["result_access"], "restricted");
+    assert_eq!(view["spec"]["sql"], "SELECT * FROM sales.raw.orders");
+    assert_eq!(view["error"], "");
+    assert!(
+        view.get("stdout").is_none()
+            && view.get("stderr").is_none()
+            && view.get("result").is_none()
+    );
+    s.assign(&l.ws, &[&bob(), &cy()]).await;
+    assert_eq!(
+        s.get(&path, &cy()).await.status,
+        404,
+        "another user cannot see the history"
+    );
+    assert_eq!(s.get(&path, &ana()).await.json()["result"]["rows"][0][0], 7);
+    assert!(
+        items(
+            &s.get(&format!("/api/v1/workspaces/{}/runs", l.ws), &bob())
+                .await
+        )
+        .iter()
+        .any(|r| r["id"] == id)
+    );
+    s.grant(&l.ws, &ana(), &l.orders, "user:bob", "reader")
+        .await;
+    s.grant(&l.ws, &ana(), &l.out, "user:bob", "contributor")
+        .await;
+    s.put(
+        &format!("/api/v1/workspaces/{}/entitlements", l.ws),
+        &ana(),
+        json!({"principal": "user:bob", "entitlement": "compute-create"}),
+    )
+    .await;
+    let job = s
+        .post(
+            &format!("/api/v1/workspaces/{}/runs", l.ws),
+            &bob(),
+            json!({"script": "print('data')", "inputs": [l.orders], "output": l.out}),
+        )
+        .await;
+    assert_eq!(job.status, 202, "{}", job.text());
+    let job_id = job.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        agent(&s, "POST", "/api/v1/agent/lease?wait_s=0", &secret, None)
+            .await
+            .status,
+        200
+    );
+    assert_eq!(
+        agent(
+            &s,
+            "POST",
+            &format!("/api/v1/agent/runs/{job_id}/complete"),
+            &secret,
+            Some(json!({"state": "succeeded", "exit_code": 0, "stdout": "data"}))
+        )
+        .await
+        .status,
+        204
+    );
+    let job_path = format!("/api/v1/workspaces/{}/runs/{job_id}", l.ws);
+    assert_eq!(s.get(&job_path, &bob()).await.json()["stdout"], "data");
+    assert_eq!(
+        s.delete(
+            &format!(
+                "/api/v1/workspaces/{}/securables/{}/grants/user:bob",
+                l.ws, l.orders
+            ),
+            &ana()
+        )
+        .await
+        .status,
+        204
+    );
+    let restricted = s.get(&job_path, &bob()).await;
+    assert_eq!(restricted.status, 200);
+    let view = restricted.json();
+    assert_eq!(view["result_access"], "restricted");
+    assert_eq!(view["title"], "Job");
+    assert!(
+        view.get("spec").is_none()
+            && view.get("stdout").is_none()
+            && view.get("stderr").is_none()
+            && view.get("result").is_none()
+    );
+    assert_eq!(s.get(&job_path, &ana()).await.json()["stdout"], "data");
+    s.grant(&l.ws, &ana(), &l.orders, "user:bob", "reader")
+        .await;
+    assert_eq!(
+        s.get(&path, &bob()).await.json()["result"]["rows"][0][0],
+        7,
+        "restoring access restores output"
+    );
+    let drop = s
+        .delete(
+            &format!("/api/v1/workspaces/{}/securables/{}", l.ws, l.orders),
+            &ana(),
+        )
+        .await;
+    assert_eq!(drop.status, 202, "{}", drop.text());
+    let after_drop = s.get(&path, &bob()).await;
+    assert_eq!(after_drop.status, 200);
+    assert_eq!(after_drop.json()["result_access"], "restricted");
+    assert_eq!(
+        after_drop.json()["spec"]["sql"],
+        "SELECT * FROM sales.raw.orders"
+    );
+}
+both!(completed_results_require_current_input_access);
+
+async fn compute_respects_input_and_output_classification(s: Server) {
+    let l = lab(&s).await;
+    let (secret, _) = attach(&s).await;
+    let create = |name: &'static str, class: &'static str| {
+        let (s, ws, schema) = (&s, l.ws.clone(), l.schema.clone());
+        async move {
+            let r = s.post(&format!("/api/v1/workspaces/{ws}/securables"), &ana(),
+                json!({"kind": "volume", "parent_id": schema, "name": name, "classification": class})).await;
+            assert_eq!(r.status, 201, "{}", r.text());
+            r.json()["id"].as_str().unwrap().to_owned()
+        }
+    };
+    let sealed = create("sealed_input", "sealed").await;
+    let personal = create("personal_input", "personal").await;
+    let personal_out = create("personal_output", "personal").await;
+    assert_eq!(
+        s.upload(&l.ws, &sealed, "opaque.bin", &ana(), b"opaque")
+            .await
+            .status,
+        201
+    );
+    let jobs = format!("/api/v1/workspaces/{}/runs", l.ws);
+    let ask = |input: String, output: String| {
+        let (s, jobs) = (&s, jobs.clone());
+        async move {
+            s.post(
+                &jobs,
+                &ana(),
+                json!({"script": "print(1)", "inputs": [input], "output": output}),
+            )
+            .await
+        }
+    };
+    assert_eq!(ask(sealed.clone(), personal_out.clone()).await.status, 400);
+    assert_eq!(ask(personal.clone(), l.out.clone()).await.status, 400);
+    assert_eq!(ask(l.out.clone(), sealed).await.status, 400);
+    let accepted = ask(personal, personal_out).await;
+    assert_eq!(accepted.status, 202, "{}", accepted.text());
+    assert_eq!(
+        agent(&s, "POST", "/api/v1/agent/lease?wait_s=0", &secret, None)
+            .await
+            .status,
+        200
+    );
+
+    let _ = s
+        .table(&l.ws, &ana(), &l.schema, "sealed_table", "sealed")
+        .await;
+    let r = s
+        .post(
+            &format!("/api/v1/workspaces/{}/sql/statements", l.ws),
+            &ana(),
+            json!({"sql": "SELECT * FROM sales.raw.sealed_table", "wait_s": 0}),
+        )
+        .await;
+    assert_eq!(r.status, 400);
+}
+both!(compute_respects_input_and_output_classification);
+
+async fn admission_is_bounded_across_server_instances(s: Server) {
+    // Separate App instances have separate in-process mutexes but share the database.
+    let a = common::server_with_limits(s.app.db.clone(), 1024 * 1024, 1).await;
+    let b = common::server_with_limits(s.app.db.clone(), 1024 * 1024, 1).await;
+    let l = lab(&a).await;
+    attach(&a).await;
+    let url = format!("/api/v1/workspaces/{}/sql/statements", l.ws);
+    let who = ana();
+    let (one, two) = tokio::join!(
+        a.post(&url, &who, json!({"sql": "SELECT 1", "wait_s": 0})),
+        b.post(&url, &who, json!({"sql": "SELECT 2", "wait_s": 0}))
+    );
+    let mut statuses = [one.status, two.status];
+    statuses.sort_unstable();
+    assert_eq!(statuses, [202, 429], "{} {}", one.text(), two.text());
+    let refused = if one.status == 429 { &one } else { &two };
+    assert_eq!(refused.content_type, "application/problem+json");
+    let trail = items(
+        &a.get(&format!("/api/v1/orgs/{ACME}/audit?limit=500"), &ana())
+            .await,
+    );
+    assert!(
+        trail
+            .iter()
+            .any(|e| e["action"] == "sql.submit" && e["outcome"] == "denied")
+    );
+    let rita = common::person("rita")
+        .also_in(common::RIVAL, common::RIVAL)
+        .with_role("account-admin");
+    assert_eq!(
+        a.post(
+            &format!("/api/v1/orgs/{}/account", common::RIVAL),
+            &rita,
+            json!({})
+        )
+        .await
+        .status,
+        201
+    );
+    let rival_ws = a.workspace(&rita, common::RIVAL, "Rival").await;
+    let target = a
+        .post(
+            &format!("/api/v1/orgs/{}/compute/targets", common::RIVAL),
+            &rita,
+            json!({"name": "rival", "max_memory_mb": 2048, "max_cpu_millis": 1000}),
+        )
+        .await;
+    assert_eq!(target.status, 201, "{}", target.text());
+    compute::authenticate_agent(&a.app, target.json()["secret"].as_str().unwrap())
+        .await
+        .unwrap();
+    let rival = b
+        .post(
+            &format!("/api/v1/workspaces/{rival_ws}/sql/statements"),
+            &rita,
+            json!({"sql": "SELECT 1", "wait_s": 0}),
+        )
+        .await;
+    assert_eq!(
+        rival.status,
+        202,
+        "another organization has its own capacity: {}",
+        rival.text()
+    );
+    let accepted = if one.status == 202 { one } else { two };
+    let id = accepted.json()["id"].as_str().unwrap().to_owned();
+    let cancelled = a
+        .post(
+            &format!("/api/v1/workspaces/{}/runs/{id}/cancel", l.ws),
+            &ana(),
+            json!({}),
+        )
+        .await;
+    assert_eq!(cancelled.status, 202);
+    let again = b
+        .post(&url, &ana(), json!({"sql": "SELECT 3", "wait_s": 0}))
+        .await;
+    assert_eq!(again.status, 202, "{}", again.text());
+}
+both!(admission_is_bounded_across_server_instances);
+
 async fn the_kinds_of_compute_that_can_be_created_say_whether_they_are_available(s: Server) {
     let l = lab(&s).await;
     let r = s

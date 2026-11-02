@@ -27,6 +27,8 @@ pub enum Error {
     Conflict(String),
     #[error("the file is larger than the limit")]
     TooLarge,
+    #[error("{0}")]
+    TooManyRequests(String),
     /// A part of the system this call depends on is not connected (for example, the directory of people).
     #[error("{0}")]
     Unavailable(String),
@@ -46,6 +48,7 @@ impl Error {
             Self::Denied(_) => StatusCode::FORBIDDEN,
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -113,6 +116,7 @@ impl IntoResponse for Catalog {
         let status = self.0.status();
         let kind = match &self.0 {
             Error::Invalid(_) | Error::TooLarge => "BadRequestException",
+            Error::TooManyRequests(_) => "TooManyRequestsException",
             Error::Unauthorized => "NotAuthorizedException",
             Error::NotFound(_) => "NoSuchTableException",
             Error::Denied(_) => "ForbiddenException",
