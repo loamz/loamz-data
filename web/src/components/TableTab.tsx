@@ -36,7 +36,7 @@ export function SampleData({ ws, full }: { ws: string; full: string | null }) {
     return (
       <>
         <PageEmpty icon={Database} title="Sample data is not available without a running compute" action={<Button variant="secondary" onClick={() => setAttaching(true)}>Select compute</Button>}>
-          {compute.all.length === 0 ? "There is no compute yet. Create one on the Compute page." : target ? `${compute.current?.name ?? "The compute"} is stopped. Start it to read rows.` : "Choose a compute, and start it if it is stopped."}
+          {compute.all.length === 0 ? "There is no compute yet. Create one on the Compute page." : target ? (compute.current?.starting ? `Starting ${compute.current.name}… the rows load when it is up.` : `${compute.current?.name ?? "The compute"} is stopped. Start it to read rows.`) : "Choose a compute, and start it if it is stopped."}
         </PageEmpty>
         <AttachCompute ws={ws} compute={compute} open={attaching} onOpenChange={setAttaching} />
       </>

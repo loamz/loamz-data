@@ -26,8 +26,29 @@ export function useCompute(ws: string) {
     const t = setInterval(targets.reload, 15_000);
     return () => clearInterval(t);
   }, [targets.reload]);
-  const online = (targets.data ?? []).filter((c) => c.online);
-  const all = targets.data ?? [];
+  // Compute this browser asked to start and that has not answered yet: shown as starting, and not yet usable.
+  const [starting, setStarting] = useState<ReadonlySet<string>>(new Set());
+  const all = (targets.data ?? []).map((c) => (starting.has(c.id) ? { ...c, starting: true } : c));
+  const online = all.filter((c) => c.online);
+  const { reload } = targets;
+  const start = useCallback(
+    async (org: string, id: string, name: string) => {
+      setStarting((s) => new Set(s).add(id));
+      try {
+        await api.startCompute(org, id);
+      } catch (e) {
+        toast.error(`Could not start ${name}`, (e as Error).message);
+      } finally {
+        setStarting((s) => {
+          const n = new Set(s);
+          n.delete(id);
+          return n;
+        });
+        reload();
+      }
+    },
+    [reload],
+  );
   // A remembered choice that no longer exists is dropped, not silently replaced by another.
   const valid = all.some((c) => c.id === chosen);
   const only = all.length === 1 ? all[0]!.id : "";
@@ -45,8 +66,8 @@ export function useCompute(ws: string) {
   );
   const current = all.find((c) => c.id === target);
   // What a person may run on is only what is running: a stopped warehouse is started by hand, never by a statement arriving.
-  const running = current ? computeState(current, Date.now()) === "running" || current.starting : false;
-  return { online, all, current, running, target: target || undefined, choose, reload: targets.reload, loaded: targets.data !== undefined };
+  const running = current ? computeState(current, Date.now()) === "running" : false;
+  return { online, all, current, running, start, target: target || undefined, choose, reload: targets.reload, loaded: targets.data !== undefined };
 }
 
 /** What the compute in use is doing while a statement waits on it. */
@@ -81,7 +102,6 @@ export function AttachCompute({ ws, compute, open, onOpenChange }: { ws: string;
   const me = useLoad(api.me, "me");
   const info = me.data?.workspaces.find((w) => w.id === ws);
   const [pick, setPick] = useState("");
-  const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (open) setPick(compute.target ?? compute.all[0]?.id ?? "");
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -103,20 +123,13 @@ export function AttachCompute({ ws, compute, open, onOpenChange }: { ws: string;
           <DialogFooter>
             <Button
               variant="primary"
-              disabled={!chosen || busy || (stopped && !canStart)}
-              onClick={async () => {
+              disabled={!chosen || (stopped && !canStart)}
+              onClick={() => {
                 if (!chosen) return;
-                setBusy(true);
-                try {
-                  if (stopped && info) await api.startCompute(info.org_id, chosen.id);
-                  compute.choose(chosen.id);
-                  compute.reload();
-                  onOpenChange(false);
-                } catch (e) {
-                  toast.error("Could not start it", (e as Error).message);
-                } finally {
-                  setBusy(false);
-                }
+                // Closes at once; the compute shows as starting (a spinner) until it answers.
+                compute.choose(chosen.id);
+                onOpenChange(false);
+                if (stopped && info) void compute.start(info.org_id, chosen.id, chosen.name);
               }}
             >
               {stopped ? "Start and Close" : "Attach and Close"}
