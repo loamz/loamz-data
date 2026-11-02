@@ -1,6 +1,6 @@
 import { Cpu, MoreHorizontal, Plus, Server, TerminalSquare, Trash2, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Body, Button, DataTable, Menu, MenuContent, MenuItem, MenuTrigger, ObjectHeader, Tabs, TabsContent, TabsList, TabsTrigger, confirmAction, toast, type Column } from "@/design";
+import { Body, Button, DataTable, Menu, MenuContent, MenuItem, MenuTrigger, ObjectHeader, confirmAction, toast, type Column } from "@/design";
 import * as api from "@/api";
 import { CreateCompute } from "@/components/CreateCompute";
 import { StateDot } from "@/components/StateDot";
@@ -10,10 +10,14 @@ import { go } from "@/route";
 import { when } from "@/format";
 import { useLoad } from "@/hooks";
 
-/** The compute work runs on: serverless SQL warehouses that you start and that stop a minute after their last statement, and sandboxes on machines of your own. */
+/**
+ * The compute work runs on, in one list. What differs is where it runs, not what it is for: a serverless one runs SQL, starts when you start it and
+ * stops a minute after its last statement; a machine of your own is on while its agent is connected and runs SQL and Python jobs in a gVisor sandbox.
+ */
 export function Compute({ ws, me }: { ws: string; me: api.Me | undefined }) {
   const info = me?.workspaces.find((w) => w.id === ws);
   const [making, setMaking] = useState(false);
+  const [filter, setFilter] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const targets = useLoad(() => api.computeTargets(ws), ws);
   const { reload } = targets;
@@ -28,7 +32,7 @@ export function Compute({ ws, me }: { ws: string; me: api.Me | undefined }) {
     return () => clearInterval(t);
   }, [busy, reload]);
 
-  const columns = (kind: api.Compute["kind"]): Column<api.Compute>[] => [
+  const columns: Column<api.Compute>[] = [
     {
       key: "state",
       header: "State",
@@ -38,6 +42,8 @@ export function Compute({ ws, me }: { ws: string; me: api.Me | undefined }) {
       },
     },
     { key: "name", header: "Name", width: "fill", cell: (c) => <span className="inline-flex items-center gap-2">{c.kind === "serverless" ? <Zap className="text-muted" aria-hidden /> : <Server className="text-muted" aria-hidden />}<span className="font-medium">{c.name}</span></span> },
+    { key: "type", header: "Type", cell: (c) => (c.kind === "serverless" ? "Serverless" : "Machine") },
+    { key: "runs", header: "Runs", cell: (c) => (c.kind === "serverless" ? "SQL" : "SQL and jobs") },
     { key: "size", header: "Size", cell: (c) => sizeLabel(c) },
     { key: "used", header: "Last used", cell: (c) => (c.last_used_ms ? when(c.last_used_ms) : "never") },
     {
@@ -45,12 +51,10 @@ export function Compute({ ws, me }: { ws: string; me: api.Me | undefined }) {
       header: "",
       cell: (c) => (
         <span className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-          {info?.admin && kind === "serverless" && <PowerButton org={info.org_id} compute={c} state={computeState(c, now)} onChanged={reload} />}
-          {kind === "serverless" && (
-            <Button variant="secondary" size="sm" onClick={() => go({ screen: "sql", ws })}>
-              <TerminalSquare /> Query
-            </Button>
-          )}
+          {info?.admin && c.kind === "serverless" && <PowerButton org={info.org_id} compute={c} state={computeState(c, now)} onChanged={reload} />}
+          <Button variant="secondary" size="sm" onClick={() => go({ screen: "sql", ws })}>
+            <TerminalSquare /> Query
+          </Button>
           {info?.admin && (
             <Menu>
               <MenuTrigger asChild>
@@ -80,8 +84,7 @@ export function Compute({ ws, me }: { ws: string; me: api.Me | undefined }) {
       ),
     },
   ];
-  const warehouses = all.filter((c) => c.kind === "serverless");
-  const sandboxes = all.filter((c) => c.kind === "agent");
+  const matching = all.filter((c) => c.name.toLowerCase().includes(filter.trim().toLowerCase()));
   return (
     <Body>
       <ObjectHeader
@@ -95,18 +98,15 @@ export function Compute({ ws, me }: { ws: string; me: api.Me | undefined }) {
           )
         }
       />
-      <Tabs defaultValue="warehouses" className="flex flex-col gap-4">
-        <TabsList variant="line">
-          <TabsTrigger value="warehouses">SQL warehouses</TabsTrigger>
-          <TabsTrigger value="sandboxes">Sandboxes</TabsTrigger>
-        </TabsList>
-        <TabsContent value="warehouses">
-          <DataTable columns={columns("serverless")} rows={warehouses} rowKey={(c) => c.id} count={`${warehouses.length} ${warehouses.length === 1 ? "warehouse" : "warehouses"}`} empty="No SQL warehouse yet. A serverless one runs when you start it and stops a minute after its last statement." />
-        </TabsContent>
-        <TabsContent value="sandboxes">
-          <DataTable columns={columns("agent")} rows={sandboxes} rowKey={(c) => c.id} count={`${sandboxes.length} ${sandboxes.length === 1 ? "machine" : "machines"}`} empty="No machine attached. Jobs and agent code run in a gVisor sandbox on a machine you attach." />
-        </TabsContent>
-      </Tabs>
+      <DataTable
+        columns={columns}
+        rows={matching}
+        rowKey={(c) => c.id}
+        filter={filter}
+        onFilter={setFilter}
+        count={`${matching.length} compute ${matching.length === 1 ? "resource" : "resources"}`}
+        empty={targets.error?.message ?? (filter ? "No matching compute." : "No compute yet. A serverless one runs SQL when you start it; a machine you attach also runs Python jobs in a gVisor sandbox.")}
+      />
       {info && <CreateCompute org={info.org_id} open={making} onOpenChange={setMaking} onCreated={reload} />}
     </Body>
   );
