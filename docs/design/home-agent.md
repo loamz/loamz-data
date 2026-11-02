@@ -1,6 +1,6 @@
 # An agent on the workspace Home
 
-- **Status:** slices 1 to 4 built and unit-tested; slice 5 (an end-to-end run with a real model against the NYC week) has **not** been run. Slice 3 is a small shared core (`@loamz/conversation` in loamz-ui), not the Chat console's 2.6k-line UI, which was not extracted.
+- **Status:** slices 1 to 4 built and unit-tested; slice 5 (an end-to-end run with a real model against the NYC week) has **not** been run. Slice 3 is a small shared core (`@loamz/conversation` in loamz-agents-ui), not the Chat console's 2.6k-line UI, which was not extracted.
 - **Applies to:** `loamz-data/web` (Home), `loamz-agents` (chat API and data tools), `loamz-chat/web` (the shared conversation UI), `loamz-deploy` (identity and routing).
 
 ## What is wanted
