@@ -28,7 +28,7 @@ export function useStatement(ws: string) {
           r = await api.run(ws, r.id);
           setState({ running: true, run: r, startedAt: began });
         }
-        setState({ running: false, run: r, startedAt: began, tookMs: Date.now() - began, error: r.state === "succeeded" ? undefined : r.error || `It ${r.state.replace("_", " ")}.` });
+        setState({ running: false, run: r, startedAt: began, tookMs: Date.now() - began, error: r.result_access === "restricted" ? "Access to the input data could not be verified." : r.state === "succeeded" ? undefined : r.error || `It ${r.state.replace("_", " ")}.` });
       } catch (e) {
         setState({ running: false, startedAt: began, tookMs: Date.now() - began, error: (e as Error).message });
       } finally {

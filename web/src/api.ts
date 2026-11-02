@@ -243,6 +243,8 @@ export interface Run {
   /** How long it waited before starting, and how long it ran once it had ended; -1 while not known yet. */
   queued_ms: number;
   run_ms: number;
+  /** Run details omit output when access to an input cannot be verified. */
+  result_access?: "available" | "restricted";
   // Only on the one run, not in a list:
   spec?: { sql?: string; script?: string; tables?: { id: string; name: string }[]; inputs?: { id: string; kind: string; name: string }[]; output?: string; memory_mb?: number; cpu_millis?: number; timeout_s?: number };
   stdout?: string;
