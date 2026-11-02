@@ -1,12 +1,12 @@
 import { Briefcase, Cpu, Database, FileCode2, History, LayoutDashboard, LockKeyhole, Settings as Gear, TerminalSquare, type LucideIcon } from "lucide-react";
-import { Suspense, lazy, type MouseEvent } from "react";
+import { Suspense, lazy } from "react";
 import { Button, PageEmpty, Page, Sidebar, SidebarGroup, SidebarItem, TopBar, Workbench, cn } from "@/design";
 import * as api from "./api";
 import { Link, ThemeButton, UserMenu } from "./components/RailParts";
 import { useLoad, usePath } from "./hooks";
 import { Mark } from "./Mark";
 import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
-import { go, hrefOf, parseRoute, type Route } from "./route";
+import { hrefOf, navigate, parseRoute, type Route } from "./route";
 import { Catalog } from "./screens/Catalog";
 import { Jobs } from "./screens/Jobs";
 import { Queries } from "./screens/Queries";
@@ -18,13 +18,6 @@ import { Workspace } from "./screens/Workspace";
 const SqlEditor = lazy(() => import("./screens/SqlEditor").then((m) => ({ default: m.SqlEditor })));
 const QueryHistory = lazy(() => import("./screens/QueryHistory").then((m) => ({ default: m.QueryHistory })));
 const Compute = lazy(() => import("./screens/Compute").then((m) => ({ default: m.Compute })));
-
-/** A sidebar link moves without reloading, and still opens in a new tab when asked to. */
-const navigate = (to: Route) => (e: MouseEvent<HTMLElement>) => {
-  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-  e.preventDefault();
-  go(to);
-};
 
 /**
  * One workspace, as a website of its own. Everything in it belongs to this workspace, and nothing links back out: not to Home, not to the
@@ -44,7 +37,7 @@ export function WorkspaceShell({ ws }: { ws: string }) {
     { to: { screen: "sql", ws }, label: "SQL editor", icon: TerminalSquare, active: route.screen === "sql", show: true, group: "sql" },
     { to: { screen: "queries", ws }, label: "Queries", icon: FileCode2, active: route.screen === "queries", show: true, group: "sql" },
     { to: { screen: "history", ws }, label: "Query history", icon: History, active: route.screen === "history", show: true, group: "sql" },
-    { to: { screen: "settings", ws }, label: "Settings", icon: Gear, active: route.screen === "settings", show: Boolean(mine?.admin), group: "admin" },
+    { to: { screen: "settings", ws, tab: "members" }, label: "Settings", icon: Gear, active: route.screen === "settings", show: Boolean(mine?.admin), group: "admin" },
   ];
   const shown = places.filter((p) => p.show);
   const item = (p: (typeof places)[number]) => (
@@ -107,7 +100,7 @@ export function WorkspaceShell({ ws }: { ws: string }) {
             {route.screen === "queries" && <Queries ws={ws} />}
             {route.screen === "jobs" && <Jobs ws={ws} />}
             {route.screen === "run" && <Run ws={ws} id={route.id} />}
-            {route.screen === "settings" && <Settings ws={ws} me={me} />}
+            {route.screen === "settings" && <Settings ws={ws} tab={route.tab} me={me} />}
           </>
         )}
       </div>

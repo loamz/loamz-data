@@ -61,7 +61,9 @@ describe("routes", () => {
     expect(parseRoute("/catalog", "workspace", WS)).toEqual({ screen: "catalog", ws: WS, id: null });
     expect(parseRoute(`/catalog/${id}`, "workspace", WS)).toEqual({ screen: "catalog", ws: WS, id });
     expect(parseRoute("/catalog/<script>", "workspace", WS)).toEqual({ screen: "catalog", ws: WS, id: null });
-    expect(parseRoute("/settings", "workspace", WS)).toEqual({ screen: "settings", ws: WS });
+    expect(parseRoute("/settings", "workspace", WS)).toEqual({ screen: "settings", ws: WS, tab: "members" });
+    expect(parseRoute("/settings/catalogs", "workspace", WS)).toEqual({ screen: "settings", ws: WS, tab: "catalogs" });
+    expect(parseRoute("/settings/nonsense", "workspace", WS)).toEqual({ screen: "settings", ws: WS, tab: "members" });
     expect(parseRoute("/sql", "workspace", WS)).toEqual({ screen: "sql", ws: WS });
     expect(parseRoute("/compute", "workspace", WS)).toEqual({ screen: "compute", ws: WS });
     expect(parseRoute("/account/acme/compute", "account")).toEqual({ screen: "account", org: "acme", tab: "compute" });
@@ -74,7 +76,8 @@ describe("routes", () => {
       [{ screen: "workspace", ws: WS }, "workspace"],
       [{ screen: "catalog", ws: WS, id: null }, "workspace"],
       [{ screen: "catalog", ws: WS, id }, "workspace"],
-      [{ screen: "settings", ws: WS }, "workspace"],
+      [{ screen: "settings", ws: WS, tab: "members" }, "workspace"],
+      [{ screen: "settings", ws: WS, tab: "entitlements" }, "workspace"],
       [{ screen: "sql", ws: WS }, "workspace"],
       [{ screen: "compute", ws: WS }, "workspace"],
       [{ screen: "account", org: "acme", tab: "compute" }, "account"],
