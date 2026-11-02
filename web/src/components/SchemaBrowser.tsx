@@ -1,8 +1,7 @@
-import { ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { cn } from "@/design";
 import * as api from "@/api";
 import { kindIcon } from "@/kinds";
+import { TreeRow } from "./Tree";
 
 /** The tables you can reach, as a tree to click into the editor. Children are loaded when a row is opened. */
 export function SchemaBrowser({ ws, onPick, onNames }: { ws: string; onPick: (fullName: string) => void; onNames: (names: string[]) => void }) {
@@ -31,7 +30,7 @@ export function SchemaBrowser({ ws, onPick, onNames }: { ws: string; onPick: (fu
       ) : roots?.length === 0 ? (
         <p className="px-3 py-4 text-xs text-muted">No catalogs here yet.</p>
       ) : (
-        <ul className="space-y-0.5">
+        <ul className="flex flex-col gap-px">
           {(roots ?? []).map((s) => (
             <Row key={s.id} ws={ws} item={s} path={[s.name]} depth={0} onPick={onPick} onTables={learn} />
           ))}
@@ -64,24 +63,22 @@ function Row({ ws, item, path, depth, onPick, onTables }: { ws: string; item: ap
   const shown = (children ?? []).filter((c) => c.kind === "schema" || c.kind === "table" || c.kind === "view");
   return (
     <li role="treeitem" aria-expanded={isContainer ? open : undefined}>
-      <button
-        type="button"
-        onClick={() => (isContainer ? void toggle() : isQueryable && onPick(path.join(".")))}
-        className={cn("flex h-control-sm w-full cursor-pointer items-center gap-1.5 rounded-md pr-2 text-left text-xs transition-colors hover:bg-card-hover", isQueryable ? "text-foreground" : "font-medium text-foreground")}
-        style={{ paddingLeft: 6 + depth * 12 }}
+      <TreeRow
+        depth={depth}
+        icon={Icon}
+        label={item.name}
         title={isQueryable ? `Insert ${path.join(".")}` : item.name}
-        disabled={!isContainer && !isQueryable}
-      >
-        {isContainer ? <ChevronRight className={cn("shrink-0 text-muted transition-transform", open && "rotate-90")} aria-hidden /> : <span className="size-[var(--icon-size)] shrink-0" aria-hidden />}
-        <Icon className="shrink-0 text-muted" aria-hidden />
-        <span className="min-w-0 truncate">{item.name}</span>
-      </button>
+        open={isContainer ? open : undefined}
+        toggleLabel={`${open ? "Collapse" : "Expand"} ${item.name}`}
+        onToggle={() => void toggle()}
+        onOpen={() => (isContainer ? void toggle() : isQueryable && onPick(path.join(".")))}
+      />
       {open && isContainer && (
-        <ul className="space-y-0.5">
+        <ul className="flex flex-col gap-px">
           {children === null ? (
-            <li className="px-3 py-1 text-2xs text-muted" style={{ paddingLeft: 30 + depth * 12 }}>Loading…</li>
+            <li className="py-1 text-2xs text-muted" style={{ paddingLeft: 26 + (depth + 1) * 12 }}>Loading…</li>
           ) : shown.length === 0 ? (
-            <li className="px-3 py-1 text-2xs text-muted" style={{ paddingLeft: 30 + depth * 12 }}>Nothing you can query here</li>
+            <li className="py-1 text-2xs text-muted" style={{ paddingLeft: 26 + (depth + 1) * 12 }}>Nothing you can query here</li>
           ) : (
             shown.map((c) => <Row key={c.id} ws={ws} item={c} path={[...path, c.name]} depth={depth + 1} onPick={onPick} onTables={onTables} />)
           )}

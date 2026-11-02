@@ -9,7 +9,7 @@ import { FilesTab } from "@/components/FilesTab";
 import { SampleData, TableHistory, TableOverview } from "@/components/TableTab";
 import { NewDialog } from "@/components/NewDialog";
 import { PrincipalField } from "@/components/PrincipalField";
-import { Tree } from "@/components/Tree";
+import { Tree, TreeRow } from "@/components/Tree";
 import { when } from "@/format";
 import { useLoad } from "@/hooks";
 import { Principal } from "@/components/Principal";
@@ -77,6 +77,9 @@ export function Catalog({ ws, id, me }: { ws: string; id: string | null; me: api
   const where = parentOfNew ? `Inside ${parentOfNew.name}` : "At the top of your space";
   const topEmpty = loaded && (children[""] ?? []).length === 0;
 
+  const flat = useMemo(() => Object.values(children).flat(), [children]);
+  const [filter, setFilter] = useState("");
+
   if (here.error) {
     return (
       <Page title="Workspace not found">
@@ -87,9 +90,7 @@ export function Catalog({ ws, id, me }: { ws: string; id: string | null; me: api
     );
   }
 
-  const flat = useMemo(() => Object.values(children).flat(), [children]);
-  const [filter, setFilter] = useState("");
-  const shown = filter.trim() ? flat.filter((s) => s.name.includes(filter.trim().toLowerCase())) : null;
+  const shown = filter.trim() ? flat.filter((s) => s.name.toLowerCase().includes(filter.trim().toLowerCase())) : null;
   const top = children[""] ?? [];
 
   const tree = (
@@ -111,16 +112,10 @@ export function Catalog({ ws, id, me }: { ws: string; id: string | null; me: api
       {topEmpty ? (
         <p className="px-3 py-6 text-center text-xs text-muted">Nothing here yet. Create a catalog to begin.</p>
       ) : shown ? (
-        <ul className="space-y-0.5">
+        <ul className="flex flex-col gap-px">
           {shown.map((s) => (
             <li key={s.id}>
-              <Button variant="ghost" size="md" className="w-full justify-start gap-2 text-sm text-foreground" onClick={() => open(s.id)}>
-                {(() => {
-                  const Icon = kindIcon[s.kind];
-                  return <Icon className="text-muted" aria-hidden />;
-                })()}
-                <span className="truncate">{s.name}</span>
-              </Button>
+              <TreeRow depth={0} icon={kindIcon[s.kind]} label={s.name} active={id === s.id} onOpen={() => open(s.id)} />
             </li>
           ))}
         </ul>
@@ -300,7 +295,7 @@ function Detail({ ws, item, children, load, onOpen, onNew, onDropped, onChanged 
           </>
         }
       />
-      <Tabs defaultValue={isVolume ? "files" : "overview"} className="flex flex-col gap-4">
+      <Tabs defaultValue={isVolume ? "files" : "overview"} className="flex flex-col gap-3">
         <TabsList variant="line">
           {isVolume ? <TabsTrigger value="files">Files</TabsTrigger> : <TabsTrigger value="overview">Overview</TabsTrigger>}
           {isTable && <TabsTrigger value="sample">Sample data</TabsTrigger>}
