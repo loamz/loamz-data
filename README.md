@@ -1,6 +1,6 @@
 # Loamz Data
 
-Loamz Data is the governed data service for Loamz. The current server and runner are Rust; the Python `loamz-engine` package remains for existing Agents consumers. Data is independent of Chat and Agents.
+Loamz Data is the governed data service for Loamz. The current server and runner are Rust. Data is independent of Chat and Agents.
 
 The implementation includes organization and workspace access, a catalog, managed Iceberg tables, object storage, audit, SQL queries, and sandboxed Python jobs. It is under development and is **not yet production ready**. See the [readiness baseline](docs/guides/enterprise-readiness.md) and [production roadmap](docs/production-roadmap.md) before relying on a capability.
 
@@ -10,7 +10,6 @@ The implementation includes organization and workspace access, a catalog, manage
 - `server/lake`: metadata database and file/object storage.
 - `server/runner`: outbound compute agent and gVisor sandbox runner.
 - `web`: React workbench.
-- `server/engine`: retained Python engine used by Agents.
 - `deploy/dev`: development PostgreSQL and Keycloak.
 
 ## Local checks
