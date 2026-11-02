@@ -1,7 +1,16 @@
 version: 2
-
-# One grouped PR per ecosystem, monthly, minor/patch only. Major versions are upgraded by hand, deliberately.
 updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
   - package-ecosystem: uv
     directory: /
     schedule:
@@ -13,23 +22,8 @@ updates:
     groups:
       python-minor-patch:
         update-types: [minor, patch]
-
-  # reader is outside the uv workspace (Python 3.13, own project).
-  - package-ecosystem: uv
-    directory: /server/reader
-    schedule:
-      interval: monthly
-    open-pull-requests-limit: 2
-    ignore:
-      - dependency-name: "*"
-        update-types: [version-update:semver-major]
-    groups:
-      python-minor-patch:
-        update-types: [minor, patch]
-
-  # pnpm workspace at the root (covers apps/agents-console, apps/data-workspace and sdk/js/oidc-bff).
   - package-ecosystem: npm
-    directory: /
+    directory: /web
     schedule:
       interval: monthly
     open-pull-requests-limit: 2
@@ -37,9 +31,8 @@ updates:
       - dependency-name: "*"
         update-types: [version-update:semver-major]
     groups:
-      npm-minor-patch:
+      web-minor-patch:
         update-types: [minor, patch]
-
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -51,10 +44,8 @@ updates:
     groups:
       actions-minor-patch:
         update-types: [minor, patch]
-
-  # Dockerfiles in deploy/docker.
   - package-ecosystem: docker
-    directory: /deploy/docker
+    directory: /server/runner/rootfs
     schedule:
       interval: monthly
     open-pull-requests-limit: 2
