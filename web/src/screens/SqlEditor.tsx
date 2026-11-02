@@ -1,14 +1,14 @@
 import { Play, Plus, Save, Square, X } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
-import { Badge, Button, Dialog, DialogContent, DialogFooter, Input, Select, TreePane, cn, toast } from "@/design";
+import { Badge, Button, Dialog, DialogContent, DialogFooter, Input, Select, cn, toast } from "@/design";
 import * as api from "@/api";
 import { elapsedText, useClock } from "@/clock";
 import { AttachCompute, ComputePicker, useCompute, useWaitingOn } from "@/components/ComputePicker";
 import { CodeEditor, type CodeEditorHandle } from "@/components/CodeEditor";
 import { ResultGrid } from "@/components/ResultGrid";
-import { SchemaBrowser } from "@/components/SchemaBrowser";
+import { EditorPane } from "@/components/EditorPane";
 import { go } from "@/route";
-import { blank, load, save, titleOf, type Tab } from "@/sqlTabs";
+import { blank, load, save, titleOf, withSaved, withStatement, type Tab } from "@/sqlTabs";
 
 /** What one tab last did. Kept while the page is open; the statement itself is kept by the server as a run. */
 interface Outcome {
@@ -125,13 +125,20 @@ export function SqlEditor({ ws }: { ws: string }) {
   const failed = out?.run && (out.run.state === "failed" || out.run.state === "timed_out");
   const result = out?.run?.state === "succeeded" ? out.run.result : null;
   const noCompute = loaded && picked.all.length === 0;
+  // The lists beside the editor refresh when a run starts or ends, and when a query is saved.
+  const refreshKey = `${Object.entries(outcomes).map(([id, o]) => `${id}:${o.run?.id ?? ""}:${o.running ? 1 : 0}`).join("|")}#${state.tabs.map((t) => t.saved?.id ?? "").join(",")}`;
 
   return (
     <div className="flex h-full min-h-0">
       <div className="hidden md:block">
-        <TreePane title="Tables">
-          <SchemaBrowser ws={ws} onPick={insert} onNames={setNames} />
-        </TreePane>
+        <EditorPane
+          ws={ws}
+          refreshKey={refreshKey}
+          onPick={insert}
+          onNames={setNames}
+          onOpenQuery={(q) => update(withSaved(state, q))}
+          onOpenStatement={(sql) => update(withStatement(state, sql, titleOf(sql, "Query")))}
+        />
       </div>
 
       <section className="flex min-w-0 flex-1 flex-col">

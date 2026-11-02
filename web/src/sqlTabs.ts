@@ -42,24 +42,29 @@ export function save(ws: string, state: Tabs): void {
   }
 }
 
+/** The tabs with a statement opened in a new one. */
+export function withStatement(state: Tabs, sql: string, title: string): Tabs {
+  const tab = blank(title, sql);
+  return { tabs: [...state.tabs, tab], active: tab.id };
+}
+
+/** The tabs with a saved query open: the tab it already has, or a new one. */
+export function withSaved(state: Tabs, q: { id: string; name: string; sql: string }): Tabs {
+  const open = state.tabs.find((t) => t.saved?.id === q.id);
+  if (open) return { ...state, active: open.id };
+  const tab: Tab = { ...blank(q.name, q.sql), saved: { id: q.id, name: q.name, sql: q.sql } };
+  return { tabs: [...state.tabs, tab], active: tab.id };
+}
+
 /** Opens a statement in a new tab of the workspace's SQL editor. */
 export function openInEditor(ws: string, sql: string, title: string): void {
-  const state = load(ws);
-  const tab = blank(title, sql);
-  save(ws, { tabs: [...state.tabs, tab], active: tab.id });
+  save(ws, withStatement(load(ws), sql, title));
   go({ screen: "sql", ws });
 }
 
 /** Opens a saved query in its own tab (the one already open, if it is). */
 export function openSaved(ws: string, q: { id: string; name: string; sql: string }): void {
-  const state = load(ws);
-  const open = state.tabs.find((t) => t.saved?.id === q.id);
-  if (open) {
-    save(ws, { ...state, active: open.id });
-  } else {
-    const tab: Tab = { ...blank(q.name, q.sql), saved: { id: q.id, name: q.name, sql: q.sql } };
-    save(ws, { tabs: [...state.tabs, tab], active: tab.id });
-  }
+  save(ws, withSaved(load(ws), q));
   go({ screen: "sql", ws });
 }
 
