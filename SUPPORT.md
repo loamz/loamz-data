@@ -17,7 +17,6 @@ adopt. They are targets for that organization's agreement, not promises made by 
 
 A good request names the version (`loamz-server --version`, image tag), the topology (Compose or Helm, mode), what was
 expected and what happened, the request id from the `X-Request-Id` response header, and relevant logs with secrets removed.
-Severity 1 incidents follow [docs/compliance/incident-response.md](docs/compliance/incident-response.md).
 
 ## Status
 A cell reports its own health at `/health`, `/readyz` and `/metrics`. An operator offering a managed service should

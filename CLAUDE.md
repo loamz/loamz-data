@@ -1,6 +1,6 @@
 # loamz-data
 
-The governed data platform of Loamz, in Rust. Design: `docs/charter.md`. Plan: `docs/plan.md`. Contract: `specs/data/v1/openapi.yaml`.
+The governed data platform of Loamz, in Rust. Rules: `docs/constitution.md`. Why: `docs/decisions.md`. Work in progress: `docs/specs/`. Contract: `specs/data/v1/openapi.yaml`.
 
 ## Layout
 
@@ -42,7 +42,7 @@ The governed data platform of Loamz, in Rust. Design: `docs/charter.md`. Plan: `
 
 ## Commands
 
-- `make check`: fmt, clippy, tests on SQLite, web types and tests, import contract. PostgreSQL tests create databases and do not remove them: use a throwaway instance, then `LOAMZ_TEST_POSTGRES_URL=postgres://data:data-dev-only@127.0.0.1:55434/data cargo test -p loamz-data-server -- --include-ignored`.
+- `make check`: fmt, clippy, tests on SQLite, web types and tests. PostgreSQL tests create databases and do not remove them: use a throwaway instance, then `LOAMZ_TEST_POSTGRES_URL=postgres://data:data-dev-only@127.0.0.1:55434/data cargo test -p loamz-data-server -- --include-ignored`.
 - The local stack: `docker compose -f deploy/dev/compose.yml up -d`, then `deploy/dev/seed.py` (passwords go to `.dev/accounts.json`, never printed).
 - Sandbox pieces, once per machine: `scripts/fetch-runsc.sh` and `server/runner/rootfs/build.sh`. gVisor tests are ignored by default; set `LOAMZ_RUNSC` and `LOAMZ_ROOTFS` and run `cargo test -p loamz-runner --test gvisor -- --ignored --test-threads=1`. Memory and process limit tests require cgroup enforcement, not `LOAMZ_ROOTLESS`.
 - Web: `cd web && pnpm install && pnpm test && pnpm build`; `scripts/dev.sh` runs the server and the app; `web/scripts/e2e.sh` is the browser test (real sign-ins, a real agent; needs Python Playwright in `PLAYWRIGHT_PY`, the release builds of the server and the runner, and the sandbox pieces above).
