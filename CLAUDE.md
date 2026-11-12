@@ -1,6 +1,6 @@
 # loamz-data
 
-The governed data platform of Loamz, in Rust. Rules: `docs/constitution.md`. Why: `docs/decisions.md`. Work in progress: `docs/specs/`. Contract: `specs/data/v1/openapi.yaml`.
+The governed data platform of Loamz, in Rust. How it is built: `docs/ARCHITECTURE.md`. How to work on it: `docs/CONTRIBUTING.md`. Why: `docs/decisions.md`. Work in progress: `docs/rfcs/`. Contract: `specs/data/v1/openapi.yaml`.
 
 ## Layout
 
