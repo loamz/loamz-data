@@ -1,6 +1,6 @@
-import { ChevronRight, Search } from "lucide-react";
+import { ChevronRight, PanelLeftClose, PanelLeftOpen, Search } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { Fragment, type MouseEvent, type ReactNode } from "react";
+import { createContext, Fragment, useContext, useState, type MouseEvent, type ReactNode } from "react";
 import { cn } from "../cn";
 import { Input } from "../ui/Input";
 
@@ -42,43 +42,78 @@ export function SearchField({ placeholder, hint, value, onChange, onFocus }: { p
   );
 }
 
+const COLLAPSED_KEY = "loamz.sidebar.collapsed";
+const Collapsed = createContext(false);
+
+function readCollapsed(): boolean {
+  try {
+    return localStorage.getItem(COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** The main navigation. It collapses to icons only (each label becomes its tooltip); the choice is remembered in this browser. */
 export function Sidebar({ children, footer, label = "Main" }: { children: ReactNode; footer?: ReactNode; label?: string }) {
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const toggle = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    try {
+      localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0");
+    } catch {
+      /* storage blocked: the choice lasts until the page closes */
+    }
+  };
+  const Toggle = collapsed ? PanelLeftOpen : PanelLeftClose;
   return (
-    <nav aria-label={label} className="hidden w-44 shrink-0 flex-col border-r border-border bg-sidebar md:flex">
-      <div className="scroll-area flex min-h-0 flex-1 flex-col gap-0.5 px-2 py-1.5">{children}</div>
-      {footer && <div className="flex flex-col gap-0.5 border-t border-border px-2 py-1.5">{footer}</div>}
-    </nav>
+    <Collapsed.Provider value={collapsed}>
+      <nav aria-label={label} className={cn("hidden shrink-0 flex-col border-r border-border bg-sidebar md:flex", collapsed ? "w-12" : "w-44")}>
+        <div className="scroll-area flex min-h-0 flex-1 flex-col gap-0.5 px-2 py-1.5">{children}</div>
+        <div className="flex flex-col gap-0.5 border-t border-border px-2 py-1.5">
+          {footer}
+          <SidebarItem icon={Toggle} onClick={toggle}>
+            {collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          </SidebarItem>
+        </div>
+      </nav>
+    </Collapsed.Provider>
   );
 }
 
 export function SidebarGroup({ label, children }: { label?: string; children: ReactNode }) {
+  const collapsed = useContext(Collapsed);
   return (
     <div className="mt-2 flex flex-col gap-0.5 first:mt-0">
-      {label && <p className="px-2.5 pb-1 text-2xs font-medium uppercase tracking-wide text-muted">{label}</p>}
+      {label && (collapsed ? <hr className="mx-1 mb-1 border-border" /> : <p className="px-2.5 pb-1 text-2xs font-medium uppercase tracking-wide text-muted">{label}</p>)}
       {children}
     </div>
   );
 }
 
-/** One row of the sidebar: 32px, an icon and a label, violet while its page is showing. */
+/** One row of the sidebar: 32px, an icon and a label, violet while its page is showing. Collapsed, only the icon shows. */
 export function SidebarItem({ icon: Icon, active, onClick, href, children }: { icon: LucideIcon; active?: boolean; onClick?: (e: MouseEvent<HTMLElement>) => void; href?: string; children: ReactNode }) {
+  const collapsed = useContext(Collapsed);
   const cls = cn(
-    "flex h-control-md w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm font-medium text-foreground transition-colors " +
+    "flex h-control-md w-full cursor-pointer items-center gap-2.5 rounded-md text-left text-sm font-medium text-foreground transition-colors " +
       "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent",
+    collapsed ? "justify-center px-0" : "px-2.5",
     active ? "bg-accent/20" : "hover:bg-card-hover",
   );
+  const name = typeof children === "string" ? children : undefined;
   const inner = (
     <>
       <Icon className={cn("shrink-0", active ? "text-accent" : "text-muted")} aria-hidden />
-      <span className="min-w-0 flex-1 truncate">{children}</span>
+      <span className={collapsed ? "sr-only" : "min-w-0 flex-1 truncate"}>{children}</span>
     </>
   );
+  const tip = collapsed ? name : undefined;
   return href ? (
-    <a href={href} aria-current={active ? "page" : undefined} className={cls} onClick={onClick}>
+    <a href={href} aria-current={active ? "page" : undefined} className={cls} onClick={onClick} title={tip}>
       {inner}
     </a>
   ) : (
-    <button type="button" aria-current={active ? "page" : undefined} className={cls} onClick={onClick}>
+    <button type="button" aria-current={active ? "page" : undefined} className={cls} onClick={onClick} title={tip}>
       {inner}
     </button>
   );
