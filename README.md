@@ -63,4 +63,4 @@ data plane ([RFC 001](docs/rfcs/001-fast-data-plane.md)). Not deployed publicly 
 
 ## License
 
-Apache-2.0.
+[Apache-2.0](LICENSE).
