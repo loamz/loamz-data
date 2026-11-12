@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/demo.gif" alt="Catalog and SQL editor: one week of NYC taxi trips queried" width="880">
+  <img src="docs/assets/demo.webp" alt="Catalog, then the SQL editor querying one week of NYC taxi trips" width="880">
 </p>
 
 <p align="center">
