@@ -24,6 +24,21 @@ flowchart LR
 - **Storage** is a SQL database (Postgres, SQLite in tests) for metadata, and an object store (R2, a folder in tests) for bytes.
 - **Compute** runs SQL and jobs: our runner on machines (it connects out; nothing connects in) or a serverless endpoint (Modal).
 
+## Stack
+
+| Part | What it does here |
+|---|---|
+| Rust (axum, sqlx, object_store) | the server and the runner |
+| Apache Iceberg | table format: snapshots, schema; this server is the REST catalog |
+| Parquet | the files tables are made of |
+| DuckDB | runs SQL and writes tables, inside the sandbox or on serverless |
+| PostgreSQL (SQLite in tests) | catalog, grants, runs and audit |
+| Cloudflare R2 (a folder in tests) | where the bytes live |
+| Keycloak | sign-in; an organization is a tenant |
+| gVisor | sandbox for each run on a machine |
+| Modal | serverless SQL |
+| React, Tailwind, Radix | the workbench |
+
 ## Design principles
 
 Speed comes from design, so every change keeps to these, and is measured:
