@@ -3,7 +3,18 @@
 Every change to Loamz Data obeys these rules. A change that breaks one changes this file first, with the owner's agreement.
 
 ## Purpose
-The governed data platform of Loamz. The main aim is **speed**: speed comes from design, and every change is measured.
+**A fast, governed, modern data platform for the AI era and for traditional data people.**
+
+| Who | What they need from us |
+|---|---|
+| Analysts, data engineers, BI users | SQL on their tables, answers in seconds or less, pipelines that cost little |
+| AI builders: agents, AI apps, ML | the same data, queried by code and models, always as the person and never more |
+| The business paying for it | open formats (no lock-in), one place for access and audit, a low cost per query |
+
+Why it exists: today a team picks *fast* (a local engine with no governance) or *governed* (a heavy platform, slow and costly).
+Loamz Data is both. Speed comes from design, and every change is measured.
+
+**Every feature serves one of these users and says which. If it serves none, it is not built.**
 
 ## Speed
 1. Don't move data: send work to the data, read in place, never copy a whole table.

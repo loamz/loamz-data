@@ -13,8 +13,15 @@ A query today does far more work than it needs. Measured from the code (12 Nov 2
 | Wait | polling every 150 ms to 1 s (run wait, lease, serverless loop, SQL editor) | up to ~1 s idle |
 | Govern | one process-wide write lock; grants read per check; credentials minted per run | serialized, repeated work |
 
-## Goal
-Interactive SQL and batch on the same fast path, for people, agents and apps, on any compute (machine or Modal).
+## Who gains, and how
+| Who | Today | After |
+|---|---|---|
+| Analyst in the SQL editor | waits for a cold start and a whole-table download; 3.5 MB results | first rows in well under a second on warm data; any result size, streamed |
+| Agent answering in a chat | a slow query stalls the conversation | a governed answer within one chat turn |
+| Data engineer running batch | one core, all files read | all cores, only the needed files read: faster and cheaper |
+| The business | cost per query unknown | cost per query measured and falling |
+
+Numbers are set by task 1's baseline, then each task must beat them. This is why someone picks Loamz over a heavy platform.
 
 ## Requirements
 1. A benchmark that measures every query end to end, by phase.
