@@ -1,4 +1,4 @@
-import { ChevronRight, PanelLeftClose, PanelLeftOpen, Search } from "lucide-react";
+import { ChevronRight, PanelLeft, Search } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { createContext, Fragment, useContext, useState, type MouseEvent, type ReactNode } from "react";
 import { cn } from "../cn";
@@ -65,17 +65,24 @@ export function Sidebar({ children, footer, label = "Main" }: { children: ReactN
       /* storage blocked: the choice lasts until the page closes */
     }
   };
-  const Toggle = collapsed ? PanelLeftOpen : PanelLeftClose;
   return (
     <Collapsed.Provider value={collapsed}>
-      <nav aria-label={label} className={cn("hidden shrink-0 flex-col border-r border-border bg-sidebar md:flex", collapsed ? "w-12" : "w-44")}>
+      <nav aria-label={label} className={cn("group/side relative hidden shrink-0 flex-col border-r border-border bg-sidebar md:flex", collapsed ? "w-12" : "w-44")}>
+        {/* On the sidebar's edge, as in Docker Desktop: shown while the pointer is over the sidebar, or when focused. */}
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          className={
+            "absolute -right-3 top-2 z-20 flex size-6 cursor-pointer items-center justify-center rounded-full border border-border-hover bg-card text-accent " +
+            "opacity-0 shadow-sm transition-opacity hover:bg-card-hover group-hover/side:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-accent"
+          }
+        >
+          <PanelLeft className="size-3.5" aria-hidden />
+        </button>
         <div className="scroll-area flex min-h-0 flex-1 flex-col gap-0.5 px-2 py-1.5">{children}</div>
-        <div className="flex flex-col gap-0.5 border-t border-border px-2 py-1.5">
-          {footer}
-          <SidebarItem icon={Toggle} onClick={toggle}>
-            {collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          </SidebarItem>
-        </div>
+        {footer && <div className="flex flex-col gap-0.5 border-t border-border px-2 py-1.5">{footer}</div>}
       </nav>
     </Collapsed.Provider>
   );
