@@ -28,27 +28,30 @@
   <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white">
   <img alt="Keycloak" src="https://img.shields.io/badge/Keycloak-4D4D4D?logo=keycloak&logoColor=white">
   <img alt="gVisor" src="https://img.shields.io/badge/gVisor-4285F4">
-  <img alt="React" src="https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB">
 </p>
 
 ## Features
 
-- **Governed catalog**: catalogs, schemas, tables and volumes with Unity Catalog privileges and a tamper-evident audit.
-- **Open tables**: Apache Iceberg tables in your object store; any Iceberg client reads them through our catalog.
-- **SQL and jobs on any compute**: serverless, or your own machines running each job in a gVisor sandbox.
-- **Agents act as the person**: an agent gets only what both it and its person may do.
-- **Workbench**: catalog, SQL editor, query history, compute and settings in the browser.
+- **Loamz catalog**: tables and files with fine-grained permissions, and an audit log that can't be quietly edited.
+- **Open tables**: Apache Iceberg tables in any S3-compatible object store; any Iceberg client reads them through our catalog.
+- **Compute for each job**
+  - **Jobs**: ETL and batch pipelines.
+  - **Serverless**: fast SQL for apps and dashboards, paid only while it runs.
+  - **Sandboxes**: AI agents work with your data safely, with only the access they were given.
+- **Workspace**: a project with its own people, compute and catalogs, in one interactive console.
 
 ## Getting started
 
+You need Docker, Rust and pnpm.
+
 ```sh
-docker compose -f deploy/dev/compose.yml up -d    # Keycloak and Postgres
-deploy/dev/seed.py                                 # people; passwords in .dev/accounts.json
-cargo build --release -p loamz-data-server
-scripts/dev.sh                                     # open http://localhost:5180 and sign in as ana
+docker compose -f deploy/dev/compose.yml up -d
+scripts/dev.sh
 ```
 
-Storage settings (Cloudflare R2) are in [CONTRIBUTING](docs/CONTRIBUTING.md).
+Open http://localhost:5180 and sign in as `admin` with password `admin`; you change it on first login. The admin creates organizations and adds people.
+
+Data is kept in a local RustFS container. To use your own S3-compatible bucket, change the storage settings in [CONTRIBUTING](docs/CONTRIBUTING.md).
 
 ## Use it from DuckDB
 
@@ -58,19 +61,23 @@ ATTACH 'nyc' AS lz (TYPE iceberg, ENDPOINT 'http://127.0.0.1:8020/api/v1/workspa
 SELECT count(*) FROM lz.main.yellow_trips;
 ```
 
-`deploy/dev/token.py ana` prints a token. You see only what you may see.
+`deploy/dev/token.py admin` prints a token. You see only what you may see.
 
 ## How it works
 
-```mermaid
-flowchart LR
-  U[Workbench · DuckDB · agents] --> G[Governance: identity, catalog, grants, audit]
-  G -->|scoped, short-lived credentials| S[(Storage: Postgres + object store)]
-  G -->|work| C[Compute: serverless or machines]
-  C -->|reads only what it was given| S
-```
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="An organization decides who may use which workspace. In a workspace, a project, members, service principals and AI agents work; compute runs jobs, serverless SQL and sandboxes; the catalog checks every query and write first. The catalog has governance (metadata, grants, audit) over its storage: Iceberg tables and files in your S3-compatible bucket. Loamz Agents is a connected app acting for a member or a service principal." width="760">
+</p>
 
-Governance decides, storage keeps the bytes, compute runs the work. More in [ARCHITECTURE](docs/ARCHITECTURE.md).
+| | |
+|---|---|
+| **Organization** | Your company. Decides who may use which workspace. People sign in once. |
+| **Workspace** | A project: its members, its service principals (BI, ML apps, pipelines), its compute and its catalogs. |
+| **Catalog** | Your tables and files, with their own governance (metadata, permissions, audit) and S3-compatible bucket. Belongs to one workspace. |
+| **Compute** | Jobs for ETL, serverless SQL, and sandboxes for AI agents. Reads the workspace's catalogs, only where each allows. |
+| **Connected apps** | Loamz Agents is our own app; it signs in like any connector and acts for a member or a service principal. |
+
+More in [ARCHITECTURE](docs/ARCHITECTURE.md).
 
 ## Development
 
