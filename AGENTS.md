@@ -20,3 +20,11 @@ Done means: `make check` passes; for database code also
 `LOAMZ_TEST_POSTGRES_URL=postgres://data:data-dev-only@127.0.0.1:55434/data cargo test -p loamz-data-server -- --include-ignored --skip openbao_live`
 (start the stack with `docker compose -f deploy/dev/compose.yml up -d`); the docs you touched are updated; and you say plainly what you did
 not do. Do not commit to `main`: work on your own branch.
+
+## Working with other agents on one machine
+
+- Read `docs/proposals/0003-beta.md`: who owns what, and how a wave runs (write everything first, verify once).
+- Every build or test goes through the shared lock: `scripts/heavy.sh make check`. Never run two heavy commands at once, never open another worktree's folder in the editor, and build the SQL worker only with `make worker`.
+- One branch and one worktree per task: `git worktree add ../loamz-data-<task> -b task/<task> main`. Do not merge to `main`; the lead does.
+- Report what you ran and its last lines. A claim without the output will be re-run by the lead.
+
