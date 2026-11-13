@@ -91,7 +91,7 @@ Status: **Built** is in the code today; **Planned** names its proposal and task 
 | id | requirement | status |
 |---|---|---|
 | P1 | Dependency checks in CI, signed releases with an SBOM, a short threat model. | Under consideration |
-| P2 | A user documentation site: quickstart, API reference, tutorials. Private for now, at `data.loamz.com/docs`. | Under consideration |
+| P2 | A user documentation site: quickstart, API reference, tutorials. Private for now, at `data.loamz.com/docs`. | Built |
 
 ## 2. Quality
 
