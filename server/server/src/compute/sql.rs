@@ -1,13 +1,18 @@
 //! What a SQL statement reads, worked out by a real parser. Authorization of a query rests on this: every table it names is looked
 //! up in the catalog and checked, and the statement is refused if it names anything that is not a catalog table.
 
-use std::{collections::HashSet, ops::ControlFlow};
+use std::{collections::HashMap, collections::HashSet, ops::ControlFlow};
 
 use sqlparser::{
-    ast::{ObjectName, ObjectNamePart, Query, Statement, TableFactor, Visit, Visitor},
+    ast::{
+        ObjectName, ObjectNamePart, Query, SetExpr, Statement, TableFactor, Visit, VisitMut,
+        Visitor, VisitorMut,
+    },
     dialect::DuckDbDialect,
     parser::Parser,
 };
+
+use crate::governance::catalogs::policy::Resolved;
 
 /// A table a statement reads, as `catalog.schema.table`, in lower case.
 pub type Relation = [String; 3];
@@ -113,10 +118,166 @@ pub fn analyze(sql: &str) -> Result<Analysis, String> {
     Ok(Analysis { relations })
 }
 
+/// Puts a table's row filter and column masks in front of every place a statement reads it. Each such table becomes
+/// `(SELECT * REPLACE (mask AS col) FROM table WHERE filter) AS name`: the rules apply before anything the person wrote, to
+/// `*`, to joins, to sub-queries and to `WITH` alike. The table's own name stays the alias, so the rest of the statement is
+/// unchanged. The statement must already have passed [`analyze`].
+///
+/// # Errors
+/// The statement could not be rewritten; it is then not run.
+pub fn guard<S: std::hash::BuildHasher>(
+    sql: &str,
+    rules: &HashMap<Relation, Resolved, S>,
+) -> Result<String, String> {
+    if rules.is_empty() {
+        return Ok(sql.to_owned());
+    }
+    let mut statements = Parser::parse_sql(&DuckDbDialect {}, sql)
+        .map_err(|e| format!("this is not valid SQL: {e}"))?;
+    let mut wrap = Wrap {
+        rules,
+        failed: None,
+    };
+    for statement in &mut statements {
+        let _ = VisitMut::visit(statement, &mut wrap);
+    }
+    match wrap.failed {
+        Some(why) => Err(why),
+        None => Ok(statements
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ")),
+    }
+}
+
+struct Wrap<'a, S> {
+    rules: &'a HashMap<Relation, Resolved, S>,
+    failed: Option<String>,
+}
+
+fn quote(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// The table as a derived table: its masks and filter applied.
+fn derived(name: &ObjectName, alias: &str, rule: &Resolved) -> Result<TableFactor, String> {
+    let replace = if rule.masks.is_empty() {
+        String::new()
+    } else {
+        let items: Vec<String> = rule
+            .masks
+            .iter()
+            .map(|(column, expr)| format!("({expr}) AS {}", quote(column)))
+            .collect();
+        format!(" REPLACE ({})", items.join(", "))
+    };
+    let filter = rule
+        .filter
+        .as_ref()
+        .map_or_else(String::new, |f| format!(" WHERE ({f})"));
+    let text = format!(
+        "SELECT 1 FROM (SELECT *{replace} FROM {name}{filter}) AS {}",
+        quote(alias)
+    );
+    let parsed = Parser::parse_sql(&DuckDbDialect {}, &text)
+        .map_err(|_| "the table's rules could not be applied".to_owned())?;
+    if let [Statement::Query(q)] = parsed.as_slice()
+        && let SetExpr::Select(select) = q.body.as_ref()
+        && let Some(from) = select.from.first()
+    {
+        return Ok(from.relation.clone());
+    }
+    Err("the table's rules could not be applied".into())
+}
+
+impl<S: std::hash::BuildHasher> VisitorMut for Wrap<'_, S> {
+    type Break = ();
+
+    fn post_visit_table_factor(&mut self, t: &mut TableFactor) -> ControlFlow<()> {
+        let TableFactor::Table { name, alias, .. } = t else {
+            return ControlFlow::Continue(());
+        };
+        let Some(p) = parts(name) else {
+            return ControlFlow::Continue(());
+        };
+        let Ok(key) = <Relation>::try_from(p) else {
+            return ControlFlow::Continue(());
+        };
+        let Some(rule) = self.rules.get(&key) else {
+            return ControlFlow::Continue(());
+        };
+        let shown = alias
+            .as_ref()
+            .map_or_else(|| key[2].clone(), |a| a.name.value.clone());
+        match derived(name, &shown, rule) {
+            Ok(mut factor) => {
+                // Keep the statement's own alias (with any column names it gave).
+                if let (TableFactor::Derived { alias: new, .. }, Some(old)) = (&mut factor, alias) {
+                    *new = Some(old.clone());
+                }
+                *t = factor;
+            }
+            Err(why) => {
+                self.failed = Some(why);
+                return ControlFlow::Break(());
+            }
+        }
+        ControlFlow::Continue(())
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    fn rule(filter: Option<&str>, masks: &[(&str, &str)]) -> HashMap<Relation, Resolved> {
+        HashMap::from([(
+            ["sales".to_owned(), "raw".to_owned(), "orders".to_owned()],
+            Resolved {
+                filter: filter.map(Into::into),
+                masks: masks
+                    .iter()
+                    .map(|(c, e)| ((*c).into(), (*e).into()))
+                    .collect(),
+            },
+        )])
+    }
+
+    #[test]
+    fn a_table_with_rules_is_read_only_through_them() {
+        let rules = rule(Some("region = 'EU'"), &[("email", "md5(email)")]);
+        let sql = guard("SELECT * FROM sales.raw.orders", &rules).unwrap();
+        assert_eq!(
+            sql,
+            "SELECT * FROM (SELECT * REPLACE ((md5(email)) AS \"email\") FROM sales.raw.orders WHERE (region = 'EU')) AS \"orders\""
+        );
+    }
+
+    #[test]
+    fn every_way_to_name_the_table_is_covered() {
+        let rules = rule(Some("region = 'EU'"), &[]);
+        let sql = guard(
+            "WITH x AS (SELECT * FROM sales.raw.orders) SELECT o.id FROM sales.raw.orders AS o JOIN x ON x.id = o.id WHERE o.id IN (SELECT id FROM SALES.RAW.ORDERS)",
+            &rules,
+        )
+        .unwrap();
+        assert_eq!(sql.matches("WHERE (region = 'EU')").count(), 3, "{sql}");
+        assert!(!sql.contains("FROM sales.raw.orders AS o"), "{sql}");
+        assert!(
+            sql.contains("AS o"),
+            "the statement's own alias is kept: {sql}"
+        );
+    }
+
+    #[test]
+    fn a_statement_without_such_a_table_is_unchanged() {
+        let rules = rule(Some("a = 1"), &[]);
+        let sql = "SELECT * FROM sales.raw.other";
+        assert_eq!(guard(sql, &rules).unwrap(), sql);
+        assert_eq!(guard(sql, &HashMap::new()).unwrap(), sql);
+    }
 
     fn rel(a: &str, b: &str, c: &str) -> Relation {
         [a.into(), b.into(), c.into()]

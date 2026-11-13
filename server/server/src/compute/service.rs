@@ -699,6 +699,18 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
         private |= class != "normal";
         tables.push(json!({"id": id, "name": name}));
     }
+    // A table with row or column rules is read through them: the statement itself is rewritten here, once, so every kind of
+    // compute applies them.
+    let mut rules = std::collections::HashMap::new();
+    for (rel, t) in analysis.relations.iter().zip(&tables) {
+        let id = t["id"].as_str().unwrap_or_default();
+        let found =
+            catalogs::rules_for(app, ctx.identity, &ctx.workspace.org_id, ctx.sides, id).await?;
+        if let Some(r) = found {
+            rules.insert(rel.clone(), r);
+        }
+    }
+    let statement = sql::guard(&req.sql, &rules).map_err(Error::Invalid)?;
     let limit = req.limit.unwrap_or(DEFAULT_ROWS).clamp(1, MAX_ROWS);
     let mut policies = Vec::new();
     for t in &tables {
@@ -716,7 +728,7 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
     )
     .await?;
     let limits = limits_for(&target, None, None, None, 120).map_err(Error::Invalid)?;
-    let spec = json!({"as": As::of(ctx.identity), "sql": req.sql, "limit": limit, "tables": tables, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
+    let spec = json!({"as": As::of(ctx.identity), "sql": statement, "limit": limit, "tables": tables, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
     let run = new_run(ctx, "sql", &req.sql, &target, &spec);
     queue(app, ctx, &run, "sql.submit").await?;
     Ok(run)
@@ -752,6 +764,14 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
             }
         };
         iam::require(app, ctx.identity, org, ctx.sides, need, &target).await?;
+        if entry.kind == Kind::Table
+            && catalogs::is_restricted(app, ctx.identity, org, ctx.sides, &entry.id).await?
+        {
+            return Err(Error::Invalid(format!(
+                "{} has row or column rules, so it can only be read with SQL, not in a job",
+                entry.name
+            )));
+        }
         if entry.classification == "sealed" {
             return Err(Error::Invalid(
                 "sealed data cannot be used by compute".into(),

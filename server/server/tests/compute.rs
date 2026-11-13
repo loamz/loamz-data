@@ -1757,3 +1757,161 @@ async fn serverless_compute_is_started_and_stopped_by_admins_and_a_machine_is_no
     assert_eq!(power(&ws, &machine, "stop", bob()).await.status, 403);
 }
 both!(serverless_compute_is_started_and_stopped_by_admins_and_a_machine_is_not);
+
+// ---- row filters and column masks ---------------------------------------------------------------------------------
+
+async fn rules_apply_to_everyone_who_does_not_manage_the_table(s: Server) {
+    let l = lab(&s).await;
+    let (secret, _) = attach(&s).await;
+    s.assign(&l.ws, &[&bob(), &cy()]).await;
+    for who in ["user:bob", "user:cy"] {
+        s.put(
+            &format!("/api/v1/workspaces/{}/entitlements", l.ws),
+            &ana(),
+            json!({"principal": who, "entitlement": "sql-access"}),
+        )
+        .await;
+    }
+    s.grant(&l.ws, &ana(), &l.orders, "user:bob", "reader")
+        .await;
+    s.grant(&l.ws, &ana(), &l.orders, "user:cy", "reader").await;
+    let policy = format!("/api/v1/workspaces/{}/securables/{}/policy", l.ws, l.orders);
+    let rules = json!({
+        "row_filter": "region = 'EU' AND (owner = current_principal() OR in_group('finance'))",
+        "masks": {"email": "md5(email)"},
+    });
+
+    // Only whoever manages a table writes or reads its rules; a reader is told it is not there to change.
+    assert_eq!(s.put(&policy, &bob(), rules.clone()).await.status, 403);
+    assert_eq!(s.get(&policy, &bob()).await.status, 403);
+    // A rule that could read another table, or run anything, is refused whole.
+    for bad in [
+        json!({"row_filter": "id IN (SELECT id FROM sales.raw.secrets)"}),
+        json!({"row_filter": "read_text('/etc/passwd') = ''"}),
+        json!({"masks": {"email": "(SELECT 1)"}}),
+        json!({"masks": {"em ail": "1"}}),
+    ] {
+        assert_eq!(
+            s.put(&policy, &ana(), bad.clone()).await.status,
+            400,
+            "{bad}"
+        );
+    }
+    assert_eq!(s.put(&policy, &ana(), rules.clone()).await.status, 204);
+    assert_eq!(
+        s.get(&policy, &ana()).await.json()["masks"]["email"],
+        "md5(email)"
+    );
+
+    let url = format!("/api/v1/workspaces/{}/sql/statements", l.ws);
+    let leased_sql = |who: Who| {
+        let (s, url, secret) = (&s, url.clone(), secret.clone());
+        async move {
+            let r = s
+                .post(
+                    &url,
+                    &who,
+                    json!({"sql": "SELECT * FROM sales.raw.orders AS o WHERE o.id > 1", "wait_s": 0}),
+                )
+                .await;
+            assert_eq!(r.status, 202, "{}", r.text());
+            let lease = agent(s, "POST", "/api/v1/agent/lease", &secret, None)
+                .await
+                .json();
+            let id = lease["run"]["id"].as_str().unwrap().to_owned();
+            agent(
+                s,
+                "POST",
+                &format!("/api/v1/agent/runs/{id}/complete"),
+                &secret,
+                Some(json!({"state": "succeeded", "exit_code": 0, "result": "{}"})),
+            )
+            .await;
+            lease["run"]["spec"]["sql"]
+                .as_str()
+                .unwrap_or_else(|| panic!("no sql in {lease}"))
+                .to_owned()
+        }
+    };
+
+    // The owner reads the table whole.
+    assert_eq!(
+        leased_sql(ana()).await,
+        "SELECT * FROM sales.raw.orders AS o WHERE o.id > 1"
+    );
+    // A reader reads it through the rules, worked out for them: their name and groups are values by now.
+    let bobs = leased_sql(bob()).await;
+    assert!(bobs.contains("md5(email)"), "{bobs}");
+    assert!(
+        bobs.contains("owner = 'user:bob' OR false"),
+        "bob is not in finance: {bobs}"
+    );
+    assert!(bobs.contains("AS o"), "his own alias is kept: {bobs}");
+    // Someone in the group sees what the group sees.
+    let finance = leased_sql(cy().in_group("finance")).await;
+    assert!(finance.contains("owner = 'user:cy' OR true"), "{finance}");
+
+    // The raw files are not handed to someone the rules apply to: not in a job, not to an Iceberg client, and not as ranges.
+    let job = json!({"script": "print(1)", "inputs": [l.orders], "output": l.out, "memory_mb": 512, "timeout_s": 30});
+    s.grant(&l.ws, &ana(), &l.out, "user:bob", "contributor")
+        .await;
+    s.put(
+        &format!("/api/v1/workspaces/{}/entitlements", l.ws),
+        &ana(),
+        json!({"principal": "user:bob", "entitlement": "compute-create"}),
+    )
+    .await;
+    let r = s
+        .post(
+            &format!("/api/v1/workspaces/{}/runs", l.ws),
+            &bob(),
+            job.clone(),
+        )
+        .await;
+    assert_eq!(r.status, 400, "{}", r.text());
+    assert!(
+        r.json()["detail"]
+            .as_str()
+            .unwrap()
+            .contains("row or column rules")
+    );
+    assert_eq!(
+        s.post(&format!("/api/v1/workspaces/{}/runs", l.ws), &ana(), job)
+            .await
+            .status,
+        202,
+        "the owner's job is not held to them"
+    );
+    // Let that job go, so the queue is empty for what follows.
+    let queued = agent(&s, "POST", "/api/v1/agent/lease", &secret, None)
+        .await
+        .json();
+    let queued = queued["run"]["id"].as_str().unwrap();
+    agent(
+        &s,
+        "POST",
+        &format!("/api/v1/agent/runs/{queued}/complete"),
+        &secret,
+        Some(json!({"state": "succeeded", "exit_code": 0})),
+    )
+    .await;
+    let load = format!(
+        "/api/v1/workspaces/{}/iceberg/v1/sales/namespaces/raw/tables/orders",
+        l.ws
+    );
+    assert_eq!(s.get(&load, &bob()).await.status, 400);
+    assert_eq!(s.get(&load, &ana()).await.status, 200);
+
+    // Taking the rules away restores plain reads, and the change is on record.
+    assert_eq!(s.put(&policy, &ana(), json!({})).await.status, 204);
+    assert_eq!(
+        leased_sql(bob()).await,
+        "SELECT * FROM sales.raw.orders AS o WHERE o.id > 1"
+    );
+    let trail = items(
+        &s.get(&format!("/api/v1/orgs/{ACME}/audit?limit=500"), &ana())
+            .await,
+    );
+    assert!(trail.iter().any(|e| e["action"] == "table.policy.set"));
+}
+both!(rules_apply_to_everyone_who_does_not_manage_the_table);

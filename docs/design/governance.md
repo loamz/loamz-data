@@ -99,7 +99,7 @@ audited too.
 - ~~Service principals in the workspace~~ — built (0002 task 4): `workspaces/principals.rs`, token `lsp_…` (hash kept), confined to its workspace. One `Principal` type for members, groups and service principals is not done: grants still name them as `user:`, `group:`, `sp:` strings.
 - **Grants on compute and storage**: who can use which compute; `READ FILES`, `WRITE FILES`, `CREATE EXTERNAL LOCATION`,
   `CREATE MANAGED STORAGE` (0002 tasks 4, 5).
-- **Policies**: row filters and column masks, applied when a statement is planned.
+- ~~Policies~~ — built: row filters and column masks, see section 7.
 - ~~Catalogs owned by one workspace~~ — built (0002 task 4): `securables.workspace_id`, migration `0005`; a workspace that owns catalogs cannot be deleted.
 
 ## 6. Isolation attacks
@@ -128,3 +128,34 @@ the caller's scope and a conflicting location do not enter that permission gate.
 | Name a compute target excluded by catalog policy | `a_catalog_policy_hides_a_named_disallowed_target` | 404; no run is queued |
 | Change policy after queueing but before lease | `a_queued_run_is_rechecked_against_the_catalog_policy` | no token is issued; run fails closed |
 | Overlap another workspace's storage prefix | `overlapping_locations_are_hidden_and_not_created` | 404; no overlapping location is created; a sibling prefix works |
+
+## 7. Row filters and column masks
+
+A table can carry rules written by whoever manages it: a **row filter** (only rows where it is true are visible) and **masks** (an
+expression shown in place of a column). Saved with `PUT /workspaces/{ws}/securables/{id}/policy`, `MANAGE` on the table, audited as
+`table.policy.set`.
+
+```mermaid
+flowchart LR
+  S["SQL statement"] --> P["parse: one plain query,<br/>tables by full name"]
+  P --> A["authorize every table (SELECT)"]
+  A --> R{"rules on a table,<br/>and the person<br/>does not manage it?"}
+  R -- no --> Q["queue as written"]
+  R -- yes --> W["rewrite: the table becomes<br/>(SELECT * REPLACE masks FROM t WHERE filter)<br/>AS its own name"]
+  W --> Q
+  Q --> C["any compute: machine, serverless, warm worker"]
+```
+
+- **A rule is a small expression.** It may use the table's columns, values, comparisons, a short list of plain functions
+  (`lower`, `md5`, `concat`, `right`, `regexp_replace`, `coalesce` and a few more), `current_principal()` (the person's name, as in
+  grants) and `in_group('name')`. Sub-queries, other table functions and window clauses are refused when the rule is saved. The two
+  words about the person are replaced by values when the statement is queued, so compute never sees a function that asks "who".
+- **The rewrite is on the server, once.** It is done after authorization and before queuing, so every kind of compute applies the
+  rules without knowing about them. The rules apply before anything the person wrote: to `*`, joins, sub-queries and `WITH` alike.
+- **Whoever manages the table sees it whole.** Everyone else reads it only through SQL on Loamz compute. A job (which reads raw
+  files), an Iceberg client (which would be given credentials to them) and column value ranges are refused for them with a clear
+  message, because each would go round the rules.
+- **Limits, stated plainly.** Masks hide values, not their existence: a person can still count rows that pass the filter and can
+  compare a masked column in a `WHERE` of their own only against the masked value. A person who manages the table can read it
+  whole. Rules are not applied to views yet.
+

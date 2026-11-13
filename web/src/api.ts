@@ -189,6 +189,9 @@ export const deleteStorageCredential = (ws: string, id: string) => none(send("DE
 export const storageLocations = async (ws: string) => (await json<{ items: StorageLocation[] }>(send("GET", `${S(ws)}/locations`))).items;
 export const createStorageLocation = (ws: string, body: Omit<StorageLocation, "id">) => json<StorageLocation>(send("POST", `${S(ws)}/locations`, body));
 export const deleteStorageLocation = (ws: string, id: string) => none(send("DELETE", `${S(ws)}/locations/${enc(id)}`));
+export type TableRules = { row_filter: string; masks: Record<string, string> };
+export const tableRules = (ws: string, id: string) => json<TableRules>(send("GET", `${W(ws)}/securables/${enc(id)}/policy`));
+export const setTableRules = (ws: string, id: string, rules: TableRules) => none(send("PUT", `${W(ws)}/securables/${enc(id)}/policy`, rules));
 export const catalogCompute = async (ws: string, catalog: string) => (await json<{ compute: string[] }>(send("GET", `${W(ws)}/catalogs/${enc(catalog)}/compute`))).compute;
 export const setCatalogCompute = (ws: string, catalog: string, compute: string[]) => none(send("PUT", `${W(ws)}/catalogs/${enc(catalog)}/compute`, { compute }));
 export const workspace = (ws: string) => json<Workspace>(send("GET", W(ws)));

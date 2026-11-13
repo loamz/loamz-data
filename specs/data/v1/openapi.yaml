@@ -671,6 +671,55 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/Owner'
+  /api/v1/workspaces/{ws}/securables/{id}/policy:
+    get:
+      summary: The row filter and column masks of a table (empty when it has none). Needs MANAGE.
+      parameters:
+      - *id002
+      - *id004
+      responses:
+        '200':
+          description: "{row_filter, masks}"
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+    put:
+      summary: >-
+        Set the rules of a table, replacing any before them; an empty body removes them. `row_filter` keeps only the rows where it is
+        true; `masks` shows an expression in place of a column. A rule may use columns, values, a few plain functions,
+        `current_principal()` and `in_group('name')`; anything else is refused. Whoever manages the table sees it whole; everyone
+        else reads it only through SQL on Loamz compute, where the rules are applied (a job or an Iceberg client is refused).
+        Needs MANAGE.
+      parameters:
+      - *id002
+      - *id004
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                row_filter:
+                  type: string
+                masks:
+                  type: object
+                  additionalProperties:
+                    type: string
+      responses:
+        '204':
+          description: Done
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
   /api/v1/workspaces/{ws}/securables/{id}/grants:
     get:
       summary: Who holds what directly here. Needs MANAGE.

@@ -6,6 +6,7 @@ import { go } from "@/route";
 import { openInEditor } from "@/sqlTabs";
 import { AccessList } from "@/components/AccessList";
 import { CatalogCompute } from "@/components/CatalogCompute";
+import { TableRules } from "@/components/TableRules";
 import { FilesTab } from "@/components/FilesTab";
 import { SampleData, TableHistory, TableOverview } from "@/components/TableTab";
 import { NewDialog } from "@/components/NewDialog";
@@ -304,6 +305,7 @@ function Detail({ ws, item, children, load, onOpen, onNew, onDropped, onChanged 
           {isTable && <TabsTrigger value="details">Details</TabsTrigger>}
           <TabsTrigger value="access">Permissions</TabsTrigger>
           {item.kind === "catalog" && <TabsTrigger value="compute">Compute</TabsTrigger>}
+          {isTable && <TabsTrigger value="rules">Rules</TabsTrigger>}
           {isTable && <TabsTrigger value="history">History</TabsTrigger>}
         </TabsList>
         {isVolume && (
@@ -339,6 +341,11 @@ function Detail({ ws, item, children, load, onOpen, onNew, onDropped, onChanged 
         {item.kind === "catalog" && (
           <TabsContent value="compute">
             <CatalogCompute ws={ws} id={item.id} />
+          </TabsContent>
+        )}
+        {isTable && (
+          <TabsContent value="rules">
+            <TableRules ws={ws} id={item.id} />
           </TabsContent>
         )}
         {isTable && (

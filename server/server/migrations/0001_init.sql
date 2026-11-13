@@ -241,3 +241,14 @@ CREATE TABLE storage_locations (
     UNIQUE (workspace_id, name)
 );
 CREATE INDEX storage_locations_credential ON storage_locations (credential_id);
+
+-- Rules for a table: the rows a person may see and the columns shown masked. `masks` is a JSON object of column to expression. A
+-- person who manages the table sees it whole; everyone else reads it only through SQL on Loamz compute, where the rules are applied.
+CREATE TABLE table_policies (
+    table_id   TEXT PRIMARY KEY,
+    org_id     TEXT NOT NULL,
+    row_filter TEXT NOT NULL,
+    masks      TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    updated_ms BIGINT NOT NULL
+);
