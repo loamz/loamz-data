@@ -1724,11 +1724,12 @@ paths:
                 properties:
                   run:
                     type: object
-                    required: [id, kind, org_id, workspace_id, spec]
+                    required: [id, kind, org_id, target_id, workspace_id, spec]
                     properties:
                       id: {type: string}
                       kind: {type: string}
                       org_id: {type: string}
+                      target_id: {type: string}
                       workspace_id: {type: string}
                       spec: {type: object}
                   token: {type: string}

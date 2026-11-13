@@ -1,0 +1,15 @@
+[package]
+name = "loamz-worker"
+description = "Isolated DuckDB execution for Loamz Data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+duckdb = { version = "=1.20000.1", features = ["bundled", "parquet"] }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+serde_json = "1"
+
+[lints]
+workspace = true

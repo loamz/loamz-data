@@ -40,11 +40,12 @@ pub struct RunInfo {
     pub id: String,
     pub kind: String,
     pub org_id: String,
+    pub target_id: String,
     pub workspace_id: String,
     pub spec: Value,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 pub struct Limits {
     pub memory_mb: u64,
     pub cpu_millis: u64,
@@ -52,7 +53,7 @@ pub struct Limits {
 }
 
 /// How a run ended, as the Data server wants to hear it.
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Report {
     pub state: String,
     pub exit_code: i64,
@@ -63,7 +64,7 @@ pub struct Report {
 }
 
 impl Report {
-    fn failed(error: impl Into<String>) -> Self {
+    pub(crate) fn failed(error: impl Into<String>) -> Self {
         Self {
             state: "failed".into(),
             exit_code: -1,
@@ -674,11 +675,12 @@ mod tests {
 
     #[test]
     fn a_lease_is_read_as_the_server_writes_it() {
-        let lease: Lease = serde_json::from_str(r#"{"run":{"id":"r","kind":"sql","org_id":"o","workspace_id":"w","spec":{"sql":"select 1"}},"token":"jt_x","limits":{"memory_mb":512,"cpu_millis":1000,"timeout_s":30}}"#).unwrap();
+        let lease: Lease = serde_json::from_str(r#"{"run":{"id":"r","kind":"sql","org_id":"o","target_id":"target","workspace_id":"w","spec":{"sql":"select 1"}},"token":"jt_x","limits":{"memory_mb":512,"cpu_millis":1000,"timeout_s":30}}"#).unwrap();
         assert_eq!(
             (lease.run.kind.as_str(), lease.limits.timeout_s),
             ("sql", 30)
         );
         assert_eq!(lease.run.org_id, "o");
+        assert_eq!(lease.run.target_id, "target");
     }
 }
