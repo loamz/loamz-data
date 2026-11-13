@@ -17,7 +17,7 @@ import { chromium } from "playwright";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "../..");
-const accountsFile = path.join(ROOT, ".dev", "accounts.json");
+const accountsFile = process.env.LOAMZ_DEV_ACCOUNTS || (fs.existsSync(path.join(ROOT, ".dev", "accounts.json")) ? path.join(ROOT, ".dev", "accounts.json") : path.resolve(ROOT, "../loamz-data/.dev/accounts.json"));
 
 if (!fs.existsSync(accountsFile)) {
   console.error("Missing .dev/accounts.json. Run deploy/dev/seed.py first.");
