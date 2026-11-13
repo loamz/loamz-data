@@ -59,6 +59,7 @@ where
         else {
             return crate::work::Report::failed("could not start the SQL sandbox");
         };
+        let began = std::time::Instant::now();
         if let Some(broker) = &worker.broker {
             if broker
                 .authorize(lease.storage.as_ref(), &lease.run.spec)
@@ -103,10 +104,17 @@ where
             }
             serde_json::from_slice::<crate::work::Report>(&response).map_err(|_| ())
         };
+        let authorized = began.elapsed();
         let outcome = tokio::select! {
             result = tokio::time::timeout(Duration::from_secs(lease.limits.timeout_s), work) => result.map_err(|_| "the SQL run timed out"),
             () = stop => Err("the SQL run was cancelled"),
         };
+        tracing::info!(
+            run = lease.run.id,
+            authorize_ms = authorized.as_millis() as u64,
+            worker_ms = (began.elapsed() - authorized).as_millis() as u64,
+            "warm statement"
+        );
         if let Some(broker) = &worker.broker {
             broker.clear().await;
         }

@@ -59,7 +59,9 @@ fn run(request: &Value, proxy_port: u16) -> Result<Value, String> {
     }
     let allowed: Vec<_> = inputs.iter().map(|(_, uri, _)| format!("{uri}/")).collect();
     let started = std::time::Instant::now();
+    let mut steps: Vec<(&str, u64)> = Vec::new();
     let engine = loamz_worker::Engine::start_for_run(&allowed, |conn| {
+        steps.push(("open", started.elapsed().as_millis() as u64));
         let memory = request["limits"]["memory_mb"].as_u64().unwrap_or(0);
         let cpu = request["limits"]["cpu_millis"].as_u64().unwrap_or(0);
         if !(64..=8192).contains(&memory) || !(1..=8000).contains(&cpu) {
@@ -69,6 +71,7 @@ fn run(request: &Value, proxy_port: u16) -> Result<Value, String> {
         conn.execute_batch(&format!("SET threads = {threads}; SET memory_limit = '{}MB'", memory * 7 / 10))?;
         if !inputs.is_empty() {
             conn.execute_batch("SET extension_directory = '/opt/duckdb-extensions'; LOAD httpfs; LOAD iceberg")?;
+            steps.push(("extensions", started.elapsed().as_millis() as u64));
             let endpoint = format!("127.0.0.1:{proxy_port}");
             let field = |key| text(storage, key).map_err(|e| duckdb::Error::InvalidParameterName(e.into()));
             // CREATE SECRET cannot take parameters, so the values are written as quoted text.
@@ -77,6 +80,7 @@ fn run(request: &Value, proxy_port: u16) -> Result<Value, String> {
                 literal(field("key_id")?), literal(field("secret")?), literal(field("session_token")?), literal(&endpoint)
             );
             conn.execute_batch(&sql)?;
+            steps.push(("secret", started.elapsed().as_millis() as u64));
             let mut catalogs = std::collections::HashSet::new();
             let mut schemas = std::collections::HashSet::new();
             for (parts, uri, version) in &inputs {
@@ -95,7 +99,8 @@ fn run(request: &Value, proxy_port: u16) -> Result<Value, String> {
         )
     })?;
     // Where the time went, in milliseconds: getting the tables ready, then running the statement.
-    answer["stats"] = json!({"prepare_ms": prepared.as_millis() as u64, "run_ms": (started.elapsed() - prepared).as_millis() as u64});
+    // Times are milliseconds since the statement began: opening the engine, loading extensions, the secret, and (prepare_ms) the views.
+    answer["stats"] = json!({"prepare_ms": prepared.as_millis() as u64, "run_ms": (started.elapsed() - prepared).as_millis() as u64, "steps": steps});
     Ok(answer)
 }
 

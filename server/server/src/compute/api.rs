@@ -423,6 +423,10 @@ async fn lease(
     let deadline =
         tokio::time::Instant::now() + Duration::from_secs(p.wait_s.unwrap_or(20).min(25));
     loop {
+        // Ask to be woken before looking, so work queued between the look and the wait is not missed.
+        let queued = app.queued.notified();
+        tokio::pin!(queued);
+        queued.as_mut().enable();
         if let Some(l) = service::lease(&app, &target).await? {
             let mut spec = json_of(&l.run.spec);
             if let Some(o) = spec.as_object_mut() {
@@ -439,7 +443,11 @@ async fn lease(
         if tokio::time::Instant::now() >= deadline {
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
-        tokio::time::sleep(Duration::from_millis(400)).await;
+        // New work wakes this at once; the short sleep is only a safety net (a lease that frees up, a missed wake).
+        tokio::select! {
+            () = &mut queued => {}
+            () = tokio::time::sleep(Duration::from_millis(400)) => {}
+        }
     }
 }
 
