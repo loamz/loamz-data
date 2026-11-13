@@ -19,6 +19,7 @@ use crate::{
         new_id, now_ms,
         state::App,
     },
+    storage::locations::service as locations,
 };
 
 const MAX_DEPTH: usize = 4;
@@ -150,14 +151,23 @@ pub async fn create(
             "a table is created with its columns, through the tables service".into(),
         ));
     }
+    if draft.location.is_some() && draft.kind != Kind::Catalog {
+        return Err(Error::Invalid(
+            "only a catalog is put on a storage location; what is inside it follows".into(),
+        ));
+    }
     let (id, metadata) = draft.table.unwrap_or_else(|| (new_id(), String::new()));
     // Where its bytes go: a catalog has its own root in its workspace's prefix, a schema shares its catalog's, and a table or volume
     // has a folder of its own under it.
     let root = parent_entry
         .as_ref()
         .map_or_else(String::new, |p| p.folder.clone());
+    let catalog_root = match &draft.location {
+        Some(name) => locations::managed_prefix(app, identity, workspace, name).await?,
+        None => workspace.to_owned(),
+    };
     let folder = match draft.kind {
-        Kind::Catalog => join_folder(workspace, &id),
+        Kind::Catalog => join_folder(&catalog_root, &id),
         Kind::Schema => root,
         Kind::Table | Kind::Volume => join_folder(&root, &id),
         Kind::View => String::new(),

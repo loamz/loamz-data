@@ -1963,6 +1963,9 @@ components:
           - transaction
           - snapshot
           description: A volume can only promise snapshot.
+        location:
+          type: string
+          description: A catalog only. The name of one of the workspace's storage locations (in the installation's own bucket) to keep its data in. Leave empty for the workspace's default storage. Workspace admins only.
     Owner:
       type: object
       required:

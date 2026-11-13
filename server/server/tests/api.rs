@@ -1324,6 +1324,98 @@ async fn storage_is_set_per_workspace(s: Server) {
 }
 both!(storage_is_set_per_workspace);
 
+async fn a_catalog_keeps_its_data_where_its_location_says(s: Server) {
+    let ws = s.acme().await;
+    s.assign(&ws, &[&bob()]).await;
+    let base = format!("/api/v1/workspaces/{ws}/storage");
+    let cred = s
+        .post(
+            &format!("{base}/credentials"),
+            &ana(),
+            json!({"name": "rustfs", "endpoint": "http://127.0.0.1:9000", "key_id_ref": "loamz-data/bucket#key_id",
+                   "secret_ref": "loamz-data/bucket#secret", "vending": {"kind": "sts"}}),
+        )
+        .await
+        .json()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let made = s
+        .post(
+            &format!("{base}/locations"),
+            &ana(),
+            json!({"name": "lake", "credential_id": cred, "bucket": "loamz-data", "prefix": "acme/lake"}),
+        )
+        .await;
+    assert_eq!(made.status, 201, "{}", made.text());
+    let location = made.json()["id"].as_str().unwrap().to_owned();
+    let folder = |id: String| {
+        let s = &s;
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT folder FROM securables WHERE id = $1")
+                .bind(id)
+                .fetch_one(s.app.db.pool())
+                .await
+                .unwrap()
+        }
+    };
+    let url = format!("/api/v1/workspaces/{ws}/securables");
+
+    // Without a location a catalog is in its workspace's default storage; with one, in the location's folder, and what is inside follows.
+    let plain = s
+        .post(&url, &ana(), json!({"kind": "catalog", "name": "plain"}))
+        .await;
+    let plain = plain.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(folder(plain.clone()).await, format!("{ws}/{plain}"));
+    let on = s
+        .post(
+            &url,
+            &ana(),
+            json!({"kind": "catalog", "name": "sales", "location": "lake"}),
+        )
+        .await;
+    assert_eq!(on.status, 201, "{}", on.text());
+    let on = on.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(folder(on.clone()).await, format!("acme/lake/{on}"));
+    let schema = s.make(&ws, &ana(), "schema", &on, "raw").await;
+    let table = s.make(&ws, &ana(), "table", &schema, "orders").await;
+    assert_eq!(folder(schema).await, format!("acme/lake/{on}"));
+    assert!(folder(table).await.starts_with(&format!("acme/lake/{on}/")));
+
+    // Only a catalog is put on a location, only the workspace's admins may, and only one that exists.
+    let parent = json!({"kind": "schema", "parent_id": on, "name": "x", "location": "lake"});
+    assert_eq!(s.post(&url, &ana(), parent).await.status, 400);
+    assert_eq!(
+        s.post(
+            &url,
+            &ana(),
+            json!({"kind": "catalog", "name": "lost", "location": "nowhere"})
+        )
+        .await
+        .status,
+        404
+    );
+    assert_eq!(
+        s.post(
+            &url,
+            &bob(),
+            json!({"kind": "catalog", "name": "mine", "location": "lake"})
+        )
+        .await
+        .status,
+        404,
+        "someone who may not even create a catalog is told there is nothing to create it in"
+    );
+
+    // A location that holds a catalog cannot be removed until the catalog is gone.
+    let del = format!("{base}/locations/{location}");
+    assert_eq!(s.delete(&del, &ana()).await.status, 409);
+    assert_eq!(s.delete(&format!("{url}/{on}"), &ana()).await.status, 202);
+    s.work().await;
+    assert_eq!(s.delete(&del, &ana()).await.status, 204);
+}
+both!(a_catalog_keeps_its_data_where_its_location_says);
+
 async fn organizations_are_separate(s: Server) {
     let ws = s.acme().await;
     let (c, _, v) = tree(&s, &ws).await;

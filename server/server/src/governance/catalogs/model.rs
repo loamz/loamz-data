@@ -87,6 +87,8 @@ pub struct Draft {
     pub classification: String,
     pub placement: String,
     pub consistency: String,
+    /// A catalog only: the name of a registered storage location to keep its data in (none: the workspace's default storage).
+    pub location: Option<String>,
     /// A table is born with its first Iceberg metadata file already written under this id: `(id, path of the file)`.
     pub table: Option<(String, String)>,
 }
@@ -166,6 +168,7 @@ mod tests {
 
     fn draft(kind: Kind) -> Draft {
         Draft {
+            location: None,
             kind,
             parent_id: if kind == Kind::Catalog {
                 String::new()

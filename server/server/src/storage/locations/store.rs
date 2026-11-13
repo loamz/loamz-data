@@ -234,3 +234,74 @@ pub async fn delete_location(
             .rows_affected(),
     )
 }
+
+/// Whether `id` is some workspace other than `except`: its folder in the server's own bucket is that workspace's default storage.
+pub async fn other_workspace<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    id: &str,
+    except: &str,
+) -> Result<bool> {
+    Ok(
+        sqlx::query("SELECT id FROM workspaces WHERE id = $1 AND id <> $2")
+            .bind(id)
+            .bind(except)
+            .fetch_optional(e)
+            .await?
+            .is_some(),
+    )
+}
+
+/// Whether a catalog of the workspace keeps its bytes under this prefix.
+pub async fn catalogs_under<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    workspace: &str,
+    prefix: &str,
+) -> Result<bool> {
+    let like = format!(
+        "{}/%",
+        prefix
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    );
+    Ok(sqlx::query(
+        "SELECT id FROM securables WHERE workspace_id = $1 AND kind = 'catalog' AND folder LIKE $2 ESCAPE '\\'",
+    )
+    .bind(workspace)
+    .bind(like)
+    .fetch_optional(e)
+    .await?
+    .is_some())
+}
+
+/// A location of the workspace, by name.
+pub async fn location_by_name<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    workspace: &str,
+    name: &str,
+) -> Result<Option<Location>> {
+    let row = sqlx::query(&format!(
+        "SELECT {LOCATION} FROM storage_locations WHERE workspace_id = $1 AND name = $2"
+    ))
+    .bind(workspace)
+    .bind(name)
+    .fetch_optional(e)
+    .await?;
+    row.as_ref().map(location).transpose()
+}
+
+/// A location of the workspace, by id.
+pub async fn location_by_id<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    workspace: &str,
+    id: &str,
+) -> Result<Option<Location>> {
+    let row = sqlx::query(&format!(
+        "SELECT {LOCATION} FROM storage_locations WHERE workspace_id = $1 AND id = $2"
+    ))
+    .bind(workspace)
+    .bind(id)
+    .fetch_optional(e)
+    .await?;
+    row.as_ref().map(location).transpose()
+}

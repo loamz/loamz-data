@@ -3,7 +3,7 @@
 Where the bytes live and how compute reaches them without holding a key. The system around it: [architecture](../architecture/overview.md).
 Code: `server/lake` (`objects.rs` the store, `grants.rs` credential vending, `files.rs` the folder store for tests).
 
-## 1. Model (credentials and locations built; roots, managed and external objects, default storage and storage grants planned: 0002 task 5)
+## 1. Model (credentials, locations and catalogs on a location built; external objects, a store per location and storage grants planned: 0002 task 5)
 
 ```mermaid
 flowchart LR
@@ -31,7 +31,14 @@ being deleted is locked.
 | `CREATE EXTERNAL TABLE`, `CREATE EXTERNAL VOLUME` | location | external objects in it |
 | `CREATE MANAGED STORAGE` | location | catalog roots in it |
 
-Each new workspace gets **default storage** on RustFS, so nothing has to be set up (0002 task 3).
+Each new workspace gets **default storage** on RustFS, so nothing has to be set up (0002 task 3): a catalog made without a location
+keeps its data in `<workspace id>/<catalog id>` of the installation's own bucket.
+
+**A catalog on a location** (built): a workspace admin creates the catalog with `location: <name>`, and its root becomes
+`<location folder>/<catalog id>`; schemas share it and tables and volumes get a folder under it. Today the server writes only to its own
+bucket, so a location must be in that bucket and must have a folder (it may not be the whole bucket, nor sit in another workspace's
+default folder); a location in some other store is refused for catalogs until a store per location is built (a customer's own bucket,
+after beta). A location that holds a catalog cannot be deleted. There is no extra column: where a catalog is follows from its `folder`.
 
 ## 2. Credential vending
 

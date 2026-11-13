@@ -143,6 +143,7 @@ pub async fn create_namespace(
         ask.org,
         ask.sides,
         Draft {
+            location: None,
             kind: Kind::Schema,
             parent_id: cat.id,
             name: name.to_owned(),
@@ -442,6 +443,7 @@ async fn create_in(app: &App, ask: &Ask<'_>, parent: Securable, new: NewTable) -
         ask.org,
         ask.sides,
         Draft {
+            location: None,
             kind: Kind::Table,
             parent_id: parent.id,
             name: new.name,
@@ -552,6 +554,7 @@ async fn commit_new(
         ask.org,
         ask.sides,
         Draft {
+            location: None,
             kind: Kind::Table,
             parent_id: parent.id,
             name: name.to_owned(),

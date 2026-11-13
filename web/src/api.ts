@@ -207,7 +207,7 @@ export const unentitle = (ws: string, principal: string, entitlement: string) =>
 // The catalog, in a workspace
 export const list = async (ws: string, parent = "") => (await json<{ items: Securable[] }>(send("GET", `${W(ws)}/securables?parent_id=${enc(parent)}`))).items;
 export const get = (ws: string, id: string) => json<Securable>(send("GET", `${W(ws)}/securables/${enc(id)}`));
-export const create = (ws: string, b: { kind: Kind; parent_id: string; name: string; classification?: string; consistency?: string }) => json<Securable>(send("POST", `${W(ws)}/securables`, b));
+export const create = (ws: string, b: { kind: Kind; parent_id: string; name: string; classification?: string; consistency?: string; location?: string }) => json<Securable>(send("POST", `${W(ws)}/securables`, b));
 export const drop = (ws: string, id: string) => json<{ task_id: string }>(send("DELETE", `${W(ws)}/securables/${enc(id)}`));
 export const transfer = (ws: string, id: string, owner: string) => none(send("PUT", `${W(ws)}/securables/${enc(id)}/owner`, { owner }));
 export const grants = async (ws: string, id: string) => (await json<{ items: Held[] }>(send("GET", `${W(ws)}/securables/${enc(id)}/grants`))).items;

@@ -37,6 +37,16 @@ async fn manage(
     Ok(w.org_id)
 }
 
+/// Whether a credential and bucket are the ones this server itself writes to. A folder store (tests only) accepts any.
+fn is_own_store(app: &App, endpoint: &str, bucket: &str) -> bool {
+    app.stores
+        .bucket_place()
+        .is_none_or(|(own_endpoint, own_bucket)| {
+            own_endpoint.trim_end_matches('/') == endpoint.trim_end_matches('/')
+                && own_bucket == bucket
+        })
+}
+
 /// What a person gives to make a credential.
 pub struct NewCredential {
     pub name: String,
@@ -204,6 +214,26 @@ pub async fn create_location(
         created_by: format!("user:{}", identity.subject),
         created_ms: now_ms(),
     };
+    // The server's own bucket also holds every workspace's default storage, one folder per workspace id: a location may not take
+    // the whole bucket, or sit in or over someone else's.
+    if app.stores.bucket_place().is_some()
+        && is_own_store(app, &credential.endpoint, &l.bucket)
+        && (l.prefix.is_empty()
+            || store::other_workspace(
+                app.db.pool(),
+                l.prefix.split('/').next().unwrap_or_default(),
+                workspace,
+            )
+            .await?)
+    {
+        return Err(if l.prefix.is_empty() {
+            Error::Invalid(
+                "this installation's own bucket is shared: give the location a folder".into(),
+            )
+        } else {
+            Error::NotFound("not found".into())
+        });
+    }
     let mut uow = Uow::begin(app).await?;
     if store::location_name_taken(&mut *uow.tx, workspace, &l.name).await? {
         return Err(Error::Conflict(format!("{} already exists here", l.name)));
@@ -245,6 +275,13 @@ pub async fn delete_location(
     id: &str,
 ) -> Result<()> {
     let org = manage(app, identity, workspace, "delete a storage location").await?;
+    if let Some(l) = store::location_by_id(app.db.pool(), workspace, id).await?
+        && store::catalogs_under(app.db.pool(), workspace, &l.prefix).await?
+    {
+        return Err(Error::Conflict(
+            "a catalog keeps its data in this location: remove the catalog first".into(),
+        ));
+    }
     let mut uow = Uow::begin(app).await?;
     if store::delete_location(&mut uow.tx, workspace, id).await? == 0 {
         return Err(Error::NotFound("not found".into()));
@@ -258,4 +295,41 @@ pub async fn delete_location(
     )
     .await?;
     uow.commit().await
+}
+
+/// Where a new catalog's bytes go when it is put on a registered location: the location's folder. The server can only write to its
+/// own store, so a location elsewhere cannot hold catalogs yet (a store per location is not built).
+///
+/// # Errors
+/// Not an admin of the workspace, no such location, or it is in a store this server does not write to.
+pub async fn managed_prefix(
+    app: &App,
+    identity: &Identity,
+    workspace: &str,
+    name: &str,
+) -> Result<String> {
+    manage(
+        app,
+        identity,
+        workspace,
+        "put a catalog on a storage location",
+    )
+    .await?;
+    let l = store::location_by_name(app.db.pool(), workspace, name)
+        .await?
+        .ok_or_else(|| Error::NotFound("no such storage location in this workspace".into()))?;
+    let credential = store::get_credential(app.db.pool(), workspace, &l.credential_id)
+        .await?
+        .ok_or_else(|| Error::Internal("a location's credential is missing".into()))?;
+    if !is_own_store(app, &credential.endpoint, &l.bucket) {
+        return Err(Error::Invalid(
+            "this location is in a store this server does not write to yet: only a location in the installation's own bucket can hold a catalog".into(),
+        ));
+    }
+    if l.prefix.is_empty() {
+        return Err(Error::Invalid(
+            "a location that holds catalogs needs a folder".into(),
+        ));
+    }
+    Ok(l.prefix)
 }

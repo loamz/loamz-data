@@ -33,6 +33,9 @@ struct Create {
     placement: String,
     #[serde(default)]
     consistency: String,
+    /// A catalog only: the name of a storage location to keep its data in.
+    #[serde(default)]
+    location: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -77,6 +80,7 @@ async fn create(
         classification: req.classification,
         placement: req.placement,
         consistency: req.consistency,
+        location: req.location.filter(|l| !l.is_empty()),
         table: None,
     };
     let made =

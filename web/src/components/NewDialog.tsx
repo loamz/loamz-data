@@ -24,6 +24,9 @@ export function NewDialog({ ws, open, onOpenChange, parent, where, onCreated }: 
   const [name, setName] = useState("");
   const [classification, setClassification] = useState("normal");
   const [busy, setBusy] = useState(false);
+  // A catalog can be put on one of the workspace's storage locations. Only its admins can list them, so for anyone else there is none.
+  const [places, setPlaces] = useState<string[]>([]);
+  const [place, setPlace] = useState("");
   const [columns, setColumns] = useState<{ name: string; type: string }[]>(firstColumn());
   useEffect(() => {
     if (open) {
@@ -31,6 +34,8 @@ export function NewDialog({ ws, open, onOpenChange, parent, where, onCreated }: 
       setName("");
       setClassification("normal");
       setColumns(firstColumn());
+      setPlace("");
+      api.storageLocations(ws).then((l) => setPlaces(l.map((x) => x.name)), () => setPlaces([]));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, parent?.id]);
@@ -49,7 +54,7 @@ export function NewDialog({ ws, open, onOpenChange, parent, where, onCreated }: 
             if (!validName(name) || !columnsOk) return;
             setBusy(true);
             try {
-              const made = isTable ? await api.get(ws, (await api.createTable(ws, { parent_id: parent?.id ?? "", name, classification, columns })).id) : await api.create(ws, { kind, parent_id: parent?.id ?? "", name, classification });
+              const made = isTable ? await api.get(ws, (await api.createTable(ws, { parent_id: parent?.id ?? "", name, classification, columns })).id) : await api.create(ws, { kind, parent_id: parent?.id ?? "", name, classification, ...(kind === "catalog" && place ? { location: place } : {}) });
               onOpenChange(false);
               onCreated(made);
             } catch (err) {
@@ -87,6 +92,13 @@ export function NewDialog({ ws, open, onOpenChange, parent, where, onCreated }: 
               </Button>
               <span className="block text-2xs text-muted">Rows are added with SQL or any Iceberg client, such as DuckDB.</span>
             </div>
+          )}
+          {kind === "catalog" && places.length > 0 && (
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium text-foreground">Storage</span>
+              <Select aria-label="Storage" value={place || "default"} onValueChange={(v) => setPlace(v === "default" ? "" : v)} options={[{ value: "default", label: "Default storage" }, ...places.map((p) => ({ value: p, label: p }))]} />
+              <span className="block text-2xs text-muted">Where this catalog keeps its data. Everything inside it follows.</span>
+            </label>
           )}
           <label className="block space-y-1.5">
             <span className="text-xs font-medium text-foreground">Classification</span>
