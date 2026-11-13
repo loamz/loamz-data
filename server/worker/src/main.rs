@@ -1,7 +1,8 @@
-//! A long-lived sandbox process that creates a fresh `DuckDB` instance for every request.
+//! A long-lived sandbox process: one `DuckDB` for its whole life, one connection per request.
 
 use std::io::{self, BufRead, Write};
 
+use loamz_worker::{Access, Session, SessionKey, Table};
 use serde_json::{Value, json};
 
 mod proxy;
@@ -10,33 +11,36 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str, &'static str> {
     value[key].as_str().ok_or("the work request is incomplete")
 }
 
-fn quote(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
-}
-
 /// The first part of an engine's message: enough to say what went wrong, never a whole page.
-fn millis(d: std::time::Duration) -> u64 {
-    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
-}
-
 fn short(text: &str) -> String {
     text.chars().take(300).collect()
 }
 
-fn literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
+/// What one request asks for, checked.
+struct Request {
+    sql: String,
+    limit: usize,
+    tables: Vec<Table>,
+    access: Option<Access>,
+    key: SessionKey,
 }
 
-fn run(request: &Value, proxy_port: u16) -> Result<Value, String> {
+fn parse(request: &Value, proxy_port: u16) -> Result<Request, String> {
     let spec = &request["spec"];
-    let sql = text(spec, "sql")?;
-    let limit = spec["limit"].as_u64().unwrap_or(1000).min(1_000_000) as usize;
-    let tables = spec["tables"]
+    let sql = text(spec, "sql")?.to_owned();
+    let limit =
+        usize::try_from(spec["limit"].as_u64().unwrap_or(1000).min(1_000_000)).unwrap_or(1000);
+    let listed = spec["tables"]
         .as_array()
         .ok_or("the work request has no tables")?;
     let storage = &request["storage"];
-    let mut inputs = Vec::new();
-    for table in tables {
+    let memory_mb = request["limits"]["memory_mb"].as_u64().unwrap_or(0);
+    let cpu_millis = request["limits"]["cpu_millis"].as_u64().unwrap_or(0);
+    if !(64..=8192).contains(&memory_mb) || !(1..=8000).contains(&cpu_millis) {
+        return Err("invalid resource limits".into());
+    }
+    let mut tables = Vec::new();
+    for table in listed {
         let id = text(table, "id")?;
         let name = text(table, "name")?;
         let parts: Vec<_> = name.split('.').collect();
@@ -55,57 +59,85 @@ fn run(request: &Value, proxy_port: u16) -> Result<Value, String> {
         if !uri.starts_with(&format!("s3://{bucket}/")) {
             return Err("invalid table location".into());
         }
-        inputs.push((
-            parts.into_iter().map(str::to_owned).collect::<Vec<_>>(),
-            uri.trim_end_matches('/').to_owned(),
-            version.to_owned(),
-        ));
+        tables.push(Table {
+            catalog: parts[0].to_owned(),
+            schema: parts[1].to_owned(),
+            name: parts[2].to_owned(),
+            uri: uri.trim_end_matches('/').to_owned(),
+            version: version.to_owned(),
+        });
     }
-    let allowed: Vec<_> = inputs.iter().map(|(_, uri, _)| format!("{uri}/")).collect();
-    let started = std::time::Instant::now();
-    let mut steps: Vec<(&str, u64)> = Vec::new();
-    let engine = loamz_worker::Engine::start_for_run(&allowed, |conn| {
-        steps.push(("open", millis(started.elapsed())));
-        let memory = request["limits"]["memory_mb"].as_u64().unwrap_or(0);
-        let cpu = request["limits"]["cpu_millis"].as_u64().unwrap_or(0);
-        if !(64..=8192).contains(&memory) || !(1..=8000).contains(&cpu) {
-            return Err(duckdb::Error::InvalidParameterName("invalid resource limits".into()));
-        }
-        let threads = cpu.div_ceil(1000).max(1);
-        conn.execute_batch(&format!("SET threads = {threads}; SET memory_limit = '{}MB'; SET enable_http_metadata_cache = true", memory * 7 / 10))?;
-        if !inputs.is_empty() {
-            conn.execute_batch("SET extension_directory = '/opt/duckdb-extensions'; LOAD httpfs; LOAD iceberg")?;
-            steps.push(("extensions", millis(started.elapsed())));
-            let endpoint = format!("127.0.0.1:{proxy_port}");
-            let field = |key| text(storage, key).map_err(|e| duckdb::Error::InvalidParameterName(e.into()));
-            // CREATE SECRET cannot take parameters, so the values are written as quoted text.
-            let sql = format!(
-                "CREATE TEMP SECRET loamz_run (TYPE s3, KEY_ID {}, SECRET {}, SESSION_TOKEN {}, ENDPOINT {}, URL_STYLE 'path', REGION 'auto', USE_SSL false)",
-                literal(field("key_id")?), literal(field("secret")?), literal(field("session_token")?), literal(&endpoint)
-            );
-            conn.execute_batch(&sql)?;
-            steps.push(("secret", millis(started.elapsed())));
-            let mut catalogs = std::collections::HashSet::new();
-            let mut schemas = std::collections::HashSet::new();
-            for (parts, uri, version) in &inputs {
-                if catalogs.insert(parts[0].clone()) { conn.execute_batch(&format!("ATTACH ':memory:' AS {}", quote(&parts[0])))?; }
-                if schemas.insert((parts[0].clone(), parts[1].clone())) { conn.execute_batch(&format!("CREATE SCHEMA IF NOT EXISTS {}.{}", quote(&parts[0]), quote(&parts[1])))?; }
-                conn.execute_batch(&format!("CREATE VIEW {}.{}.{} AS SELECT * FROM iceberg_scan({}, version = {})", quote(&parts[0]), quote(&parts[1]), quote(&parts[2]), literal(uri), literal(version)))?;
+    let (access, bucket) = if tables.is_empty() {
+        (None, None)
+    } else {
+        let field = |key| text(storage, key).map(str::to_owned);
+        (
+            Some(Access {
+                key_id: field("key_id")?,
+                secret: field("secret")?,
+                session_token: field("session_token")?,
+                endpoint: format!("127.0.0.1:{proxy_port}"),
+            }),
+            Some(field("bucket")?),
+        )
+    };
+    Ok(Request {
+        sql,
+        limit,
+        tables,
+        access,
+        key: SessionKey {
+            bucket,
+            memory_mb,
+            cpu_millis,
+        },
+    })
+}
+
+/// Runs one request on the worker's session, starting a new session first if this request needs something the current one was not
+/// made for. `false` in the answer means the worker must stop after replying: something a statement made could not be removed.
+fn run(
+    request: &Value,
+    proxy_port: u16,
+    session: &mut Option<Session>,
+) -> (Result<Value, String>, bool) {
+    let req = match parse(request, proxy_port) {
+        Ok(r) => r,
+        Err(e) => return (Err(e), true),
+    };
+    let began = std::time::Instant::now();
+    if session.as_ref().is_none_or(|s| s.key() != &req.key) {
+        *session = None;
+        match Session::start(req.key.clone()) {
+            Ok(s) => *session = Some(s),
+            Err(e) => {
+                return (
+                    Err(format!(
+                        "the SQL sandbox could not start: {}",
+                        short(&e.to_string())
+                    )),
+                    true,
+                );
             }
         }
-        Ok(())
-    }).map_err(|e| format!("the SQL sandbox could not prepare the authorized tables: {}", short(&e.to_string())))?;
-    let prepared = started.elapsed();
-    let mut answer = engine.answer(sql, limit).map_err(|e| {
-        format!(
+    }
+    let started_ms = u64::try_from(began.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let Some(active) = session.as_ref() else {
+        return (Err("the SQL sandbox has no engine".into()), false);
+    };
+    let done = active.statement(&req.tables, req.access.as_ref(), &req.sql, req.limit);
+    let result = match done.result {
+        Ok(mut answer) => {
+            // Where the time went, in milliseconds: starting an engine (0 when one was reused), getting the tables ready, and the run.
+            answer["stats"] = json!({"start_ms": started_ms, "prepare_ms": done.prepare_ms, "run_ms": done.run_ms});
+            Ok(answer)
+        }
+        Err(e) => Err(format!(
             "the SQL statement could not be run: {}",
             short(&e.to_string())
-        )
-    })?;
-    // Where the time went, in milliseconds: getting the tables ready, then running the statement.
-    // Times are milliseconds since the statement began: opening the engine, loading extensions, the secret, and (prepare_ms) the views.
-    answer["stats"] = json!({"prepare_ms": millis(prepared), "run_ms": millis(started.elapsed().saturating_sub(prepared)), "steps": steps});
-    Ok(answer)
+        )),
+    };
+    (result, done.clean)
 }
 
 fn report(result: Result<Value, String>) -> Value {
@@ -123,13 +155,19 @@ fn main() -> io::Result<()> {
     let port = proxy::start("/inputs/broker/socket".into())?;
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();
+    let mut session: Option<Session> = None;
     for line in stdin.lock().lines() {
         let line = line?;
-        let result = serde_json::from_str::<Value>(&line)
-            .map_err(|_| "invalid work request".to_owned())
-            .and_then(|request| run(&request, port));
+        let (result, clean) = match serde_json::from_str::<Value>(&line) {
+            Ok(request) => run(&request, port, &mut session),
+            Err(_) => (Err("invalid work request".to_owned()), true),
+        };
         writeln!(stdout, "{}", report(result))?;
         stdout.flush()?;
+        if !clean {
+            // The next statement could see what this one left: stop, and the runner starts a fresh worker.
+            return Ok(());
+        }
     }
     Ok(())
 }
@@ -139,10 +177,56 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
 
+    fn ask(sql: &str, session: &mut Option<Session>) -> Value {
+        let request = json!({"spec":{"sql":sql, "limit":5, "tables":[]}, "limits":{"memory_mb":512, "cpu_millis":1000}});
+        let (result, clean) = run(&request, 0, session);
+        assert!(clean);
+        result.unwrap()
+    }
+
     #[test]
     fn answers_a_statement_without_tables() {
-        let request = json!({"spec":{"sql":"SELECT 42 AS value", "limit":5, "tables":[]}, "limits":{"memory_mb":512, "cpu_millis":1000}});
-        let result = run(&request, 0).unwrap();
-        assert_eq!(result["rows"], json!([[42]]));
+        let mut session = None;
+        assert_eq!(
+            ask("SELECT 42 AS value", &mut session)["rows"],
+            json!([[42]])
+        );
+    }
+
+    #[test]
+    fn one_engine_serves_many_statements_and_each_starts_clean() {
+        let mut session = None;
+        let first = ask("SELECT 1", &mut session);
+        assert!(first["stats"]["start_ms"].as_u64().is_some());
+        // The same session is reused: a temporary table made through the engine's own connection does not survive a statement.
+        let second = ask("SELECT 2", &mut session);
+        assert_eq!(second["rows"], json!([[2]]));
+        assert!(session.is_some());
+    }
+
+    #[test]
+    fn a_statement_cannot_read_host_files_or_change_the_lock() {
+        let mut session = None;
+        for sql in [
+            "SELECT * FROM read_csv('/etc/passwd')",
+            "SET lock_configuration = false",
+            "SET enable_external_access = true",
+        ] {
+            let request = json!({"spec":{"sql":sql, "limit":5, "tables":[]}, "limits":{"memory_mb":512, "cpu_millis":1000}});
+            let (result, _) = run(&request, 0, &mut session);
+            assert!(result.is_err(), "{sql}");
+        }
+        assert_eq!(ask("SELECT 7", &mut session)["rows"], json!([[7]]));
+    }
+
+    #[test]
+    fn different_limits_get_a_new_engine() {
+        let mut session = None;
+        ask("SELECT 1", &mut session);
+        let before = session.as_ref().unwrap().key().clone();
+        let request = json!({"spec":{"sql":"SELECT 1", "limit":5, "tables":[]}, "limits":{"memory_mb":1024, "cpu_millis":2000}});
+        let (result, _) = run(&request, 0, &mut session);
+        result.unwrap();
+        assert_ne!(session.as_ref().unwrap().key(), &before);
     }
 }

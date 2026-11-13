@@ -42,24 +42,26 @@ streamed until 0001 task 3). Add them when the change that needs them is made.
 
 ## After the warm worker (13 November 2026, evening)
 
-Same machine and data (11.2 million trips). The machine column is a SQL statement through the API, now run by one warm worker per
-organization and target inside gVisor, reading through the storage broker (kept-open connections, a cache of the files that never
-change). Seconds, best of three.
+Same machine and data (11.2 million trips). The machine column is a SQL statement through the API, run by one warm worker per
+organization and target inside gVisor, reading through the storage broker. Seconds, best of three; the first run is in brackets.
 
 | query | catalog warm | machine before | machine now | queued | worker prepares | worker runs |
 |---|--:|--:|--:|--:|--:|--:|
-| point | 0.12 | 1.98 | 0.79 | 2 ms | 315 ms | 355 ms |
-| filtered aggregate | 0.08 | 1.70 | 0.94 | 2 ms | 339 ms | 432 ms |
-| group by | 0.04 | 1.83 | 0.72 | 3 ms | 319 ms | 278 ms |
-| join | 0.07 | 1.85 | 0.84 | 3 ms | 340 ms | 376 ms |
-| full scan | 0.05 | 1.54 | 0.78 | 2 ms | 339 ms | 303 ms |
+| point | 0.13 | 1.98 | **0.28** (0.63) | 9 ms | 16 ms | 165 ms |
+| filtered aggregate | 0.11 | 1.70 | **0.22** (0.56) | 15 ms | 11 ms | 125 ms |
+| group by | 0.05 | 1.83 | **0.19** (0.22) | 12 ms | 9 ms | 81 ms |
+| join | 0.12 | 1.85 | **0.29** (0.45) | 12 ms | 15 ms | 210 ms |
+| full scan | 0.09 | 1.54 | **0.25** (0.31) | 14 ms | 11 ms | 130 ms |
 
-What changed: the wait to be leased fell from about 350 ms to 2 ms (the agent is woken when work is queued); the sandbox and the table
-download are gone (one worker is reused); and the files DuckDB reads again and again come from the broker's memory.
+The machine path is 5 to 9 times faster than the baseline and under the 0.5 s gate for every query, on WSL2, where gVisor can only use
+its slow `ptrace` mode. What changed, in order of effect:
+- **No sandbox start and no table download per statement:** one warm worker is reused (about 1.4 s).
+- **One DuckDB reused across statements:** extensions loaded once, each statement on its own connection with its temporary objects
+  removed afterwards (prepare fell from about 320 ms to 10 to 16 ms).
+- **The wait to be leased fell from about 350 ms to under 15 ms:** the agent and the waiting request are woken the moment work is
+  queued or a run ends, instead of polling.
+- **The storage broker keeps connections open and remembers files that never change** (Iceberg metadata, manifests, Parquet footers
+  and small files), so repeat reads come from memory.
 
-What is left, in order: **about 300 ms of every statement is the worker preparing**: opening a DuckDB instance (about 90 ms) and
-loading the `httpfs` and `iceberg` extensions (about 220 ms). Reusing one instance for many statements, with each statement's
-temporary objects removed afterwards, removes most of it. After that the query itself (280 to 430 ms) is the reads through the
-sandbox's network bridge under gVisor's `ptrace` mode, the only mode WSL2 allows; on a normal Linux host (KVM or `systrap`) syscalls are
-much cheaper, so the gate (under 0.5 s) is measured there. Not measured yet: bytes and requests, CPU, memory.
-
+The gap to reading the bucket directly (the "direct" and "catalog" columns) is now about 0.1 s: the run through the sandbox's network
+bridge. Not measured yet: bytes and requests, CPU, memory, a larger table, a customer's remote bucket (network time will dominate).

@@ -56,12 +56,19 @@ impl Engine {
 
     /// Execute a read-only statement and return bounded JSON rows.
     pub fn answer(&self, sql: &str, limit: usize) -> Result<Json> {
+        answer(&self.connection, sql, limit)
+    }
+}
+
+/// Execute a read-only statement on a connection and return bounded JSON rows.
+fn answer(connection: &Connection, sql: &str, limit: usize) -> Result<Json> {
+    {
         let sql = sql.trim().trim_end_matches(';');
         let query = format!(
             "SELECT * FROM ({sql}) AS loamz_result LIMIT {}",
             limit.saturating_add(1)
         );
-        let mut stmt = self.connection.prepare(&query)?;
+        let mut stmt = connection.prepare(&query)?;
         let mut cursor = stmt.query([])?;
         let statement = cursor.as_ref().ok_or(duckdb::Error::InvalidQuery)?;
         let names = statement.column_names();
@@ -89,6 +96,183 @@ impl Engine {
             rows.push(values);
         }
         Ok(json!({"columns": columns, "rows": rows, "truncated": truncated}))
+    }
+}
+
+/// What a session is started for: if the next statement needs something different, the worker starts a new one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionKey {
+    /// The one bucket its tables are in (none: a statement that reads no table).
+    pub bucket: Option<String>,
+    pub memory_mb: u64,
+    pub cpu_millis: u64,
+}
+
+/// A table a statement reads: its three-part name, where it is, and which metadata version to read.
+pub struct Table {
+    pub catalog: String,
+    pub schema: String,
+    pub name: String,
+    pub uri: String,
+    pub version: String,
+}
+
+/// How to reach storage for one statement: the broker's address inside the sandbox, and the lease's credentials.
+pub struct Access {
+    pub key_id: String,
+    pub secret: String,
+    pub session_token: String,
+    pub endpoint: String,
+}
+
+/// The outcome of one statement. `clean` is false when its temporary objects could not all be removed: the worker must then stop,
+/// because the next statement could see them.
+pub struct Done {
+    pub result: Result<Json>,
+    pub clean: bool,
+    pub prepare_ms: u64,
+    pub run_ms: u64,
+}
+
+/// One `DuckDB` kept for the life of the worker: its extensions are loaded once and it is locked down once. Every statement runs on its
+/// own connection with its own temporary objects (a secret, attached catalogs, views), all removed afterwards. The worker serves one
+/// organization and one statement at a time, and the storage broker, not `DuckDB`, decides which folders a statement may read.
+pub struct Session {
+    db: Connection,
+    key: SessionKey,
+}
+
+fn quote(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+fn literal(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "''"))
+}
+
+fn millis(d: std::time::Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
+
+impl Session {
+    #[must_use]
+    pub fn key(&self) -> &SessionKey {
+        &self.key
+    }
+
+    /// Opens the engine and locks it down for the bucket named in `key`.
+    ///
+    /// # Errors
+    /// The bucket name is not valid, or the engine could not be set up.
+    pub fn start(key: SessionKey) -> Result<Self> {
+        let db = Connection::open_in_memory()?;
+        let threads = key.cpu_millis.div_ceil(1000).max(1);
+        db.execute_batch(&format!(
+            "SET allow_persistent_secrets = false; SET threads = {threads}; SET memory_limit = '{}MB'; SET enable_http_metadata_cache = true",
+            key.memory_mb * 7 / 10
+        ))?;
+        let mut allowed = String::new();
+        if let Some(bucket) = &key.bucket {
+            let valid = !bucket.is_empty()
+                && bucket
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
+            if !valid {
+                return Err(duckdb::Error::InvalidParameterName("invalid bucket".into()));
+            }
+            db.execute_batch(
+                "SET extension_directory = '/opt/duckdb-extensions'; LOAD httpfs; LOAD iceberg",
+            )?;
+            allowed = literal(&format!("s3://{bucket}/"));
+        }
+        db.execute_batch(&format!(
+            "SET autoinstall_known_extensions = false; SET autoload_known_extensions = false; \
+             SET allowed_directories = [{allowed}]; SET enable_external_access = false; SET lock_configuration = true;"
+        ))?;
+        Ok(Self { db, key })
+    }
+
+    /// Runs one statement on a fresh connection, then removes everything it made.
+    pub fn statement(
+        &self,
+        tables: &[Table],
+        access: Option<&Access>,
+        sql: &str,
+        limit: usize,
+    ) -> Done {
+        let began = std::time::Instant::now();
+        let mut prepared = began.elapsed();
+        let mut undo: Vec<String> = Vec::new();
+        let conn = match self.db.try_clone() {
+            Ok(c) => c,
+            Err(e) => {
+                return Done {
+                    result: Err(e),
+                    clean: false,
+                    prepare_ms: 0,
+                    run_ms: 0,
+                };
+            }
+        };
+        let result = Self::prepare(&conn, tables, access, &mut undo).and_then(|()| {
+            prepared = began.elapsed();
+            answer(&conn, sql, limit)
+        });
+        let run = began.elapsed().saturating_sub(prepared);
+        // Always undo, last made first. A failure here means something may be left behind.
+        let clean = undo.iter().rev().all(|s| conn.execute_batch(s).is_ok());
+        Done {
+            result,
+            clean,
+            prepare_ms: millis(prepared),
+            run_ms: millis(run),
+        }
+    }
+
+    fn prepare(
+        conn: &Connection,
+        tables: &[Table],
+        access: Option<&Access>,
+        undo: &mut Vec<String>,
+    ) -> Result<()> {
+        if tables.is_empty() {
+            return Ok(());
+        }
+        let access = access
+            .ok_or_else(|| duckdb::Error::InvalidParameterName("no storage access".into()))?;
+        // CREATE SECRET cannot take parameters, so the values are written as quoted text.
+        conn.execute_batch(&format!(
+            "CREATE TEMP SECRET loamz_run (TYPE s3, KEY_ID {}, SECRET {}, SESSION_TOKEN {}, ENDPOINT {}, URL_STYLE 'path', REGION 'auto', USE_SSL false)",
+            literal(&access.key_id),
+            literal(&access.secret),
+            literal(&access.session_token),
+            literal(&access.endpoint)
+        ))?;
+        undo.push("DROP SECRET loamz_run".into());
+        let mut catalogs = std::collections::HashSet::new();
+        let mut schemas = std::collections::HashSet::new();
+        for t in tables {
+            if catalogs.insert(t.catalog.clone()) {
+                conn.execute_batch(&format!("ATTACH ':memory:' AS {}", quote(&t.catalog)))?;
+                undo.push(format!("DETACH {}", quote(&t.catalog)));
+            }
+            if schemas.insert((t.catalog.clone(), t.schema.clone())) {
+                conn.execute_batch(&format!(
+                    "CREATE SCHEMA IF NOT EXISTS {}.{}",
+                    quote(&t.catalog),
+                    quote(&t.schema)
+                ))?;
+            }
+            conn.execute_batch(&format!(
+                "CREATE VIEW {}.{}.{} AS SELECT * FROM iceberg_scan({}, version = {})",
+                quote(&t.catalog),
+                quote(&t.schema),
+                quote(&t.name),
+                literal(&t.uri),
+                literal(&t.version)
+            ))?;
+        }
+        Ok(())
     }
 }
 

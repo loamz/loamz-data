@@ -41,7 +41,7 @@ const SMALL_OBJECT: u64 = 16 << 20;
 const CACHE_BUDGET: usize = 384 << 20;
 /// A connection that sends nothing for this long is closed.
 const IDLE: Duration = Duration::from_secs(20);
-/// Open connections at once. DuckDB keeps one per open file and thread, and keeps them open, so this is far above one query's need.
+/// Open connections at once. `DuckDB` keeps one per open file and thread, and keeps them open, so this is far above one query's need.
 const MAX_CONNECTIONS: usize = 128;
 
 #[derive(Clone)]
