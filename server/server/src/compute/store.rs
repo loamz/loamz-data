@@ -3,7 +3,7 @@ use std::fmt::Write as _;
 use sqlx::{Any, Executor, Row};
 
 use super::model::{Run, RunFilter, Target};
-use crate::kernel::error::Result;
+use crate::kernel::error::{Error, Result};
 
 const TARGET: &str = "id, org_id, workspace_id, name, kind, endpoint, max_memory_mb, max_cpu_millis, created_by, created_ms, last_seen_ms";
 const RUN: &str = "id, org_id, workspace_id, kind, requested_by, on_behalf_of, target_id, state, title, spec, result, stdout, stderr, exit_code, error, cancel, lease_until, created_ms, started_ms, finished_ms";
@@ -369,6 +369,27 @@ pub async fn lease_one(
         .fetch_one(&mut *c)
         .await?;
     Ok(Some(run(&r)?))
+}
+
+/// Saves the SQL policy rewrite that the target is about to execute.
+pub async fn update_leased_spec(
+    e: impl Executor<'_, Database = Any>,
+    id: &str,
+    target: &str,
+    spec: &str,
+) -> Result<()> {
+    let updated = sqlx::query(
+        "UPDATE runs SET spec = $3 WHERE id = $1 AND target_id = $2 AND state = 'running'",
+    )
+    .bind(id)
+    .bind(target)
+    .bind(spec)
+    .execute(e)
+    .await?;
+    if updated.rows_affected() != 1 {
+        return Err(Error::Conflict("the run is no longer leased".into()));
+    }
+    Ok(())
 }
 
 /// Renews the lease of a run this target is working on; returns whether it should stop (it was cancelled).

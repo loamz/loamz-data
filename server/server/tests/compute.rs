@@ -1780,6 +1780,7 @@ async fn rules_apply_to_everyone_who_does_not_manage_the_table(s: Server) {
         "row_filter": "region = 'EU' AND (owner = current_principal() OR in_group('finance'))",
         "masks": {"email": "md5(email)"},
     });
+    s.directory.set_groups("cy", &["finance"]);
 
     // Only whoever manages a table writes or reads its rules; a reader is told it is not there to change.
     assert_eq!(s.put(&policy, &bob(), rules.clone()).await.status, 403);
@@ -1804,6 +1805,25 @@ async fn rules_apply_to_everyone_who_does_not_manage_the_table(s: Server) {
     );
 
     let url = format!("/api/v1/workspaces/{}/sql/statements", l.ws);
+    let file_read = s
+        .post(
+            &url,
+            &bob(),
+            json!({
+                "sql": format!(
+                    "SELECT read_blob('/inputs/tables/{}/metadata.json') FROM sales.raw.orders",
+                    l.orders
+                ),
+                "wait_s": 0
+            }),
+        )
+        .await;
+    assert_eq!(
+        file_read.status,
+        400,
+        "read_blob must not bypass the table's row and column rules: {}",
+        file_read.text()
+    );
     let leased_sql = |who: Who| {
         let (s, url, secret) = (&s, url.clone(), secret.clone());
         async move {
@@ -1850,6 +1870,36 @@ async fn rules_apply_to_everyone_who_does_not_manage_the_table(s: Server) {
     // Someone in the group sees what the group sees.
     let finance = leased_sql(cy().in_group("finance")).await;
     assert!(finance.contains("owner = 'user:cy' OR true"), "{finance}");
+
+    let queued = s
+        .post(
+            &url,
+            &cy().in_group("finance"),
+            json!({"sql": "SELECT * FROM sales.raw.orders", "wait_s": 0}),
+        )
+        .await;
+    assert_eq!(queued.status, 202, "{}", queued.text());
+    s.directory.set_groups("cy", &[]);
+    let lease = agent(&s, "POST", "/api/v1/agent/lease", &secret, None)
+        .await
+        .json();
+    assert!(
+        lease["run"]["spec"]["sql"]
+            .as_str()
+            .unwrap()
+            .contains("owner = 'user:cy' OR false"),
+        "queued SQL must use current groups: {}",
+        lease["run"]["spec"]["sql"]
+    );
+    let id = lease["run"]["id"].as_str().unwrap();
+    agent(
+        &s,
+        "POST",
+        &format!("/api/v1/agent/runs/{id}/complete"),
+        &secret,
+        Some(json!({"state": "succeeded", "exit_code": 0, "result": "{}"})),
+    )
+    .await;
 
     // The raw files are not handed to someone the rules apply to: not in a job, not to an Iceberg client, and not as ranges.
     let job = json!({"script": "print(1)", "inputs": [l.orders], "output": l.out, "memory_mb": 512, "timeout_s": 30});
@@ -1901,6 +1951,8 @@ async fn rules_apply_to_everyone_who_does_not_manage_the_table(s: Server) {
     );
     assert_eq!(s.get(&load, &bob()).await.status, 400);
     assert_eq!(s.get(&load, &ana()).await.status, 200);
+    let stats = format!("/api/v1/workspaces/{}/tables/{}/stats", l.ws, l.orders);
+    assert_eq!(s.get(&stats, &bob()).await.status, 400);
 
     // Taking the rules away restores plain reads, and the change is on record.
     assert_eq!(s.put(&policy, &ana(), json!({})).await.status, 204);
@@ -1915,3 +1967,108 @@ async fn rules_apply_to_everyone_who_does_not_manage_the_table(s: Server) {
     assert!(trail.iter().any(|e| e["action"] == "table.policy.set"));
 }
 both!(rules_apply_to_everyone_who_does_not_manage_the_table);
+
+async fn completed_sql_results_are_hidden_after_group_revocation(s: Server) {
+    let l = lab(&s).await;
+    let (secret, _) = attach(&s).await;
+    s.assign(&l.ws, &[&cy()]).await;
+    s.put(
+        &format!("/api/v1/workspaces/{}/entitlements", l.ws),
+        &ana(),
+        json!({"principal": "user:cy", "entitlement": "sql-access"}),
+    )
+    .await;
+    s.grant(&l.ws, &ana(), &l.orders, "user:cy", "reader").await;
+    s.directory.set_groups("cy", &["finance"]);
+    assert_eq!(
+        s.put(
+            &format!("/api/v1/workspaces/{}/securables/{}/policy", l.ws, l.orders),
+            &ana(),
+            json!({"row_filter": "in_group('finance')"}),
+        )
+        .await
+        .status,
+        204
+    );
+
+    let submitted = s
+        .post(
+            &format!("/api/v1/workspaces/{}/sql/statements", l.ws),
+            &cy().in_group("finance"),
+            json!({"sql": "SELECT * FROM sales.raw.orders", "wait_s": 0}),
+        )
+        .await;
+    assert_eq!(submitted.status, 202, "{}", submitted.text());
+    let id = submitted.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        agent(&s, "POST", "/api/v1/agent/lease?wait_s=0", &secret, None)
+            .await
+            .status,
+        200
+    );
+    let result =
+        json!({"columns": [{"name": "id", "type": "BIGINT"}], "rows": [[7]], "truncated": false})
+            .to_string();
+    assert_eq!(
+        agent(
+            &s,
+            "POST",
+            &format!("/api/v1/agent/runs/{id}/complete"),
+            &secret,
+            Some(json!({"state": "succeeded", "exit_code": 0, "result": result})),
+        )
+        .await
+        .status,
+        204
+    );
+
+    s.directory.set_groups("cy", &[]);
+    let path = format!("/api/v1/workspaces/{}/runs/{id}", l.ws);
+    let run = s.get(&path, &cy().in_group("finance")).await.json();
+    assert_eq!(run["result_access"], "restricted");
+    assert!(run.get("result").is_none());
+}
+both!(completed_sql_results_are_hidden_after_group_revocation);
+
+async fn a_policy_added_after_job_submission_blocks_raw_table_input(s: Server) {
+    let l = lab(&s).await;
+    let (secret, _) = attach(&s).await;
+    s.assign(&l.ws, &[&bob()]).await;
+    s.grant(&l.ws, &ana(), &l.orders, "user:bob", "reader")
+        .await;
+    s.grant(&l.ws, &ana(), &l.out, "user:bob", "contributor")
+        .await;
+    s.put(
+        &format!("/api/v1/workspaces/{}/entitlements", l.ws),
+        &ana(),
+        json!({"principal": "user:bob", "entitlement": "compute-create"}),
+    )
+    .await;
+    let submitted = s
+        .post(
+            &format!("/api/v1/workspaces/{}/runs", l.ws),
+            &bob(),
+            json!({"script": "print(1)", "inputs": [l.orders], "output": l.out}),
+        )
+        .await;
+    assert_eq!(submitted.status, 202, "{}", submitted.text());
+
+    assert_eq!(
+        s.put(
+            &format!("/api/v1/workspaces/{}/securables/{}/policy", l.ws, l.orders),
+            &ana(),
+            json!({"row_filter": "region = 'EU'"}),
+        )
+        .await
+        .status,
+        204
+    );
+    assert_eq!(
+        agent(&s, "POST", "/api/v1/agent/lease?wait_s=0", &secret, None)
+            .await
+            .status,
+        204,
+        "a job cannot receive raw files after row or column rules are added"
+    );
+}
+both!(a_policy_added_after_job_submission_blocks_raw_table_input);

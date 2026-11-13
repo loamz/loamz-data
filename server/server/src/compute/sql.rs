@@ -5,7 +5,7 @@ use std::{collections::HashMap, collections::HashSet, ops::ControlFlow};
 
 use sqlparser::{
     ast::{
-        ObjectName, ObjectNamePart, Query, SetExpr, Statement, TableFactor, Visit, VisitMut,
+        Expr, ObjectName, ObjectNamePart, Query, SetExpr, Statement, TableFactor, Visit, VisitMut,
         Visitor, VisitorMut,
     },
     dialect::DuckDbDialect,
@@ -55,6 +55,20 @@ impl Visitor for Collector {
                 "table functions are not allowed: read tables by their catalog.schema.table name"
                     .into(),
             );
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn pre_visit_expr(&mut self, e: &Expr) -> ControlFlow<()> {
+        let Expr::Function(function) = e else {
+            return ControlFlow::Continue(());
+        };
+        let Some(ObjectNamePart::Identifier(name)) = function.name.0.last() else {
+            return ControlFlow::Continue(());
+        };
+        if matches!(name.value.to_ascii_lowercase().as_str(), "read_blob" | "read_text") {
+            self.refused = Some("file-reading functions are not allowed; read tables by their catalog.schema.table name".into());
+            return ControlFlow::Break(());
         }
         ControlFlow::Continue(())
     }
@@ -335,6 +349,9 @@ mod tests {
             "SELECT * FROM read_csv('/etc/passwd')",
             "SELECT * FROM read_parquet('/inputs/tables/x/a.parquet')",
             "SELECT * FROM glob('/*')",
+            "SELECT read_blob('/inputs/tables/x/a.parquet') FROM a.b.c",
+            "SELECT Main.\"READ_BLOB\"('/inputs/tables/x/a.parquet') FROM a.b.c",
+            "SELECT read_text('/inputs/tables/x/data.txt') FROM a.b.c",
             "SELECT * FROM '/etc/passwd'",
             "SELECT * FROM 'file.csv'",
             "SELECT * FROM a.b.c, read_text('/etc/hosts')",

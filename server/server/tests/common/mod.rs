@@ -4,6 +4,7 @@
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
 
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{Arc, Mutex, OnceLock},
 };
@@ -240,6 +241,16 @@ pub struct FakeDirectory {
     pub organizations: Mutex<Vec<String>>,
     pub people: Mutex<Vec<String>>,
     pub members: Mutex<Vec<(String, String)>>,
+    pub groups: Mutex<HashMap<String, Vec<String>>>,
+}
+
+impl FakeDirectory {
+    pub fn set_groups(&self, subject: &str, groups: &[&str]) {
+        self.groups.lock().unwrap().insert(
+            subject.to_owned(),
+            groups.iter().map(|group| (*group).to_owned()).collect(),
+        );
+    }
 }
 
 #[async_trait]
@@ -271,6 +282,16 @@ impl Directory for FakeDirectory {
             all.push(pair);
         }
         Ok(())
+    }
+
+    async fn groups(&self, subject: &str) -> KernelResult<Vec<String>> {
+        Ok(self
+            .groups
+            .lock()
+            .unwrap()
+            .get(subject)
+            .cloned()
+            .unwrap_or_default())
     }
 }
 

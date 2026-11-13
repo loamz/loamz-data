@@ -1324,6 +1324,60 @@ async fn storage_is_set_per_workspace(s: Server) {
 }
 both!(storage_is_set_per_workspace);
 
+async fn location_like_wildcards_do_not_match_other_catalog_prefixes(s: Server) {
+    let ws = s.acme().await;
+    let base = format!("/api/v1/workspaces/{ws}/storage");
+    let cred = s
+        .post(
+            &format!("{base}/credentials"),
+            &ana(),
+            json!({"name": "rustfs", "endpoint": "http://127.0.0.1:9000", "key_id_ref": "loamz-data/bucket#key_id",
+                   "secret_ref": "loamz-data/bucket#secret", "vending": {"kind": "sts"}}),
+        )
+        .await
+        .json()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let location = |name: &str, prefix: &str| {
+        json!({"name": name, "credential_id": cred, "bucket": "loamz-data", "prefix": prefix})
+    };
+    let pattern = s
+        .post(
+            &format!("{base}/locations"),
+            &ana(),
+            location("team-under", "team_"),
+        )
+        .await;
+    assert_eq!(pattern.status, 201, "{}", pattern.text());
+    let pattern = pattern.json()["id"].as_str().unwrap().to_owned();
+    let sibling = s
+        .post(
+            &format!("{base}/locations"),
+            &ana(),
+            location("team-x", "teamX"),
+        )
+        .await;
+    assert_eq!(sibling.status, 201, "{}", sibling.text());
+    let catalog = s
+        .post(
+            &securables(&ws),
+            &ana(),
+            json!({"kind": "catalog", "name": "sibling", "location": "team-x"}),
+        )
+        .await;
+    assert_eq!(catalog.status, 201, "{}", catalog.text());
+
+    assert_eq!(
+        s.delete(&format!("{base}/locations/{pattern}"), &ana())
+            .await
+            .status,
+        204,
+        "the underscore in team_ is a literal, not a SQL LIKE wildcard"
+    );
+}
+both!(location_like_wildcards_do_not_match_other_catalog_prefixes);
+
 async fn a_catalog_keeps_its_data_where_its_location_says(s: Server) {
     let ws = s.acme().await;
     s.assign(&ws, &[&bob()]).await;
