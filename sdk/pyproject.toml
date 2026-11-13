@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "loamz"
+version = "0.1.0"
+description = "Python client and CLI for Loamz Data"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "httpx>=0.25",
+]
+
+[project.optional-dependencies]
+arrow = [
+    "pyarrow",
+]
+pandas = [
+    "pandas",
+]
+duckdb = [
+    "duckdb>=2",
+]
+all = [
+    "pyarrow",
+    "pandas",
+    "duckdb>=2",
+]
+
+[project.scripts]
+loamz = "loamz.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]

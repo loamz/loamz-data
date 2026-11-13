@@ -72,8 +72,8 @@ Status: **Built** is in the code today; **Planned** names its proposal and task 
 | K1 | Web console: catalog, SQL editor, history, compute, settings. | Built |
 | K2 | Versioned public API (`/api/v1`), OpenAPI document, RFC 9457 errors. | Built |
 | K3 | Apps such as Loamz Agents connect like any client and act as a principal. | Built |
-| K4 | Access tokens for people and service principals, for scripts and tools. | Under consideration |
-| K5 | A command-line tool and a Python SDK. | Under consideration |
+| K4 | Access tokens for people and service principals, for scripts and tools. | Built |
+| K5 | A command-line tool and a Python SDK. | Built |
 | K6 | A standard SQL connection for BI tools (Arrow Flight SQL, JDBC). | Under consideration |
 
 ### Hosting
