@@ -80,3 +80,15 @@ The file is read on your machine and written straight to the table's storage wit
 the data does not pass through the server. You need permission to create (or modify) the table. A table with row or column rules
 cannot be written this way by someone the rules apply to.
 
+A file that is already in a volume (uploaded from the console, or by a job) is imported on the workspace's own compute instead, with
+no local DuckDB:
+
+```sh
+loamz import-volume uploads.main.incoming trips.csv nyc.main.trips          # a new table
+loamz import-volume uploads.main.incoming more.csv nyc.main.trips --append   # add rows
+```
+
+```python
+run = client.workspace("Main").import_from_volume("nyc.main.trips", "uploads.main.incoming", "trips.csv")
+```
+

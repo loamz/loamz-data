@@ -1,6 +1,9 @@
 # Proposal 0005: the write path on compute
 
 Status: proposed 13 Nov 2026, for Codex's review. Part of the beta (workstream W7 in [0003](0003-beta.md)).
+**Built on 13 Nov (volume file to table, append, and the doors' refusals proven in gVisor against RustFS by `scripts/compute-smoke.py`):** the
+job's `writes`, the narrowed token, write credentials in the lease, both doors, and `POST /imports` from a volume file. **Not built yet:**
+import from an S3 location or a URL (the runner's fetch), `replace` mode, compaction and snapshot expiry, and the console's import dialog.
 
 ## Context
 
