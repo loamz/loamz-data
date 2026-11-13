@@ -7,7 +7,7 @@ use sqlx::{Any, Transaction};
 use tokio::sync::MutexGuard;
 
 use super::{
-    model::{Entry, GENESIS, Who, first_broken, hash},
+    model::{Entry, GENESIS, Who, anonymize_target, first_broken, hash, pseudonym},
     store,
 };
 use crate::kernel::{error::Result, now_ms, state::App};
@@ -47,10 +47,18 @@ impl<'a> Uow<'a> {
             org: org.to_owned(),
             seq: prev.as_ref().map_or(1, |p| p.seq + 1),
             at_ms: now_ms(),
-            actor: who.actor.clone(),
-            on_behalf_of: who.on_behalf_of.clone(),
+            actor: if who.actor == "system" {
+                who.actor.clone()
+            } else {
+                pseudonym(org, &who.actor)
+            },
+            on_behalf_of: if who.on_behalf_of.is_empty() {
+                String::new()
+            } else {
+                pseudonym(org, &who.on_behalf_of)
+            },
             action: action.to_owned(),
-            target: target.to_owned(),
+            target: anonymize_target(org, target),
             outcome: outcome.to_owned(),
             prev_hash: prev.map_or_else(|| GENESIS.to_owned(), |p| p.hash),
             hash: String::new(),

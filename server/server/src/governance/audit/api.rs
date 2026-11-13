@@ -33,7 +33,7 @@ async fn list(
 
 /// Walks the organization's whole chain. It says only whether it holds and where it first breaks.
 async fn verify(State(app): State<Shared>, c: OrgCtx) -> Result<Json<Value>> {
-    orgs::require_admin(&app, &c.identity, &c.org).await?;
+    orgs::require_admin_hidden(&app, &c.identity, &c.org).await?;
     let v = service::verify(&app, &c.org).await?;
     Ok(Json(
         json!({"intact": v.first_broken.is_none(), "entries": v.entries, "first_broken": v.first_broken}),

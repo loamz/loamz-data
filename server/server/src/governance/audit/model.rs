@@ -53,6 +53,43 @@ pub struct Entry {
 /// The first entry's `prev_hash`.
 pub const GENESIS: &str = "";
 
+#[must_use]
+pub fn pseudonym(org: &str, subject: &str) -> String {
+    let mut h = Sha256::new();
+    for part in [org, subject] {
+        h.update((part.len() as u64).to_be_bytes());
+        h.update(part.as_bytes());
+    }
+    let digest = h.finalize();
+    let mut out = String::from("erased:");
+    for byte in digest {
+        use std::fmt::Write;
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+#[must_use]
+pub fn anonymize_target(org: &str, target: &str) -> String {
+    let mut out = String::with_capacity(target.len());
+    let mut rest = target;
+    while let Some(start) = rest.find("user:") {
+        out.push_str(&rest[..start + 5]);
+        let subject_start = start + 5;
+        let end = rest[subject_start..]
+            .find(char::is_whitespace)
+            .map_or(rest.len(), |offset| subject_start + offset);
+        if end == subject_start {
+            rest = &rest[subject_start..];
+            continue;
+        }
+        out.push_str(&pseudonym(org, &rest[subject_start..end]));
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Each field is length-prefixed, so two different entries can never produce the same bytes.
 #[must_use]
 pub fn hash(e: &Entry) -> String {
@@ -158,5 +195,16 @@ mod tests {
         let mut b = a.clone();
         b.org = "p".into();
         assert_ne!(hash(&a), hash(&b));
+    }
+
+    #[test]
+    fn pseudonyms_are_stable_but_organization_scoped() {
+        assert_eq!(pseudonym("o", "bob"), pseudonym("o", "bob"));
+        assert_ne!(pseudonym("o", "bob"), pseudonym("p", "bob"));
+        assert_ne!(pseudonym("o", "bob"), "bob");
+        assert_eq!(
+            anonymize_target("o", "catalog <- user:bob, reader"),
+            format!("catalog <- user:{} reader", pseudonym("o", "bob,"))
+        );
     }
 }

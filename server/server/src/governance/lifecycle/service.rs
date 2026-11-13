@@ -8,7 +8,10 @@ use super::{
 };
 use crate::{
     governance::{
-        audit::{model::Who, service::Uow},
+        audit::{
+            model::{Who, pseudonym},
+            service::Uow,
+        },
         catalogs::service as catalogs,
         iam::service as iam,
         orgs::{model::valid_principal, service as orgs},
@@ -82,10 +85,13 @@ pub async fn request_erase(
     org: &str,
     subject: &str,
 ) -> Result<Task> {
-    orgs::require_admin(app, identity, org).await?;
-    if !valid_principal(subject) {
+    orgs::require_admin_hidden(app, identity, org).await?;
+    if !valid_principal(subject)
+        || !subject.starts_with("user:")
+        || subject.chars().any(char::is_whitespace)
+    {
         return Err(Error::Invalid(
-            "subject must be a principal such as user:<id>".into(),
+            "subject must be a person such as user:<id>".into(),
         ));
     }
     let task = new_task(org, identity, TaskKind::Erase, subject);
@@ -106,7 +112,7 @@ pub async fn request_erase(
 /// # Errors
 /// Not found, or not an account admin.
 pub async fn task(app: &App, identity: &Identity, org: &str, id: &str) -> Result<Task> {
-    orgs::require_admin(app, identity, org).await?;
+    orgs::require_admin_hidden(app, identity, org).await?;
     store::get(app.db.pool(), org, id)
         .await?
         .ok_or_else(|| Error::NotFound("no such task".into()))
@@ -142,30 +148,148 @@ async fn run(app: &App, task: &Task) -> Result<()> {
     let org = &task.org_id;
     match TaskKind::parse(&task.kind) {
         Some(TaskKind::Drop) => remove_subtree(app, org, &task.subject).await,
-        Some(TaskKind::Erase) => {
-            for entry in catalogs::owned_by(app, org, &task.subject).await? {
-                remove_subtree(app, org, &entry.id).await?;
-            }
-            let mut uow = Uow::begin(app).await?;
-            iam::forget_principal(&mut uow, org, &task.subject).await?;
-            workspaces::forget_principal(&mut uow, org, &task.subject).await?;
-            orgs::forget_principal(&mut uow, org, &task.subject).await?;
-            uow.commit().await?;
-            if !catalogs::owned_by(app, org, &task.subject)
-                .await?
-                .is_empty()
-                || iam::count_for(app, org, &task.subject).await? != 0
-                || workspaces::count_assignments(app, org, &task.subject).await? != 0
-                || orgs::still_admin(app, org, &task.subject).await?
-            {
-                return Err(Error::Internal(
-                    "something of the subject remains after the erase".into(),
-                ));
-            }
-            Ok(())
-        }
+        Some(TaskKind::Erase) => erase(app, task).await,
         None => Err(Error::Internal(format!("unknown task kind {}", task.kind))),
     }
+}
+
+async fn run_output_folder(
+    app: &App,
+    org: &str,
+    run: &store::RunForErase,
+) -> Result<Option<String>> {
+    let spec: serde_json::Value = serde_json::from_str(&run.spec)
+        .map_err(|e| Error::Internal(format!("run {} has invalid spec JSON: {e}", run.id)))?;
+    let Some(output) = spec.get("output").and_then(serde_json::Value::as_str) else {
+        return Ok(None);
+    };
+    if output.is_empty() {
+        return Ok(None);
+    }
+    let folder: Option<String> =
+        sqlx::query_scalar("SELECT folder FROM securables WHERE id = $1 AND org_id = $2")
+            .bind(output)
+            .bind(org)
+            .fetch_optional(app.db.pool())
+            .await?;
+    Ok(folder)
+}
+
+async fn erase_run_files(app: &App, run: &store::RunForErase, folder: &str) -> Result<()> {
+    let prefix = format!("runs/{}/", run.id);
+    for entry in app
+        .stores
+        .list(folder)
+        .await
+        .map_err(|e| Error::Internal(e.to_string()))?
+        .into_iter()
+        .filter(|entry| entry.path.starts_with(&prefix))
+    {
+        app.stores
+            .delete(folder, &entry.path)
+            .await
+            .map_err(|e| Error::Internal(e.to_string()))?;
+    }
+    if app
+        .stores
+        .list(folder)
+        .await
+        .map_err(|e| Error::Internal(e.to_string()))?
+        .iter()
+        .any(|entry| entry.path.starts_with(&prefix))
+    {
+        return Err(Error::Internal(format!(
+            "run output files for {} remain after erase",
+            run.id
+        )));
+    }
+    Ok(())
+}
+
+async fn erase(app: &App, task: &Task) -> Result<()> {
+    let org = &task.org_id;
+    let mut entries = Vec::new();
+    for root in catalogs::owned_by(app, org, &task.subject).await? {
+        entries.extend(catalogs::subtree(app, org, &root.id).await?);
+    }
+    let runs = {
+        let mut conn = app.db.pool().acquire().await?;
+        store::runs_for_erase(
+            &mut conn,
+            org,
+            task.subject.strip_prefix("user:").unwrap_or(""),
+        )
+        .await?
+    };
+    let mut run_files = Vec::new();
+    for run in &runs {
+        if let Some(folder) = run_output_folder(app, org, run).await? {
+            run_files.push((run, folder));
+        }
+    }
+    let raw_subject = task.subject.strip_prefix("user:").unwrap_or("");
+    let tombstone = pseudonym(org, raw_subject);
+    let mut uow = Uow::begin(app).await?;
+    orgs::can_forget_principal_in(&mut uow.tx, org, &task.subject).await?;
+    for (run, folder) in run_files {
+        erase_run_files(app, run, &folder).await?;
+    }
+    for entry in entries.iter().rev() {
+        if entry.kind.holds_files() {
+            volumes::erase_files(app, &entry.folder).await?;
+        }
+    }
+    for entry in &entries {
+        iam::forget_securable(&mut uow, org, &entry.id).await?;
+    }
+    for entry in entries.iter().rev() {
+        catalogs::remove_row(&mut uow, org, &entry.id).await?;
+    }
+    iam::forget_principal(&mut uow, org, &task.subject).await?;
+    workspaces::forget_principal(&mut uow, org, &task.subject).await?;
+    orgs::forget_principal(&mut uow, org, &task.subject).await?;
+    store::erase_person(
+        &mut uow.tx,
+        org,
+        &task.subject,
+        raw_subject,
+        &tombstone,
+        now_ms(),
+    )
+    .await?;
+    for run in &runs {
+        sqlx::query("DELETE FROM run_tokens WHERE run_id = $1")
+            .bind(&run.id)
+            .execute(&mut *uow.tx)
+            .await?;
+    }
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT (SELECT COUNT(*) FROM securables WHERE org_id = $1 AND owner = $2) \
+         + (SELECT COUNT(*) FROM grants WHERE org_id = $1 AND principal = $2) \
+         + (SELECT COUNT(*) FROM account_admins WHERE org_id = $1 AND principal = $2) \
+         + (SELECT COUNT(*) FROM workspace_members WHERE principal = $2 AND workspace_id IN (SELECT id FROM workspaces WHERE org_id = $1)) \
+         + (SELECT COUNT(*) FROM entitlements WHERE principal = $2 AND workspace_id IN (SELECT id FROM workspaces WHERE org_id = $1))",
+    )
+    .bind(org)
+    .bind(&task.subject)
+    .fetch_one(&mut *uow.tx)
+    .await?;
+    if remaining != 0 {
+        return Err(Error::Internal(
+            "something of the subject remains after the erase".into(),
+        ));
+    }
+    store::finish(&mut *uow.tx, &task.id).await?;
+    uow.audit(
+        org,
+        &Who::system(&task.on_behalf_of),
+        "erase.done",
+        &format!("erase subject {}", task.subject),
+        "ok",
+    )
+    .await?;
+    uow.commit().await?;
+    Ok(())
 }
 
 /// Takes one due task and works on it. Returns whether there was one. `now` is passed in so a test can move the clock.
@@ -180,6 +304,7 @@ pub async fn run_once(app: &App, now: i64) -> Result<bool> {
     let Some(task) = leased else { return Ok(false) };
     let org = task.org_id.clone();
     match run(app, &task).await {
+        Ok(()) if task.kind == "erase" => {}
         Ok(()) => {
             let what = format!(
                 "{} {}",

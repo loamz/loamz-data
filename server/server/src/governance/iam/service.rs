@@ -124,6 +124,9 @@ pub async fn assign(
     }
     let now = now_ms();
     let mut uow = Uow::begin(app).await?;
+    if crate::governance::orgs::service::is_erasing_in(&mut uow.tx, org, principal).await? {
+        return Err(Error::NotFound("not found".into()));
+    }
     for (securable, privilege) in model::placement(target, role) {
         store::put(
             &mut *uow.tx,

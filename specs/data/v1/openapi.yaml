@@ -190,6 +190,8 @@ paths:
           description: OK
         '401':
           $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
     post:
@@ -803,7 +805,7 @@ paths:
           $ref: '#/components/responses/Problem'
   /api/v1/orgs/{org}/erase:
     post:
-      summary: Erase a principal's data in this organization. Account admins.
+      summary: Erase a person's data in this organization. Account admins.
       parameters:
       - *id001
       responses:
@@ -813,12 +815,10 @@ paths:
           $ref: '#/components/responses/Problem'
         '401':
           $ref: '#/components/responses/Problem'
-        '403':
-          $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
-      description: Queues a durable task that removes everything the principal owns, their files, grants, workspace assignments and admin rights,
-        and checks it is gone. The audit trail is kept.
+      description: Queues a durable task that removes everything the person owns, their files, grants, workspace assignments and admin rights,
+        and checks it is gone. The audit trail is kept and uses stable organization-scoped pseudonyms for identities.
       requestBody:
         required: true
         content:
@@ -872,8 +872,6 @@ paths:
         '200':
           description: '`intact`, the entry count, and the first broken entry if any'
         '401':
-          $ref: '#/components/responses/Problem'
-        '403':
           $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'

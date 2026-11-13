@@ -249,6 +249,9 @@ pub async fn assign(
         return Err(Error::Invalid("principal is not valid".into()));
     }
     let mut uow = Uow::begin(app).await?;
+    if orgs::is_erasing_in(&mut uow.tx, &w.org_id, principal).await? {
+        return Err(Error::NotFound("not found".into()));
+    }
     store::put_member(&mut *uow.tx, id, principal, role, now_ms()).await?;
     uow.audit(
         &w.org_id,
@@ -337,6 +340,9 @@ pub async fn set_entitlement(
         )));
     }
     let mut uow = Uow::begin(app).await?;
+    if orgs::is_erasing_in(&mut uow.tx, &w.org_id, principal).await? {
+        return Err(Error::NotFound("not found".into()));
+    }
     if !store::members(&mut *uow.tx, id)
         .await?
         .iter()
