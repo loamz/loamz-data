@@ -12,10 +12,10 @@ help:
 
 lint:
 	cargo fmt --check
-	cargo clippy --workspace --exclude loamz-worker --all-targets -- -D warnings
+	cargo clippy --workspace --all-targets -- -D warnings
 
 test:
-	cargo test --workspace --exclude loamz-worker
+	cargo test --workspace
 
 test-web:
 	cd web && pnpm exec tsc --noEmit && pnpm test
@@ -28,8 +28,7 @@ check: lint test test-web
 # The SQL worker embeds DuckDB, which is compiled from C++ source: ten minutes or more the first time. It is kept out of `check` so
 # everyday work never pays for it; CI runs `check-worker`. Changing CARGO_BUILD_JOBS between builds makes cargo compile DuckDB again.
 worker:
-	cargo build --release -p loamz-worker
+	cd server/worker && cargo build --release && mkdir -p ../../target/release && cp target/release/loamz-worker ../../target/release/
 
 check-worker:
-	cargo clippy -p loamz-worker --all-targets -- -D warnings
-	cargo test -p loamz-worker
+	cd server/worker && cargo clippy --all-targets -- -D warnings && cargo test

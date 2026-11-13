@@ -33,3 +33,4 @@ node_modules/
 web/dist/
 .dev/
 docs-site/site/
+server/worker/target/
