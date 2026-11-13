@@ -21,7 +21,10 @@ pub struct WorkerKey {
 /// An owned sandbox process. Dropping it kills the runtime process.
 pub struct Worker {
     pub child: Child,
+    pub broker: Option<crate::broker::Broker>,
     cleanup: Option<Command>,
+    directory: Option<std::path::PathBuf>,
+    limits: Option<(u64, u64)>,
     runs: usize,
     last_used: Instant,
 }
@@ -30,7 +33,10 @@ impl Worker {
     pub fn new(child: Child, cleanup: Option<Command>) -> Self {
         Self {
             child,
+            broker: None,
             cleanup,
+            directory: None,
+            limits: None,
             runs: 0,
             last_used: Instant::now(),
         }
@@ -39,6 +45,23 @@ impl Worker {
     pub fn completed(&mut self) {
         self.runs = self.runs.saturating_add(1);
         self.last_used = Instant::now();
+    }
+
+    #[must_use]
+    pub fn with_broker(
+        mut self,
+        broker: crate::broker::Broker,
+        directory: std::path::PathBuf,
+    ) -> Self {
+        self.broker = Some(broker);
+        self.directory = Some(directory);
+        self
+    }
+
+    #[must_use]
+    pub fn with_limits(mut self, memory_mb: u64, cpu_millis: u64) -> Self {
+        self.limits = Some((memory_mb, cpu_millis));
+        self
     }
 
     async fn kill(&mut self) {
@@ -50,6 +73,12 @@ impl Worker {
                 Ok(status) => tracing::warn!(%status, "sandbox cleanup failed"),
                 Err(error) => tracing::warn!(%error, "sandbox cleanup could not start"),
             }
+        }
+        self.broker.take();
+        if let Some(directory) = self.directory.take()
+            && let Err(error) = tokio::fs::remove_dir_all(directory).await
+        {
+            tracing::warn!(%error, "sandbox files could not be removed");
         }
     }
 }
@@ -83,6 +112,7 @@ impl Pool {
     pub async fn acquire<F, Fut>(
         &self,
         key: WorkerKey,
+        limits: Option<(u64, u64)>,
         start: F,
     ) -> std::io::Result<OwnedMutexGuard<Worker>>
     where
@@ -93,7 +123,11 @@ impl Pool {
         if let Some(slot) = workers.get(&key) {
             let mut worker = Arc::clone(slot).lock_owned().await;
             let dead = worker.child.try_wait()?.is_some();
-            if !dead && worker.runs < self.max_runs && worker.last_used.elapsed() < self.max_idle {
+            if !dead
+                && worker.limits == limits
+                && worker.runs < self.max_runs
+                && worker.last_used.elapsed() < self.max_idle
+            {
                 return Ok(worker);
             }
             worker.kill().await;
@@ -154,13 +188,13 @@ mod tests {
     #[tokio::test]
     async fn organizations_never_share_workers_and_failures_kill_them() {
         let pool = Pool::new(10, Duration::from_mins(1));
-        let a = pool.acquire(key("a"), child).await.unwrap();
+        let a = pool.acquire(key("a"), None, child).await.unwrap();
         let a_id = a.child.id();
         drop(a);
-        let b = pool.acquire(key("b"), child).await.unwrap();
+        let b = pool.acquire(key("b"), None, child).await.unwrap();
         assert_ne!(a_id, b.child.id());
         drop(b);
-        let a = pool.acquire(key("a"), child).await.unwrap();
+        let a = pool.acquire(key("a"), None, child).await.unwrap();
         assert_eq!(a_id, a.child.id());
         drop(a);
         let a = Arc::clone(pool.workers.lock().await.get(&key("a")).unwrap());
@@ -172,18 +206,18 @@ mod tests {
     #[tokio::test]
     async fn workers_recycle_after_the_run_limit_and_idle() {
         let pool = Pool::new(1, Duration::from_mins(1));
-        let mut first = pool.acquire(key("a"), child).await.unwrap();
+        let mut first = pool.acquire(key("a"), None, child).await.unwrap();
         let first_id = first.child.id();
         first.completed();
         drop(first);
         let first = Arc::clone(pool.workers.lock().await.get(&key("a")).unwrap());
-        let second = pool.acquire(key("a"), child).await.unwrap();
+        let second = pool.acquire(key("a"), None, child).await.unwrap();
         assert_ne!(first_id, second.child.id());
         drop(second);
         assert!(first.lock().await.child.try_wait().unwrap().is_some());
         pool.invalidate(&key("a")).await;
         let idle = Pool::new(10, Duration::ZERO);
-        let guard = idle.acquire(key("a"), child).await.unwrap();
+        let guard = idle.acquire(key("a"), None, child).await.unwrap();
         drop(guard);
         let slot = Arc::clone(idle.workers.lock().await.get(&key("a")).unwrap());
         idle.reap_idle().await;
@@ -197,7 +231,7 @@ mod tests {
         let _ = std::fs::remove_file(&marker);
         let pool = Pool::new(2, Duration::from_mins(1));
         let guard = pool
-            .acquire(key("a"), || async {
+            .acquire(key("a"), None, || async {
                 let process = Command::new("sleep").arg("60").kill_on_drop(true).spawn()?;
                 let mut cleanup = Command::new("touch");
                 cleanup.arg(&marker);

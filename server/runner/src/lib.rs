@@ -10,8 +10,10 @@
 //! outside (a systemd unit, for example) do not reach it.
 
 pub mod agent;
+pub mod broker;
 pub mod check;
 pub mod exec;
 pub mod pool;
 pub mod spec;
 pub mod work;
+pub mod worker_sandbox;

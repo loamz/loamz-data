@@ -45,7 +45,7 @@ pub struct RunInfo {
     pub spec: Value,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 pub struct Limits {
     pub memory_mb: u64,
     pub cpu_millis: u64,

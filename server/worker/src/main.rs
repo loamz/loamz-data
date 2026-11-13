@@ -4,6 +4,8 @@ use std::io::{self, BufRead, Write};
 
 use serde_json::{Value, json};
 
+mod proxy;
+
 fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str, &'static str> {
     value[key].as_str().ok_or("the work request is incomplete")
 }
@@ -16,7 +18,7 @@ fn literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
-fn run(request: &Value) -> Result<Value, String> {
+fn run(request: &Value, proxy_port: u16) -> Result<Value, String> {
     let spec = &request["spec"];
     let sql = text(spec, "sql")?;
     let limit = spec["limit"].as_u64().unwrap_or(1000).min(1_000_000) as usize;
@@ -61,12 +63,10 @@ fn run(request: &Value) -> Result<Value, String> {
         conn.execute_batch(&format!("SET threads = {threads}; SET memory_limit = '{}MB'", memory * 7 / 10))?;
         if !inputs.is_empty() {
             conn.execute_batch("SET extension_directory = '/opt/duckdb-extensions'; LOAD httpfs; LOAD iceberg")?;
-            let endpoint = text(storage, "endpoint").map_err(|e| duckdb::Error::InvalidParameterName(e.into()))?;
-            let (endpoint, ssl) = if let Some(host) = endpoint.strip_prefix("https://") { (host, true) } else if let Some(host) = endpoint.strip_prefix("http://") { (host, false) } else { return Err(duckdb::Error::InvalidParameterName("invalid endpoint".into())); };
-            if endpoint.is_empty() || endpoint.contains(['/', '?', '#', '@']) { return Err(duckdb::Error::InvalidParameterName("invalid endpoint".into())); }
+            let endpoint = format!("127.0.0.1:{proxy_port}");
             let field = |key| text(storage, key).map_err(|e| duckdb::Error::InvalidParameterName(e.into()));
-            let sql = format!("CREATE TEMP SECRET loamz_run (TYPE s3, KEY_ID ?, SECRET ?, SESSION_TOKEN ?, ENDPOINT ?, URL_STYLE 'path', REGION 'auto', USE_SSL {})", if ssl { "true" } else { "false" });
-            conn.execute(&sql, duckdb::params![field("key_id")?, field("secret")?, field("session_token")?, endpoint])?;
+            let sql = "CREATE TEMP SECRET loamz_run (TYPE s3, KEY_ID ?, SECRET ?, SESSION_TOKEN ?, ENDPOINT ?, URL_STYLE 'path', REGION 'auto', USE_SSL false)";
+            conn.execute(sql, duckdb::params![field("key_id")?, field("secret")?, field("session_token")?, endpoint])?;
             let mut catalogs = std::collections::HashSet::new();
             let mut schemas = std::collections::HashSet::new();
             for (parts, uri, version) in &inputs {
@@ -94,13 +94,14 @@ fn report(result: Result<Value, String>) -> Value {
 }
 
 fn main() -> io::Result<()> {
+    let port = proxy::start("/inputs/broker/socket".into())?;
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();
     for line in stdin.lock().lines() {
         let line = line?;
         let result = serde_json::from_str::<Value>(&line)
             .map_err(|_| "invalid work request".to_owned())
-            .and_then(|request| run(&request));
+            .and_then(|request| run(&request, port));
         writeln!(stdout, "{}", report(result))?;
         stdout.flush()?;
     }
@@ -115,7 +116,7 @@ mod tests {
     #[test]
     fn answers_a_statement_without_tables() {
         let request = json!({"spec":{"sql":"SELECT 42 AS value", "limit":5, "tables":[]}, "limits":{"memory_mb":512, "cpu_millis":1000}});
-        let result = run(&request).unwrap();
+        let result = run(&request, 0).unwrap();
         assert_eq!(result["rows"], json!([[42]]));
     }
 }

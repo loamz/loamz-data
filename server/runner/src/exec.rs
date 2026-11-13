@@ -37,7 +37,7 @@ pub struct WarmExecutor<F> {
 
 impl<F, Fut> Executor for WarmExecutor<F>
 where
-    F: Fn(crate::pool::WorkerKey) -> Fut + Send + Sync,
+    F: Fn(crate::pool::WorkerKey, crate::work::Limits) -> Fut + Send + Sync,
     Fut: std::future::Future<Output = std::io::Result<crate::pool::Worker>> + Send,
 {
     async fn execute(&self, lease: &crate::work::Lease, stop: StopSignal) -> crate::work::Report {
@@ -50,11 +50,35 @@ where
         };
         let Ok(mut worker) = self
             .pool
-            .acquire(key.clone(), || (self.start)(key.clone()))
+            .acquire(
+                key.clone(),
+                Some((lease.limits.memory_mb, lease.limits.cpu_millis)),
+                || (self.start)(key.clone(), lease.limits),
+            )
             .await
         else {
             return crate::work::Report::failed("could not start the SQL sandbox");
         };
+        if let Some(broker) = &worker.broker {
+            if broker
+                .authorize(lease.storage.as_ref(), &lease.run.spec)
+                .await
+                .is_err()
+            {
+                drop(worker);
+                self.pool.invalidate(&key).await;
+                return crate::work::Report::failed(
+                    "could not prepare the SQL sandbox's storage access",
+                );
+            }
+        } else if lease.run.spec["tables"]
+            .as_array()
+            .is_none_or(|tables| !tables.is_empty())
+        {
+            drop(worker);
+            self.pool.invalidate(&key).await;
+            return crate::work::Report::failed("the SQL sandbox has no storage broker");
+        }
         let request = serde_json::json!({
             "spec": lease.run.spec,
             "storage": lease.storage,
@@ -83,6 +107,9 @@ where
             result = tokio::time::timeout(Duration::from_secs(lease.limits.timeout_s), work) => result.map_err(|_| "the SQL run timed out"),
             () = stop => Err("the SQL run was cancelled"),
         };
+        if let Some(broker) = &worker.broker {
+            broker.clear().await;
+        }
         match outcome {
             Ok(Ok(report)) => {
                 worker.completed();
@@ -229,6 +256,20 @@ impl Gvisor {
         clean.args(["delete", "--force"]).arg(id);
         (run, clean)
     }
+
+    /// Worker sandboxes have no network, but may open their one mounted broker socket.
+    #[must_use]
+    pub fn worker_commands(&self, bundle: &std::path::Path, id: &str) -> (Command, Command) {
+        let mut run = self.base();
+        run.arg("--host-uds=open")
+            .arg("run")
+            .arg("--bundle")
+            .arg(bundle)
+            .arg(id);
+        let mut clean = self.base();
+        clean.args(["delete", "--force"]).arg(id);
+        (run, clean)
+    }
 }
 
 /// Makes the workspace somewhere the sandbox's user can write its output, and nothing else can: owned by that user, and closed to
@@ -276,13 +317,14 @@ mod tests {
         let counter = Arc::clone(&starts);
         let executor = WarmExecutor {
             pool: crate::pool::Pool::new(10, Duration::from_mins(1)),
-            start: move |_key: crate::pool::WorkerKey| {
+            start: move |_key: crate::pool::WorkerKey, limits: crate::work::Limits| {
                 counter.fetch_add(1, Ordering::SeqCst);
-                async {
+                async move {
                     let mut command = Command::new("sh");
                     command.args(["-c", r#"while IFS= read -r line; do printf '%s\n' '{"state":"succeeded","exit_code":0,"stdout":"","stderr":"","result":"{}","error":""}'; done"#])
                         .stdin(Stdio::piped()).stdout(Stdio::piped()).kill_on_drop(true);
-                    Ok(crate::pool::Worker::new(command.spawn()?, None))
+                    Ok(crate::pool::Worker::new(command.spawn()?, None)
+                        .with_limits(limits.memory_mb, limits.cpu_millis))
                 }
             },
         };
@@ -309,7 +351,7 @@ mod tests {
         let binary = std::env::var("LOAMZ_TEST_WORKER_BIN").unwrap();
         let executor = WarmExecutor {
             pool: crate::pool::Pool::new(10, Duration::from_mins(1)),
-            start: move |_key: crate::pool::WorkerKey| {
+            start: move |_key: crate::pool::WorkerKey, limits: crate::work::Limits| {
                 let binary = binary.clone();
                 async move {
                     let mut command = Command::new(binary);
@@ -317,7 +359,8 @@ mod tests {
                         .stdin(Stdio::piped())
                         .stdout(Stdio::piped())
                         .kill_on_drop(true);
-                    Ok(crate::pool::Worker::new(command.spawn()?, None))
+                    Ok(crate::pool::Worker::new(command.spawn()?, None)
+                        .with_limits(limits.memory_mb, limits.cpu_millis))
                 }
             },
         };
