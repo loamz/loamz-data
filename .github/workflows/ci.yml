@@ -43,6 +43,16 @@ jobs:
       - name: Server integration tests (PostgreSQL)
         run: cargo test --locked -p loamz-data-server -- --include-ignored --test-threads=4
 
+  worker:
+    # The SQL worker links DuckDB's own library (scripts/fetch-duckdb.sh), so this is a minute, not a compile of DuckDB.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install the repository Rust toolchain
+        run: rustup show
+      - run: cd server/worker && cargo fmt --check
+      - run: make check-worker
+
   web:
     runs-on: ubuntu-latest
     defaults:
