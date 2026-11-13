@@ -315,6 +315,13 @@ pub async fn load(
         &target,
     )
     .await?;
+    // Credentials would hand over the raw files, round the table's rules: those are read through SQL on Loamz compute only.
+    if catalogs::is_restricted(app, ask.identity, ask.org, ask.sides, &entry.id).await? {
+        return Err(Error::Invalid(format!(
+            "{} has row or column rules, so it can only be read with SQL run on Loamz",
+            entry.name
+        )));
+    }
     let may_write = iam::may(
         app,
         ask.identity,
@@ -629,6 +636,12 @@ pub async fn column_stats(app: &App, ask: &Ask<'_>, id: &str) -> Result<Value> {
         &target,
     )
     .await?;
+    // A range is a fact about the data the rules may hide.
+    if catalogs::is_restricted(app, ask.identity, ask.org, ask.sides, &entry.id).await? {
+        return Err(Error::Invalid(
+            "this table has row or column rules, so its value ranges are not shown".into(),
+        ));
+    }
     let meta = read_metadata(app, &entry.folder, &entry.metadata).await?;
     let current = &meta["current-snapshot-id"];
     let list = meta["snapshots"]

@@ -28,7 +28,7 @@ Status: **Built** is in the code today; **Planned** names its proposal and task 
 | G3 | Every change and its audit entry are one transaction; each organization has a tamper-evident hash chain. | Built |
 | G4 | An app gets only what both it and its principal can do. | Built |
 | G5 | A catalog says which of its workspace's compute may read it (built, 0002 task 4). Grants on storage (`READ FILES`, `CREATE EXTERNAL LOCATION`) wait for roots on a location and external objects, which would enforce them (0002 task 5). | Compute policy built; storage grants planned |
-| G6 | Policies: row filters and column masks, applied when a query is planned. | Planned |
+| G6 | Policies: row filters and column masks, applied when a query is planned. | Built |
 | G7 | Personal data: tags on columns (such as PII) that drive masks, retention, and erasing one person's data across a table's snapshots. | Under consideration |
 
 ### Data

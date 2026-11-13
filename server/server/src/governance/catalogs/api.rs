@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use super::{
     model::{Draft, Kind, Securable},
+    policy::Policy,
     service,
 };
 use crate::{
@@ -142,6 +143,45 @@ async fn transfer(State(app): State<Shared>, c: WsCtx, body: Bytes) -> Result<St
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Deserialize)]
+struct Rules {
+    #[serde(default)]
+    row_filter: String,
+    #[serde(default)]
+    masks: std::collections::BTreeMap<String, String>,
+}
+
+async fn get_policy(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
+    let p = service::policy_of(
+        &app,
+        &c.identity,
+        &c.workspace.id,
+        c.org(),
+        &c.sides,
+        &id(&c)?,
+    )
+    .await?;
+    Ok(Json(json!({"row_filter": p.row_filter, "masks": p.masks})))
+}
+
+async fn put_policy(State(app): State<Shared>, c: WsCtx, body: Bytes) -> Result<StatusCode> {
+    let req: Rules = body_json(&body)?;
+    service::set_policy(
+        &app,
+        &c.identity,
+        &c.workspace.id,
+        c.org(),
+        &c.sides,
+        &id(&c)?,
+        Policy {
+            row_filter: req.row_filter,
+            masks: req.masks,
+        },
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[must_use]
 pub fn routes() -> Routes {
     Routes::new()
@@ -150,4 +190,6 @@ pub fn routes() -> Routes {
         .get("/api/v1/workspaces/{ws}/securables/{id}", get)
         .delete("/api/v1/workspaces/{ws}/securables/{id}", drop_one)
         .put("/api/v1/workspaces/{ws}/securables/{id}/owner", transfer)
+        .get("/api/v1/workspaces/{ws}/securables/{id}/policy", get_policy)
+        .put("/api/v1/workspaces/{ws}/securables/{id}/policy", put_policy)
 }

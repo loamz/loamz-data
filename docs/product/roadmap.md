@@ -48,7 +48,7 @@ a SQL connection for BI tools, job schedules and alerts, abuse protection, safe 
 | Apps act as a principal, never with more access | governance | ✅ | | | | | |
 | A catalog belongs to one workspace | governance | ✅ | | | | | |
 | Grants on compute and storage | governance | | 📅 | | | | |
-| Row filters and column masks | governance | | | | 📅 | | |
+| Row filters and column masks | governance | | | | ✅ | | |
 | Lineage | governance | | | | | | ❓ |
 | Personal data: column tags, retention, erasure across snapshots | governance | | | | | | ❓ |
 | **Data** | | | | | | | |

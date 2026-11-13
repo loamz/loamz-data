@@ -318,7 +318,7 @@ Then write the attacks, run them, and fix what they find.
 Done when: a table in `docs/design/governance.md` lists each attack, the test that covers it, and the result; `make check` and the
 Postgres test command pass; no attack returns 403 where 404 is the rule.
 
-## 8. Personal data: erase and prove the audit chain (for Copilot; requirement G6)
+## 8. Personal data: erase and prove the audit chain (for Copilot; requirement G7)
 
 Goal: `DELETE` of a person's data removes their content everywhere but leaves the audit chain intact and verifiable, and a new
 `GET /orgs/{org}/audit/verify` walks the chain and reports the first broken link, if any. Owns: `governance/audit` and

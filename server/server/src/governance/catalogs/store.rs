@@ -261,3 +261,56 @@ pub async fn forget_catalog_compute(c: &mut sqlx::AnyConnection, catalog: &str) 
         .await?;
     Ok(())
 }
+
+/// The rules of a table, if it has any.
+pub async fn get_policy<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    table: &str,
+) -> Result<Option<super::policy::Policy>> {
+    let row = sqlx::query("SELECT row_filter, masks FROM table_policies WHERE table_id = $1")
+        .bind(table)
+        .fetch_optional(e)
+        .await?;
+    row.map(|r| {
+        let masks: String = r.try_get("masks")?;
+        Ok(super::policy::Policy {
+            row_filter: r.try_get("row_filter")?,
+            masks: serde_json::from_str(&masks).map_err(|_| {
+                crate::kernel::error::Error::Internal("stored masks are damaged".into())
+            })?,
+        })
+    })
+    .transpose()
+}
+
+/// Saves the rules of a table; none at all removes the row.
+pub async fn put_policy(
+    c: &mut sqlx::AnyConnection,
+    org: &str,
+    table: &str,
+    p: &super::policy::Policy,
+    by: &str,
+    now_ms: i64,
+) -> Result<()> {
+    sqlx::query("DELETE FROM table_policies WHERE table_id = $1")
+        .bind(table)
+        .execute(&mut *c)
+        .await?;
+    if p.is_empty() {
+        return Ok(());
+    }
+    let masks = serde_json::to_string(&p.masks)
+        .map_err(|_| crate::kernel::error::Error::Internal("masks could not be saved".into()))?;
+    sqlx::query(
+        "INSERT INTO table_policies (table_id, org_id, row_filter, masks, updated_by, updated_ms) VALUES ($1,$2,$3,$4,$5,$6)",
+    )
+    .bind(table)
+    .bind(org)
+    .bind(p.row_filter.trim())
+    .bind(masks)
+    .bind(by)
+    .bind(now_ms)
+    .execute(&mut *c)
+    .await?;
+    Ok(())
+}

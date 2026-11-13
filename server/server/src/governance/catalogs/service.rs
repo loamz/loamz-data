@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 use super::{
     model::{Draft, Kind, Securable, check, join_folder},
+    policy::{self, Policy, Resolved},
     store,
 };
 use crate::{
@@ -409,6 +410,7 @@ pub async fn mark_dropping(uow: &mut Uow<'_>, org: &str, id: &str) -> Result<()>
 /// The database could not be written.
 pub async fn remove_row(uow: &mut Uow<'_>, org: &str, id: &str) -> Result<()> {
     store::forget_catalog_compute(&mut uow.tx, id).await?;
+    store::put_policy(&mut uow.tx, org, id, &Policy::default(), "", 0).await?;
     store::delete(&mut *uow.tx, org, id).await
 }
 
@@ -519,4 +521,96 @@ pub async fn resolve(
         return Err(gone());
     }
     target_in(app, workspace, org, &parent).await
+}
+
+/// The rules saved for a table (none: an empty policy). Only whoever manages the table may read them.
+///
+/// # Errors
+/// Not there for this caller, not a table, or not allowed.
+pub async fn policy_of(
+    app: &App,
+    identity: &Identity,
+    workspace: &str,
+    org: &str,
+    sides: &[Side],
+    id: &str,
+) -> Result<Policy> {
+    let (entry, target) = target_in(app, workspace, org, id).await?;
+    if entry.kind != Kind::Table {
+        return Err(Error::Invalid(
+            "only a table has row and column rules".into(),
+        ));
+    }
+    iam::require(app, identity, org, sides, Privilege::Manage, &target).await?;
+    Ok(store::get_policy(app.db.pool(), id)
+        .await?
+        .unwrap_or_default())
+}
+
+/// Saves the rules of a table, replacing any before them. Needs `MANAGE`.
+///
+/// # Errors
+/// Not there for this caller, not a table, not allowed, or a rule is not valid.
+pub async fn set_policy(
+    app: &App,
+    identity: &Identity,
+    workspace: &str,
+    org: &str,
+    sides: &[Side],
+    id: &str,
+    rules: Policy,
+) -> Result<()> {
+    let (entry, target) = target_in(app, workspace, org, id).await?;
+    if entry.kind != Kind::Table {
+        return Err(Error::Invalid(
+            "only a table has row and column rules".into(),
+        ));
+    }
+    iam::require(app, identity, org, sides, Privilege::Manage, &target).await?;
+    policy::validate(&rules).map_err(Error::Invalid)?;
+    let who = Who::of(identity);
+    let mut uow = Uow::begin(app).await?;
+    store::put_policy(&mut uow.tx, org, id, &rules, &owner_of(identity), now_ms()).await?;
+    uow.audit(org, &who, "table.policy.set", &format!("table {id}"), "ok")
+        .await?;
+    uow.commit().await
+}
+
+/// What applies to this person when they read a table: the rules worked out for them, or nothing when the table has none or they
+/// manage it (they see it whole).
+///
+/// # Errors
+/// The table is not there.
+pub async fn rules_for(
+    app: &App,
+    identity: &Identity,
+    org: &str,
+    sides: &[Side],
+    id: &str,
+) -> Result<Option<Resolved>> {
+    let Some(rules) = store::get_policy(app.db.pool(), id).await? else {
+        return Ok(None);
+    };
+    let (_, target) = target(app, org, id).await?;
+    if iam::may(app, identity, org, sides, Privilege::Manage, &target).await? {
+        return Ok(None);
+    }
+    policy::resolve(&rules, &owner_of(identity), &identity.groups)
+        .map(Some)
+        .map_err(Error::Internal)
+}
+
+/// Whether this person is held to rules on the table. Anything that would hand them its raw files (a job, an Iceberg client) is
+/// refused then.
+///
+/// # Errors
+/// The table is not there.
+pub async fn is_restricted(
+    app: &App,
+    identity: &Identity,
+    org: &str,
+    sides: &[Side],
+    id: &str,
+) -> Result<bool> {
+    Ok(rules_for(app, identity, org, sides, id).await?.is_some())
 }
