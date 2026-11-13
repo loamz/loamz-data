@@ -27,6 +27,8 @@ async fn main() -> ExitCode {
         eprintln!("usage: loamz-runner agent");
         return ExitCode::from(2);
     }
+    // The storage broker's HTTP client needs a TLS provider chosen before it is built.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),

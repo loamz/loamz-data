@@ -33,6 +33,8 @@ pub struct App {
     >,
     /// Wakes the serverless worker the moment a statement is queued, instead of when it next looks.
     pub queued: tokio::sync::Notify,
+    /// Wakes whoever is waiting for a run to end the moment it does, instead of when they next look.
+    pub finished: tokio::sync::Notify,
     /// One pooled connection to the serverless endpoints, so a statement does not pay for a new TLS handshake each time.
     pub serverless_http: reqwest::Client,
     pub max_upload: u64,
@@ -65,6 +67,7 @@ impl App {
             metadata_cache: std::sync::Mutex::new(super::cache::BoundedCache::new(64 << 20)),
             credential_cache: std::sync::Mutex::default(),
             queued: tokio::sync::Notify::new(),
+            finished: tokio::sync::Notify::new(),
             serverless_http: reqwest::Client::builder()
                 .pool_idle_timeout(std::time::Duration::from_secs(90))
                 .build()

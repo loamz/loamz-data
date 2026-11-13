@@ -6,7 +6,11 @@ use std::time::Duration;
 use serde_json::Value;
 use tokio::sync::watch;
 
-use crate::work::{Lease, Machine, Report, execute};
+use crate::{
+    exec::{Executor, WarmExecutor},
+    pool::Pool,
+    work::{Lease, Machine, Report, execute},
+};
 
 pub struct Agent {
     pub data_url: String,
@@ -25,9 +29,30 @@ impl Agent {
             .timeout(Duration::from_secs(45))
             .build()
             .unwrap_or_default();
+        let machine = self.machine.clone();
+        let binary = std::env::var_os("LOAMZ_WORKER_BIN")
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::current_exe()
+                    .ok()
+                    .map(|p| p.with_file_name("loamz-worker"))
+            });
+        let warm = WarmExecutor {
+            pool: Pool::new(100, Duration::from_mins(5)),
+            start: move |_key: crate::pool::WorkerKey, limits: crate::work::Limits| {
+                let machine = machine.clone();
+                let binary = binary.clone();
+                async move {
+                    let binary = binary.ok_or_else(|| {
+                        std::io::Error::other("the SQL worker path is unavailable")
+                    })?;
+                    crate::worker_sandbox::start(&machine, limits, &binary).await
+                }
+            },
+        };
         loop {
             match self.lease(&http).await {
-                Ok(Some(lease)) => self.run_one(&http, lease).await,
+                Ok(Some(lease)) => self.run_one(&http, lease, &warm).await,
                 Ok(None) => {}
                 Err(e) => {
                     tracing::warn!(error = e, "could not ask for work");
@@ -52,7 +77,7 @@ impl Agent {
         }
     }
 
-    async fn run_one(&self, http: &reqwest::Client, lease: Lease) {
+    async fn run_one<E: Executor>(&self, http: &reqwest::Client, lease: Lease, warm: &E) {
         let id = lease.run.id.clone();
         tracing::info!(run = id, kind = lease.run.kind, "starting");
         // While it works, keep telling the server so; the answer says whether the person has cancelled it.
@@ -83,7 +108,11 @@ impl Agent {
         let stop = async move {
             let _ = stop_rx.wait_for(|stopped| *stopped).await;
         };
-        let report = execute(&lease, &self.machine, &self.data_url, stop).await;
+        let report = if lease.run.kind == "sql" {
+            warm.execute(&lease, Box::pin(stop)).await
+        } else {
+            execute(&lease, &self.machine, &self.data_url, stop).await
+        };
         beat.abort();
         tracing::info!(run = id, state = report.state, "finished");
         self.report(http, &id, &report).await;
