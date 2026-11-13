@@ -648,3 +648,23 @@ Write these tests **first**, watch the relevant new tests fail for the intended 
 10. Convert representative legacy `user:`, `group:` and `sp:` data to the typed principal schema on SQLite and Postgres; compare rights, group and delegated intersections, workspace confinement, compute grants, ownership and audit-chain verification. Fail safely on malformed, duplicate or ambiguous identities.
 11. Freeze a real beta baseline and verify a forward-only upgrade, checksum mismatch detection, backup/restore, crash rollback and successful sign-in on both databases. No edited previously applied migration is accepted.
 12. Verify all changed router paths against OpenAPI, validate generated client shapes and write-only schemas, and exercise the real console-to-vault-to-customer-store flow on RustFS and R2. The lead runs the full wave checks under `scripts/heavy.sh`; these proposed tests are not evidence that the implementation exists.
+
+## 5. Lead amendments (14 Nov 2026)
+
+Agreed with these changes, for a beta of one server and fewer than three customers:
+
+1. **No principal migration.** Section 1.7's `principals` and `principal_grants` tables are not built. The code gets one `Principal` type
+   that wraps the existing `user:`, `group:` and `sp:` strings, and `credential`, `location` and `compute` become new kinds of grant
+   target in the existing grants table. Migrations still freeze at the beta.
+2. **No multi-replica machinery.** The beta runs one server. A single in-process generation check against the database replaces the
+   epoch table and the notification between replicas; it can be added when there is a second replica.
+3. **Simpler rotation.** One OpenBao KV v2 path per credential (server-generated). Rotation writes a new vault version, then, in one
+   transaction with the audit entry, compare-and-swaps the generation and the pinned vault version, then destroys the old version.
+   A failed commit leaves an unreferenced version that the next rotation destroys. `storage_secret_tasks` and idempotency records are
+   not built.
+4. **AWS needs a Loamz AWS identity** (an IAM user in an AWS account owned by Loamz) to assume the customer's role; until the owner
+   provides one, AWS is documented as not yet supported. R2 and MinIO/RustFS come first. Only providers with a passing conformance
+   test are offered.
+5. **Split of part 2.** Codex: key custody, `build_location`, endpoint safety (2a). Lead: the per-location registry, columns, managed and
+   external objects, storage grants and `USE_COMPUTE` (2b).
+
