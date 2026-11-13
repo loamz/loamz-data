@@ -424,8 +424,13 @@ pub struct JobRequest {
     /// Tables and volumes the script may read, by id. Each is mounted read-only at `/inputs/<name>`.
     #[serde(default)]
     pub inputs: Vec<String>,
-    /// The volume that receives what the script leaves in `/workspace`, under `runs/<run id>/`.
+    /// The volume that receives what the script leaves in `/workspace`, under `runs/<run id>/`. Empty: the job leaves no files.
+    #[serde(default)]
     pub output: String,
+    /// Tables the script may write, as `catalog.schema.table`: one that exists (needs `MODIFY`) or one to create (needs `CREATE TABLE`
+    /// on its schema). The sandbox reaches them through two narrow doors; see proposal 0005.
+    #[serde(default)]
+    pub table_writes: Vec<String>,
     pub target: Option<String>,
     pub memory_mb: Option<i64>,
     pub cpu_millis: Option<i64>,
@@ -736,10 +741,223 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
     Ok(run)
 }
 
+/// Adds what a job's declared table writes give its token: the table itself, the catalog and schema above it to look at (`see:`), and
+/// for a table it will create, the schema to create it in (`create:`). Used when the token is made and when the lease is rechecked, so
+/// the two can never differ.
+fn add_write_scope(spec: &Value, reads: &mut Vec<String>, writes: &mut Vec<String>) {
+    for w in spec["table_writes"].as_array().into_iter().flatten() {
+        for key in ["catalog_id", "schema_id"] {
+            if let Some(id) = w[key].as_str() {
+                reads.push(format!("see:{id}"));
+            }
+        }
+        match (w["id"].as_str(), w["schema_id"].as_str()) {
+            (Some(id), _) => {
+                reads.push(id.to_owned());
+                writes.push(id.to_owned());
+            }
+            (None, Some(schema)) => writes.push(format!("create:{schema}")),
+            _ => {}
+        }
+    }
+}
+
+/// The tables a job asks to write, checked now against the person's rights: each as `{name, schema_id, catalog_id, id?}`, where `id` is
+/// there when the table exists (and needs `MODIFY`) and absent when the job will create it (needs `CREATE TABLE` on the schema).
+async fn checked_table_writes(app: &App, ctx: &Ctx<'_>, names: &[String]) -> Result<Vec<Value>> {
+    if names.len() > 10 {
+        return Err(Error::Invalid("a job writes at most 10 tables".into()));
+    }
+    let org = &ctx.workspace.org_id;
+    let mut out = Vec::new();
+    for full in names {
+        let parts: Vec<String> = full.split('.').map(str::to_owned).collect();
+        let [catalog, schema, table] = <[String; 3]>::try_from(parts)
+            .map_err(|_| Error::Invalid("name a table to write as catalog.schema.table".into()))?;
+        let gone = || {
+            Error::NotFound(format!(
+                "{catalog}.{schema} was not found, or you may not use it"
+            ))
+        };
+        let (schema_entry, schema_target) = catalogs::resolve(
+            app,
+            &ctx.workspace.id,
+            org,
+            &[catalog.clone(), schema.clone()],
+        )
+        .await
+        .map_err(|_| gone())?;
+        if schema_entry.kind != Kind::Schema {
+            return Err(gone());
+        }
+        let existing = catalogs::resolve(
+            app,
+            &ctx.workspace.id,
+            org,
+            &[catalog.clone(), schema.clone(), table.clone()],
+        )
+        .await;
+        let mut item = json!({
+            "name": full, "schema_id": schema_entry.id, "catalog_id": schema_entry.parent_id,
+        });
+        if let Ok((entry, target)) = existing {
+            if entry.kind != Kind::Table {
+                return Err(Error::Invalid(format!("{full} is not a table")));
+            }
+            iam::require(
+                app,
+                ctx.identity,
+                org,
+                ctx.sides,
+                Privilege::Modify,
+                &target,
+            )
+            .await?;
+            // Rules on a table are applied by SQL only; a job writing it could read or replace its raw files.
+            if catalogs::is_restricted(app, ctx.identity, org, ctx.sides, &entry.id).await? {
+                return Err(Error::Invalid(format!(
+                    "{full} has row or column rules, so it cannot be written by a job"
+                )));
+            }
+            if entry.classification == "sealed" {
+                return Err(Error::Invalid("compute cannot write to sealed data".into()));
+            }
+            item["id"] = json!(entry.id);
+        } else {
+            iam::require(
+                app,
+                ctx.identity,
+                org,
+                ctx.sides,
+                Privilege::CreateTable,
+                &schema_target,
+            )
+            .await?;
+        }
+        out.push(item);
+    }
+    Ok(out)
+}
+
+/// What a person asks for to bring a file in as a table.
+#[derive(Deserialize)]
+pub struct ImportRequest {
+    /// The table to make or add to, as `catalog.schema.table`.
+    pub target: String,
+    /// The volume that holds the file, and the file's path inside it.
+    pub volume: String,
+    pub path: String,
+    /// `csv` or `parquet`; left out, it is read from the file's extension.
+    #[serde(default)]
+    pub format: String,
+    /// `create` (the default: a new table) or `append` (add rows to a table that exists).
+    #[serde(default)]
+    pub mode: String,
+    pub target_compute: Option<String>,
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut out, b| {
+            let _ = write!(out, "{b:02x}");
+            out
+        })
+}
+
+/// The program a file import runs, with its few values filled in: it is ours, never the person's.
+const IMPORT_JOB: &str = include_str!("import_job.py");
+
+/// Asks for a file to be brought in as a table. It is an ordinary job with a table to write and one volume to read, run by a program
+/// the server wrote: the person needs `READ` on the volume and `CREATE TABLE` (or `MODIFY` for an append) on the target.
+///
+/// # Errors
+/// Not allowed, the request is not valid, or no compute is answering.
+pub async fn submit_import(app: &App, ctx: &Ctx<'_>, req: ImportRequest) -> Result<Run> {
+    let path = req.path.trim_start_matches('/');
+    if path.is_empty()
+        || path.len() > 1024
+        || path
+            .split('/')
+            .any(|p| p.is_empty() || p == "." || p == "..")
+        || path.contains(['\\', '\0'])
+    {
+        return Err(Error::Invalid("the file's path is not valid".into()));
+    }
+    let format = if req.format.is_empty() {
+        path.rsplit('.')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+    } else {
+        req.format.to_ascii_lowercase()
+    };
+    if !matches!(format.as_str(), "csv" | "parquet") {
+        return Err(Error::Invalid(
+            "a file is imported as csv or parquet".into(),
+        ));
+    }
+    let mode = if req.mode.is_empty() {
+        "create"
+    } else {
+        req.mode.as_str()
+    };
+    if !matches!(mode, "create" | "append") {
+        return Err(Error::Invalid("mode is create or append".into()));
+    }
+    let parts: Vec<&str> = req.target.split('.').collect();
+    if parts.len() != 3
+        || parts
+            .iter()
+            .any(|p| !crate::governance::catalogs::model::valid_name(p))
+    {
+        return Err(Error::Invalid(
+            "name the table as catalog.schema.table, in lower case with digits and underscores"
+                .into(),
+        ));
+    }
+    let spec = json!({
+        "target": req.target, "path": path, "format": format, "mode": mode, "workspace": ctx.workspace.id,
+    });
+    let script = IMPORT_JOB.replace("__SPEC__", &hex_encode(spec.to_string().as_bytes()));
+    let job = JobRequest {
+        title: format!("Import {path} into {}", req.target),
+        script,
+        inputs: vec![req.volume],
+        output: String::new(),
+        table_writes: vec![req.target.clone()],
+        target: req.target_compute,
+        memory_mb: None,
+        cpu_millis: None,
+        timeout_s: Some(600),
+    };
+    // An append needs the table to exist, and a create needs it not to: the person's mistake is better said now than by a failed run.
+    let exists = catalogs::resolve(
+        app,
+        &ctx.workspace.id,
+        &ctx.workspace.org_id,
+        &parts.iter().map(|p| (*p).to_owned()).collect::<Vec<_>>(),
+    )
+    .await
+    .is_ok();
+    if mode == "create" && exists {
+        return Err(Error::Conflict(format!(
+            "{} already exists: use mode append to add to it",
+            req.target
+        )));
+    }
+    if mode == "append" && !exists {
+        return Err(Error::NotFound(format!("{} was not found", req.target)));
+    }
+    submit_job(app, ctx, job).await
+}
+
 /// Asks for a job (a Python script) to be run.
 ///
 /// # Errors
 /// Not allowed, not valid, or no compute is answering.
+#[allow(clippy::too_many_lines)]
 pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run> {
     entitled(app, ctx, "compute-create").await?;
     if req.script.trim().is_empty() || req.script.len() > 1_000_000 {
@@ -790,29 +1008,45 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
         .zip(&mounts)
         .map(|((id, kind), name)| json!({"id": id, "kind": kind.as_str(), "name": name}))
         .collect();
-    let (out, out_target) = catalogs::target_in(app, &ctx.workspace.id, org, &req.output).await?;
-    if out.kind != Kind::Volume {
-        return Err(Error::Invalid("the output must be a volume".into()));
+    let mut output_id = String::new();
+    if !req.output.is_empty() {
+        let (out, out_target) =
+            catalogs::target_in(app, &ctx.workspace.id, org, &req.output).await?;
+        if out.kind != Kind::Volume {
+            return Err(Error::Invalid("the output must be a volume".into()));
+        }
+        iam::require(
+            app,
+            ctx.identity,
+            org,
+            ctx.sides,
+            Privilege::WriteVolume,
+            &out_target,
+        )
+        .await?;
+        if out.classification == "sealed" {
+            return Err(Error::Invalid("compute cannot write to sealed data".into()));
+        }
+        if has_personal && out.classification != "personal" {
+            return Err(Error::Invalid(
+                "personal inputs require a personal output volume".into(),
+            ));
+        }
+        output_id = out.id;
     }
-    iam::require(
-        app,
-        ctx.identity,
-        org,
-        ctx.sides,
-        Privilege::WriteVolume,
-        &out_target,
-    )
-    .await?;
-    if out.classification == "sealed" {
-        return Err(Error::Invalid("compute cannot write to sealed data".into()));
-    }
-    if has_personal && out.classification != "personal" {
+    let table_writes = checked_table_writes(app, ctx, &req.table_writes).await?;
+    if req.output.is_empty() && table_writes.is_empty() {
         return Err(Error::Invalid(
-            "personal inputs require a personal output volume".into(),
+            "a job needs somewhere to leave its results: an output volume or a table to write"
+                .into(),
         ));
     }
     let mut policies = Vec::new();
     for id in &req.inputs {
+        policies.push(catalogs::compute_policy_of(app, org, id).await?);
+    }
+    for w in &table_writes {
+        let id = w["schema_id"].as_str().unwrap_or_default();
         policies.push(catalogs::compute_policy_of(app, org, id).await?);
     }
     let target = pick(
@@ -829,7 +1063,7 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
     let limits = limits_for(&target, req.memory_mb, req.cpu_millis, req.timeout_s, 600)
         .map_err(Error::Invalid)?;
     let title = job_title(&req.title, &req.script);
-    let spec = json!({"as": As::of(ctx.identity), "script": req.script, "inputs": inputs, "output": out.id, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
+    let spec = json!({"as": As::of(ctx.identity), "script": req.script, "inputs": inputs, "output": output_id, "table_writes": table_writes, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
     let run = new_run(ctx, "job", &title, &target, &spec);
     queue(app, ctx, &run, "job.submit").await?;
     Ok(run)
@@ -1145,7 +1379,13 @@ async fn guarded_sql(app: &App, identity: &Identity, run: &Run, spec: &Value) ->
 
 /// What a machine needs to read some tables itself: credentials limited to those tables' folders and to reading, good for the
 /// run's time and a little more, and where each table's current metadata is.
-async fn storage_for(app: &App, org: &str, ids: &[String], timeout_s: i64) -> Result<Value> {
+async fn storage_for(
+    app: &App,
+    org: &str,
+    ids: &[String],
+    spec: &Value,
+    timeout_s: i64,
+) -> Result<Value> {
     let ttl = Duration::from_secs(u64::try_from(timeout_s).unwrap_or(120) + 300);
     let mut located = serde_json::Map::new();
     let mut folders = Vec::with_capacity(ids.len());
@@ -1157,8 +1397,32 @@ async fn storage_for(app: &App, org: &str, ids: &[String], timeout_s: i64) -> Re
         );
         folders.push(folder);
     }
+    let read_prefixes: Vec<String> = folders.iter().map(|f| format!("{f}/")).collect();
+    // A job that writes tables is also given the folders it may write: an existing table's own, and for a table it will create, its
+    // catalog's root (the new table's folder is not known yet; the storage door narrows it to the folder the catalog gives).
+    let mut write_prefixes: Vec<String> = Vec::new();
+    let mut create_roots: Vec<String> = Vec::new();
+    for w in spec["table_writes"].as_array().into_iter().flatten() {
+        if let Some(id) = w["id"].as_str() {
+            let (uri, rel, folder) = tables::locate(app, org, id).await?;
+            located.insert(
+                id.to_owned(),
+                json!({"uri": uri, "metadata": rel, "folder": folder}),
+            );
+            write_prefixes.push(format!("{folder}/"));
+            folders.push(folder);
+        } else {
+            let catalog = w["catalog_id"]
+                .as_str()
+                .ok_or_else(|| Error::Internal("a write has no catalog".into()))?;
+            let (root, _) = catalogs::target(app, org, catalog).await?;
+            create_roots.push(format!("{}/", root.folder));
+            folders.push(root.folder);
+        }
+    }
+    let writing = !write_prefixes.is_empty() || !create_roots.is_empty();
     let refs: Vec<&str> = folders.iter().map(String::as_str).collect();
-    let creds = tables::vend(app, &refs, false, ttl).await?;
+    let creds = tables::vend(app, &refs, writing, ttl).await?;
     let (endpoint, bucket) = app
         .stores
         .bucket_place()
@@ -1166,10 +1430,13 @@ async fn storage_for(app: &App, org: &str, ids: &[String], timeout_s: i64) -> Re
     Ok(json!({
         "endpoint": endpoint, "bucket": bucket, "key_id": creds.key_id, "secret": creds.secret,
         "session_token": creds.session_token, "tables": located,
+        "mode": if writing { "write" } else { "read" },
+        "read_prefixes": read_prefixes, "write_prefixes": write_prefixes, "create_roots": create_roots,
     }))
 }
 
 /// Check the current workspace, entitlements, object grants and table rules before handing a run to a worker.
+#[allow(clippy::too_many_lines)]
 async fn authorize_lease(app: &App, target: &Target, run: &Run, spec: &Value) -> Result<()> {
     let invalid = || Error::Internal("invalid queued run specification".into());
     let (items, entitlement) = match run.kind.as_str() {
@@ -1190,17 +1457,18 @@ async fn authorize_lease(app: &App, target: &Target, run: &Run, spec: &Value) ->
                 .to_owned(),
         );
     }
-    let writes = if run.kind == "job" {
-        vec![
-            spec["output"]
-                .as_str()
-                .filter(|id| !id.is_empty())
-                .ok_or_else(invalid)?
-                .to_owned(),
-        ]
+    let mut writes = if run.kind == "job" {
+        spec["output"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .map(|id| vec![id.to_owned()])
+            .unwrap_or_default()
     } else {
         vec![]
     };
+    if run.kind == "job" {
+        add_write_scope(spec, &mut reads, &mut writes);
+    }
     let who: As = serde_json::from_value(spec["as"].clone()).map_err(|_| invalid())?;
     let identity = who.identity(
         &run.org_id,
@@ -1249,6 +1517,50 @@ async fn authorize_lease(app: &App, target: &Target, run: &Run, spec: &Value) ->
         has_personal |= entry.classification == "personal";
     }
     if run.kind == "job" {
+        for w in spec["table_writes"].as_array().into_iter().flatten() {
+            let schema = w["schema_id"].as_str().ok_or_else(invalid)?;
+            if let Some(id) = w["id"].as_str() {
+                let (entry, securable) =
+                    catalogs::target_in(app, &run.workspace_id, &run.org_id, id).await?;
+                iam::require(
+                    app,
+                    &identity,
+                    &run.org_id,
+                    &sides,
+                    Privilege::Modify,
+                    &securable,
+                )
+                .await?;
+                let mut policy_identity = identity.clone();
+                policy_identity.scope = None;
+                if entry.kind != Kind::Table
+                    || catalogs::is_restricted(
+                        app,
+                        &policy_identity,
+                        &run.org_id,
+                        &sides,
+                        &entry.id,
+                    )
+                    .await?
+                {
+                    return Err(Error::Unauthorized);
+                }
+            } else {
+                let (_, securable) =
+                    catalogs::target_in(app, &run.workspace_id, &run.org_id, schema).await?;
+                iam::require(
+                    app,
+                    &identity,
+                    &run.org_id,
+                    &sides,
+                    Privilege::CreateTable,
+                    &securable,
+                )
+                .await?;
+            }
+        }
+    }
+    if run.kind == "job" && spec["output"].as_str().is_some_and(|o| !o.is_empty()) {
         let id = spec["output"].as_str().ok_or_else(invalid)?;
         let (entry, securable) =
             catalogs::target_in(app, &run.workspace_id, &run.org_id, id).await?;
@@ -1380,14 +1692,21 @@ pub async fn lease(app: &App, target: &Target) -> Result<Option<Lease>> {
             })
             .unwrap_or_default()
     };
-    let (reads, writes) = if run.kind == "sql" {
+    let (mut reads, mut writes) = if run.kind == "sql" {
         (strings(&spec["tables"]), vec![])
     } else {
+        let output = spec["output"].as_str().unwrap_or_default();
         (
             strings(&spec["inputs"]),
-            vec![spec["output"].as_str().unwrap_or_default().to_owned()],
+            if output.is_empty() {
+                vec![]
+            } else {
+                vec![output.to_owned()]
+            },
         )
     };
+    // The tables a job declared it writes (see `add_write_scope`).
+    add_write_scope(&spec, &mut reads, &mut writes);
     // A statement reads its tables with credentials, not with a token; only a job's files go through the API.
     let token = if run.kind == "sql" {
         String::new()
@@ -1412,13 +1731,16 @@ pub async fn lease(app: &App, target: &Target) -> Result<Option<Lease>> {
     };
     let ids = table_ids(&run, &spec);
     // A server whose storage is a folder cannot give any machine access to data: the machine says so when it needs it.
-    let storage = if ids.is_empty() || app.issuer.is_none() {
+    let writing = spec["table_writes"]
+        .as_array()
+        .is_some_and(|a| !a.is_empty());
+    let storage = if (ids.is_empty() && !writing) || app.issuer.is_none() {
         None
     } else {
         // The credentials come from the storage provider over the network: one more try before giving up on a slow answer.
-        let mut got = storage_for(app, &run.org_id, &ids, limits.timeout_s).await;
+        let mut got = storage_for(app, &run.org_id, &ids, &spec, limits.timeout_s).await;
         if got.is_err() {
-            got = storage_for(app, &run.org_id, &ids, limits.timeout_s).await;
+            got = storage_for(app, &run.org_id, &ids, &spec, limits.timeout_s).await;
         }
         match got {
             Ok(s) => Some(s),

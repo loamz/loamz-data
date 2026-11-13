@@ -4,7 +4,7 @@
 //!
 //! * the **catalog door** forwards the REST-catalog requests for the tables the run declared to the Data server, adding the run's own
 //!   token (which the sandbox never sees);
-//! * the **storage door** takes the S3 requests DuckDB makes, checks method, folder and operation against the lease, signs them again
+//! * the **storage door** takes the S3 requests `DuckDB` makes, checks method, folder and operation against the lease, signs them again
 //!   with the lease's own credentials (the signature the sandbox made is ignored) and forwards them to the real store.
 //!
 //! Neither door passes a header through. Both refuse anything not named by the lease, and both stop working when the lease is closed.
@@ -14,6 +14,8 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+use std::fmt::Write as _;
 
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
@@ -43,8 +45,13 @@ pub struct StorageGrant {
     pub key_id: String,
     pub secret: String,
     pub session_token: String,
-    /// Folders the run may read and write, each ending in `/`.
-    pub prefixes: Vec<String>,
+    /// Folders the run may read, each ending in `/`.
+    pub read_prefixes: Vec<String>,
+    /// Folders the run may also write: the tables it declared that already exist.
+    pub write_prefixes: Vec<String>,
+    /// The roots of the catalogs it may create a table in. A table created there is written only in the folder the catalog gave it
+    /// (learned from the catalog door's reply), never elsewhere under the root.
+    pub create_roots: Vec<String>,
 }
 
 /// What the catalog door may do: one server, one workspace, the run's token, and the tables and schemas the run declared.
@@ -57,12 +64,17 @@ pub struct CatalogGrant {
     pub tables: Vec<String>,
     /// Schemas (`catalog.schema`) the run may create tables in.
     pub schemas: Vec<String>,
+    /// The bucket the tables are in, and the roots a table may be created under: what a created table's address is checked against.
+    pub bucket: String,
+    pub create_roots: Vec<String>,
 }
 
 /// The two sockets of one worker or job, and who may use them right now.
 pub struct Doors {
     storage: Arc<RwLock<Option<Arc<StorageGrant>>>>,
     catalog: Arc<RwLock<Option<Arc<CatalogGrant>>>>,
+    /// Folders the catalog gave tables this run created; the storage door lets the run write there.
+    learned: Arc<RwLock<Vec<String>>>,
     tasks: Vec<JoinHandle<()>>,
     storage_socket: PathBuf,
     catalog_socket: PathBuf,
@@ -76,27 +88,31 @@ impl Doors {
     pub fn start(dir: &Path) -> std::io::Result<Self> {
         let storage: Arc<RwLock<Option<Arc<StorageGrant>>>> = Arc::new(RwLock::new(None));
         let catalog: Arc<RwLock<Option<Arc<CatalogGrant>>>> = Arc::new(RwLock::new(None));
+        let learned: Arc<RwLock<Vec<String>>> = Arc::new(RwLock::new(Vec::new()));
         let storage_socket = dir.join("storage.sock");
         let catalog_socket = dir.join("catalog.sock");
         let tasks = vec![
             listen(&storage_socket, {
                 let grant = Arc::clone(&storage);
+                let learned = Arc::clone(&learned);
                 move |stream| {
-                    let grant = Arc::clone(&grant);
-                    Box::pin(async move { serve_storage(stream, grant).await })
+                    let (grant, learned) = (Arc::clone(&grant), Arc::clone(&learned));
+                    Box::pin(async move { serve_storage(stream, grant, learned).await })
                 }
             })?,
             listen(&catalog_socket, {
                 let grant = Arc::clone(&catalog);
+                let learned = Arc::clone(&learned);
                 move |stream| {
-                    let grant = Arc::clone(&grant);
-                    Box::pin(async move { serve_catalog(stream, grant).await })
+                    let (grant, learned) = (Arc::clone(&grant), Arc::clone(&learned));
+                    Box::pin(async move { serve_catalog(stream, grant, learned).await })
                 }
             })?,
         ];
         Ok(Self {
             storage,
             catalog,
+            learned,
             tasks,
             storage_socket,
             catalog_socket,
@@ -104,6 +120,7 @@ impl Doors {
     }
 
     pub async fn open(&self, storage: StorageGrant, catalog: CatalogGrant) {
+        self.learned.write().await.clear();
         *self.storage.write().await = Some(Arc::new(storage));
         *self.catalog.write().await = Some(Arc::new(catalog));
     }
@@ -112,6 +129,7 @@ impl Doors {
     pub async fn close(&self) {
         *self.storage.write().await = None;
         *self.catalog.write().await = None;
+        self.learned.write().await.clear();
     }
 
     #[must_use]
@@ -187,9 +205,8 @@ async fn read_request(stream: &mut UnixStream) -> Result<Option<Asked>, u16> {
         if raw.len() > 32_768 {
             return Err(431);
         }
-        let n = match tokio::time::timeout(IDLE, stream.read(&mut block)).await {
-            Ok(Ok(n)) => n,
-            _ => return Ok(None),
+        let Ok(Ok(n)) = tokio::time::timeout(IDLE, stream.read(&mut block)).await else {
+            return Ok(None);
         };
         if n == 0 {
             return Ok(None);
@@ -284,7 +301,7 @@ async fn write_answer(
     );
     for (name, value) in &answer.headers {
         if !value.contains(['\r', '\n']) {
-            head.push_str(&format!("{name}: {value}\r\n"));
+            let _ = write!(head, "{name}: {value}\r\n");
         }
     }
     head.push_str("\r\n");
@@ -345,7 +362,11 @@ async fn serve_connection<G, F, Fut>(
 
 // ---- the catalog door ---------------------------------------------------------------------------------------------
 
-async fn serve_catalog(stream: UnixStream, grant: Arc<RwLock<Option<Arc<CatalogGrant>>>>) {
+async fn serve_catalog(
+    stream: UnixStream,
+    grant: Arc<RwLock<Option<Arc<CatalogGrant>>>>,
+    learned: Arc<RwLock<Vec<String>>>,
+) {
     let http = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(REQUEST)
@@ -354,8 +375,8 @@ async fn serve_catalog(stream: UnixStream, grant: Arc<RwLock<Option<Arc<CatalogG
         return;
     };
     serve_connection(stream, grant, move |g, asked| {
-        let http = http.clone();
-        async move { forward_catalog(&http, &g, asked).await }
+        let (http, learned) = (http.clone(), Arc::clone(&learned));
+        async move { forward_catalog(&http, &g, &learned, asked).await }
     })
     .await;
 }
@@ -403,7 +424,12 @@ pub fn catalog_allows(grant: &CatalogGrant, method: &str, path: &str) -> bool {
     }
 }
 
-async fn forward_catalog(http: &reqwest::Client, grant: &CatalogGrant, asked: Asked) -> Answer {
+async fn forward_catalog(
+    http: &reqwest::Client,
+    grant: &CatalogGrant,
+    learned: &RwLock<Vec<String>>,
+    asked: Asked,
+) -> Answer {
     let path = pct_decode_path_for_check(&asked.path);
     if !catalog_allows(grant, &asked.method, &path) {
         tracing::warn!(
@@ -451,6 +477,14 @@ async fn forward_catalog(http: &reqwest::Client, grant: &CatalogGrant, asked: As
     if body.len() > MAX_BODY {
         return Answer::plain(502);
     }
+    // A table this run just created: the catalog says where its files go, and that folder (only that one) becomes writable.
+    if asked.method == "POST"
+        && status == 200
+        && asked.path.ends_with("/tables")
+        && let Some(folder) = created_folder(&body, &grant.bucket, &grant.create_roots)
+    {
+        learned.write().await.push(folder);
+    }
     Answer {
         status,
         headers: kind
@@ -462,9 +496,29 @@ async fn forward_catalog(http: &reqwest::Client, grant: &CatalogGrant, asked: As
     }
 }
 
+/// The folder a newly created table keeps its files in, from the catalog's reply (`metadata-location`), if it is inside a root the
+/// run may create under: `s3://<bucket>/<root><table folder>/metadata/...` gives `<root><table folder>/`.
+#[must_use]
+pub fn created_folder(reply: &[u8], bucket: &str, roots: &[String]) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_slice(reply).ok()?;
+    let location = json["metadata-location"].as_str()?;
+    let key = location.strip_prefix(&format!("s3://{bucket}/"))?;
+    let folder = key.split("/metadata/").next()?;
+    let folder = format!("{}/", folder.trim_end_matches('/'));
+    let inside = roots
+        .iter()
+        .any(|r| folder.len() > r.len() && folder.starts_with(r.as_str()));
+    let plain = !folder.split('/').any(|p| p == ".." || p == ".");
+    (inside && plain).then_some(folder)
+}
+
 // ---- the storage door ---------------------------------------------------------------------------------------------
 
-async fn serve_storage(stream: UnixStream, grant: Arc<RwLock<Option<Arc<StorageGrant>>>>) {
+async fn serve_storage(
+    stream: UnixStream,
+    grant: Arc<RwLock<Option<Arc<StorageGrant>>>>,
+    learned: Arc<RwLock<Vec<String>>>,
+) {
     let http = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(REQUEST)
@@ -473,21 +527,23 @@ async fn serve_storage(stream: UnixStream, grant: Arc<RwLock<Option<Arc<StorageG
         return;
     };
     serve_connection(stream, grant, move |g, asked| {
-        let http = http.clone();
-        async move { forward_storage(&http, &g, asked).await }
+        let (http, learned) = (http.clone(), Arc::clone(&learned));
+        async move { forward_storage(&http, &g, &learned, asked).await }
     })
     .await;
 }
 
-/// The S3 operations a write lease allows, and where. `path` is `/<bucket>/<key>` as sent, `query` as sent.
+/// The S3 operations a write lease allows, and where. `path` is `/<bucket>/<key>` as sent, `query` as sent; `made` are the folders the
+/// catalog gave tables this run created.
 ///
-/// Allowed, always inside the leased folders: get and head an object, put an object, delete an object, the multipart calls (start,
-/// upload a part, complete, abort) and a listing whose `prefix` is inside a leased folder.
+/// Reading (get, head, a listing) is allowed in the read, write and created folders. Writing (put, delete, the multipart calls) is allowed
+/// only in the write folders and the created ones.
 ///
 /// # Errors
 /// Why the request is refused.
 pub fn storage_allows(
     grant: &StorageGrant,
+    made: &[String],
     method: &str,
     path: &str,
     query: &str,
@@ -502,11 +558,12 @@ pub fn storage_allows(
     let pairs = parse_query(query);
     let has = |name: &str| pairs.iter().any(|(k, _)| k == name);
     let key = pct_decode(key);
-    let inside = |k: &str| {
-        !k.is_empty()
-            && !k.split('/').any(|part| part == ".." || part == ".")
-            && grant.prefixes.iter().any(|p| k.starts_with(p.as_str()))
+    let plain = |k: &str| !k.is_empty() && !k.split('/').any(|part| part == ".." || part == ".");
+    let under = |k: &str, prefixes: &[String]| prefixes.iter().any(|p| k.starts_with(p.as_str()));
+    let may_read = |k: &str| {
+        under(k, &grant.read_prefixes) || under(k, &grant.write_prefixes) || under(k, made)
     };
+    let may_write = |k: &str| under(k, &grant.write_prefixes) || under(k, made);
     // Anything but the known sub-resources is refused: `acl`, `tagging`, `versions`, `policy`, `copy` and the rest.
     let known = [
         "uploads",
@@ -524,30 +581,35 @@ pub fn storage_allows(
         return Err("a sub-resource that is not allowed");
     }
     if key.is_empty() {
-        // The bucket itself: only a listing, and only of a leased folder.
+        // The bucket itself: only a listing, and only of a folder the run may read.
         let prefix = pairs
             .iter()
             .find(|(k, _)| k == "prefix")
             .map(|(_, v)| v.as_str());
         return match (method, prefix) {
-            ("GET", Some(p)) if grant.prefixes.iter().any(|g| p.starts_with(g.as_str())) => Ok(()),
+            ("GET", Some(p)) if plain(p) && may_read(p) => Ok(()),
             _ => Err("a listing outside the leased folders"),
         };
     }
-    if !inside(&key) {
-        return Err("outside the leased folders");
+    if !plain(&key) {
+        return Err("a path that is not plain");
     }
     match method {
-        "GET" | "HEAD" => Ok(()),
-        "PUT" => Ok(()),
-        "DELETE" => Ok(()),
-        "POST" if has("uploads") || has("uploadId") => Ok(()),
-        _ => Err("a method that is not allowed"),
+        "GET" | "HEAD" if may_read(&key) => Ok(()),
+        "PUT" | "DELETE" if may_write(&key) => Ok(()),
+        "POST" if (has("uploads") || has("uploadId")) && may_write(&key) => Ok(()),
+        _ => Err("not allowed there"),
     }
 }
 
-async fn forward_storage(http: &reqwest::Client, grant: &StorageGrant, asked: Asked) -> Answer {
-    if let Err(why) = storage_allows(grant, &asked.method, &asked.path, &asked.query) {
+async fn forward_storage(
+    http: &reqwest::Client,
+    grant: &StorageGrant,
+    learned: &RwLock<Vec<String>>,
+    asked: Asked,
+) -> Answer {
+    let made = learned.read().await.clone();
+    if let Err(why) = storage_allows(grant, &made, &asked.method, &asked.path, &asked.query) {
         tracing::warn!(
             method = asked.method,
             path = asked.path,
@@ -705,7 +767,7 @@ fn amz_date(now: SystemTime) -> String {
     )
 }
 
-/// Percent-encodes everything but the unreserved characters (and `/` when `keep_slash`), as SigV4 asks.
+/// Percent-encodes everything but the unreserved characters (and `/` when `keep_slash`), as `SigV4` asks.
 fn uri_encode(text: &str, keep_slash: bool) -> String {
     let mut out = String::with_capacity(text.len());
     for b in text.bytes() {
@@ -715,7 +777,7 @@ fn uri_encode(text: &str, keep_slash: bool) -> String {
         {
             out.push(char::from(b));
         } else {
-            out.push_str(&format!("%{b:02X}"));
+            let _ = write!(out, "%{b:02X}");
         }
     }
     out
@@ -726,12 +788,13 @@ fn pct_decode(text: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
-                out.push(h * 16 + l);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2]))
+        {
+            out.push(h * 16 + l);
+            i += 3;
+            continue;
         }
         out.push(bytes[i]);
         i += 1;
@@ -794,10 +857,10 @@ fn sign_request(
         headers.push(("x-amz-security-token", grant.session_token.clone()));
     }
     headers.sort_by(|a, b| a.0.cmp(b.0));
-    let canonical_headers: String = headers
-        .iter()
-        .map(|(k, v)| format!("{k}:{}\n", v.trim()))
-        .collect();
+    let mut canonical_headers = String::new();
+    for (k, v) in &headers {
+        let _ = writeln!(canonical_headers, "{k}:{}", v.trim());
+    }
     let signed_names = headers
         .iter()
         .map(|(k, _)| *k)
@@ -833,7 +896,9 @@ mod tests {
             key_id: "AKID".into(),
             secret: "secret".into(),
             session_token: "token".into(),
-            prefixes: vec!["ws/cat/tbl/".into()],
+            read_prefixes: vec!["ws/cat/in/".into()],
+            write_prefixes: vec!["ws/cat/tbl/".into()],
+            create_roots: vec!["ws/cat/".into()],
         }
     }
 
@@ -844,6 +909,8 @@ mod tests {
             token: "jt_x".into(),
             tables: vec!["sales.raw.orders".into()],
             schemas: vec!["sales.raw".into()],
+            bucket: "lake".into(),
+            create_roots: vec!["ws/cat/".into()],
         }
     }
 
@@ -869,12 +936,12 @@ mod tests {
     fn dates_are_written_the_way_signatures_expect() {
         assert_eq!(amz_date(UNIX_EPOCH), "19700101T000000Z");
         assert_eq!(
-            amz_date(UNIX_EPOCH + Duration::from_secs(1_440_938_160)),
+            amz_date(UNIX_EPOCH + Duration::from_mins(24_015_636)),
             "20150830T123600Z"
         );
         // A leap day.
         assert_eq!(
-            amz_date(UNIX_EPOCH + Duration::from_secs(1_709_208_000)),
+            amz_date(UNIX_EPOCH + Duration::from_hours(474_780)),
             "20240229T120000Z"
         );
     }
@@ -882,7 +949,7 @@ mod tests {
     #[test]
     fn the_storage_door_allows_only_the_leased_folders_and_known_operations() {
         let g = storage();
-        let ok = |m: &str, p: &str, q: &str| storage_allows(&g, m, p, q).is_ok();
+        let ok = |m: &str, p: &str, q: &str| storage_allows(&g, &[], m, p, q).is_ok();
         assert!(ok("GET", "/lake/ws/cat/tbl/data/a.parquet", ""));
         assert!(ok(
             "PUT",
@@ -984,5 +1051,34 @@ mod tests {
         );
         assert_eq!(get("x-amz-security-token").unwrap(), "token");
         assert!(get("host").is_none(), "the client adds the host itself");
+    }
+
+    #[test]
+    fn a_table_the_run_created_is_writable_only_in_the_folder_the_catalog_gave_it() {
+        let g = storage();
+        let made = vec!["ws/cat/newtable/".to_owned()];
+        let ok = |m: &str, p: &str| storage_allows(&g, &made, m, p, "").is_ok();
+        assert!(ok("PUT", "/lake/ws/cat/newtable/data/a.parquet"));
+        assert!(ok("GET", "/lake/ws/cat/newtable/metadata/x.json"));
+        // Under the same catalog root, but another table: refused, for reading and writing.
+        assert!(!ok("PUT", "/lake/ws/cat/other/data/a.parquet"));
+        assert!(!ok("GET", "/lake/ws/cat/other/data/a.parquet"));
+        // The folder is learned from the catalog's reply, and only inside a root the run may create under.
+        let roots = vec!["ws/cat/".to_owned()];
+        let reply =
+            br#"{"metadata-location":"s3://lake/ws/cat/newtable/metadata/00000-a.metadata.json"}"#;
+        assert_eq!(
+            created_folder(reply, "lake", &roots).as_deref(),
+            Some("ws/cat/newtable/")
+        );
+        for bad in [
+            br#"{"metadata-location":"s3://other/ws/cat/newtable/metadata/0.json"}"#.as_slice(),
+            br#"{"metadata-location":"s3://lake/elsewhere/newtable/metadata/0.json"}"#.as_slice(),
+            br#"{"metadata-location":"s3://lake/ws/cat/../x/metadata/0.json"}"#.as_slice(),
+            br#"{"metadata-location":"s3://lake/ws/cat/metadata/0.json"}"#.as_slice(),
+            b"not json".as_slice(),
+        ] {
+            assert_eq!(created_folder(bad, "lake", &roots), None);
+        }
     }
 }

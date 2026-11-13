@@ -47,6 +47,25 @@ pub struct Scope {
     pub writes: Vec<String>,
 }
 
+impl Scope {
+    /// A run that writes tables may also create one in a schema it declared: that is listed in `writes` as `create:<schema id>`.
+    #[must_use]
+    pub fn may_create_in(&self, schema: &str) -> bool {
+        self.writes
+            .iter()
+            .any(|w| w.strip_prefix("create:") == Some(schema))
+    }
+
+    /// The catalogs and schemas above what a run declared are visible to it (it can look at them, not read them): listed in `reads`
+    /// as `see:<id>`.
+    #[must_use]
+    pub fn may_see(&self, id: &str) -> bool {
+        self.reads
+            .iter()
+            .any(|r| r.strip_prefix("see:") == Some(id))
+    }
+}
+
 /// The verified identity behind a request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identity {
