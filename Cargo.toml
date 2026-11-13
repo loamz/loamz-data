@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["server/lake", "server/runner", "server/server"]
+members = ["server/lake", "server/runner", "server/server", "server/worker"]
 
 [workspace.package]
 edition = "2024"
