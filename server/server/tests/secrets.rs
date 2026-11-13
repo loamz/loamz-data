@@ -43,6 +43,7 @@ fn settings(storage: Storage) -> Settings {
         agent_clients: vec![],
         directory_client: "loamz-data-directory".into(),
         directory_secret: Some("loamz-data/directory#secret".parse().unwrap()),
+        metrics_token: None,
         openbao: None,
     }
 }

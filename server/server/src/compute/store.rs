@@ -169,7 +169,7 @@ pub async fn touch<'e, E: Executor<'e, Database = Any>>(e: E, id: &str, now: i64
 
 /// Serializes admission per organization across `PostgreSQL` instances and `SQLite` connections.
 /// The no-op update takes a row lock until the surrounding transaction commits.
-pub async fn has_capacity(c: &mut sqlx::AnyConnection, org: &str, limit: i64) -> Result<bool> {
+pub async fn has_capacity(c: &mut sqlx::AnyConnection, org: &str, limit: i64) -> Result<Capacity> {
     let locked = sqlx::query("UPDATE orgs SET id = id WHERE id = $1")
         .bind(org)
         .execute(&mut *c)
@@ -185,7 +185,61 @@ pub async fn has_capacity(c: &mut sqlx::AnyConnection, org: &str, limit: i64) ->
     .bind(org)
     .fetch_one(&mut *c)
     .await?;
-    Ok(active < limit)
+    if active >= limit {
+        return Ok(Capacity::OrganizationFull);
+    }
+    Ok(Capacity::Room)
+}
+
+/// Whether a workspace is under its own cap, if it has one.
+pub async fn workspace_has_room(c: &mut sqlx::AnyConnection, workspace: &str) -> Result<bool> {
+    let Some(cap) = workspace_quota(&mut *c, workspace).await? else {
+        return Ok(true);
+    };
+    let active: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM runs WHERE workspace_id = $1 AND state IN ('queued', 'running')",
+    )
+    .bind(workspace)
+    .fetch_one(&mut *c)
+    .await?;
+    Ok(active < cap)
+}
+
+/// What an admission found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Capacity {
+    Room,
+    OrganizationFull,
+}
+
+/// The workspace's own cap on active runs, if it has one.
+pub async fn workspace_quota(c: &mut sqlx::AnyConnection, workspace: &str) -> Result<Option<i64>> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT max_active_runs FROM workspace_quotas WHERE workspace_id = $1",
+    )
+    .bind(workspace)
+    .fetch_optional(&mut *c)
+    .await?)
+}
+
+/// Sets the workspace's cap (None: it has none of its own).
+pub async fn set_workspace_quota(
+    c: &mut sqlx::AnyConnection,
+    workspace: &str,
+    cap: Option<i64>,
+) -> Result<()> {
+    sqlx::query("DELETE FROM workspace_quotas WHERE workspace_id = $1")
+        .bind(workspace)
+        .execute(&mut *c)
+        .await?;
+    if let Some(n) = cap {
+        sqlx::query("INSERT INTO workspace_quotas (workspace_id, max_active_runs) VALUES ($1,$2)")
+            .bind(workspace)
+            .bind(n)
+            .execute(&mut *c)
+            .await?;
+    }
+    Ok(())
 }
 
 pub async fn insert_run<'e, E: Executor<'e, Database = Any>>(e: E, r: &Run) -> Result<()> {
@@ -566,4 +620,15 @@ pub async fn count_targets<'e, E: Executor<'e, Database = Any>>(
         .fetch_one(e)
         .await?,
     )
+}
+
+/// Runs waiting and running, by state.
+pub async fn queue_depths<'e, E: Executor<'e, Database = Any>>(e: E) -> Result<Vec<(String, i64)>> {
+    let rows = sqlx::query("SELECT state, COUNT(*) AS n FROM runs WHERE state IN ('queued','running') GROUP BY state ORDER BY state")
+        .fetch_all(e)
+        .await?;
+    rows.iter()
+        .map(|r| Ok((r.try_get::<String, _>("state")?, r.try_get::<i64, _>("n")?)))
+        .collect::<std::result::Result<_, sqlx::Error>>()
+        .map_err(Into::into)
 }

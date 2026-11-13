@@ -607,7 +607,11 @@ fn new_run(ctx: &Ctx<'_>, kind: &str, title: &str, target: &Target, spec: &Value
 
 async fn queue(app: &App, ctx: &Ctx<'_>, run: &Run, action: &str) -> Result<()> {
     let mut uow = Uow::begin(app).await?;
-    if !store::has_capacity(&mut uow.tx, &run.org_id, app.max_active_runs).await? {
+    let org_full = store::has_capacity(&mut uow.tx, &run.org_id, app.max_active_runs).await?
+        == store::Capacity::OrganizationFull;
+    let workspace_full =
+        !org_full && !store::workspace_has_room(&mut uow.tx, &run.workspace_id).await?;
+    if org_full || workspace_full {
         drop(uow);
         crate::governance::audit::service::record(
             app,
@@ -619,8 +623,12 @@ async fn queue(app: &App, ctx: &Ctx<'_>, run: &Run, action: &str) -> Result<()> 
         )
         .await?;
         return Err(Error::TooManyRequests(
-            "this organization has reached its active run limit; try again when a run finishes"
-                .into(),
+            if org_full {
+                "this organization has reached its active run limit; try again when a run finishes"
+            } else {
+                "this workspace has reached its active run limit; try again when a run finishes"
+            }
+            .into(),
         ));
     }
     store::insert_run(&mut *uow.tx, run).await?;
@@ -1419,4 +1427,46 @@ pub async fn set_catalog_policy(
         targets,
     )
     .await
+}
+
+/// How many runs are waiting and running, by state (for monitoring).
+///
+/// # Errors
+/// The database could not be read.
+pub async fn queue_depths(app: &App) -> Result<Vec<(String, i64)>> {
+    store::queue_depths(app.db.pool()).await
+}
+
+/// The workspace's own cap on queued and running runs, if it has one (the organization's cap applies besides).
+///
+/// # Errors
+/// Not in the workspace.
+pub async fn quota(app: &App, ctx: &Ctx<'_>) -> Result<Option<i64>> {
+    let mut c = app.db.pool().acquire().await?;
+    store::workspace_quota(&mut c, &ctx.workspace.id).await
+}
+
+/// Sets the workspace's cap on queued and running runs (None: none of its own). Account admins only, because it limits what the
+/// workspace's own admins may do.
+///
+/// # Errors
+/// Not an account admin, or the cap is not positive.
+pub async fn set_quota(app: &App, ctx: &Ctx<'_>, cap: Option<i64>) -> Result<()> {
+    orgs::require_admin(app, ctx.identity, &ctx.workspace.org_id).await?;
+    if cap.is_some_and(|n| n < 1) {
+        return Err(Error::Invalid(
+            "the cap is a positive number, or null for none".into(),
+        ));
+    }
+    let mut uow = Uow::begin(app).await?;
+    store::set_workspace_quota(&mut uow.tx, &ctx.workspace.id, cap).await?;
+    uow.audit(
+        &ctx.workspace.org_id,
+        &Who::of(ctx.identity),
+        "workspace.quota.set",
+        &format!("workspace {}", ctx.workspace.id),
+        "ok",
+    )
+    .await?;
+    uow.commit().await
 }

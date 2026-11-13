@@ -3,6 +3,7 @@
 pub mod compute;
 pub mod governance;
 pub mod kernel;
+pub mod metrics;
 pub mod storage;
 pub mod work;
 
@@ -18,6 +19,7 @@ pub static MIGRATIONS: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 #[must_use]
 pub fn routes() -> Routes {
     kernel::system::routes()
+        .merge(metrics::routes())
         .merge(governance::orgs::api::routes())
         .merge(governance::workspaces::api::routes())
         .merge(governance::catalogs::api::routes())
@@ -37,6 +39,10 @@ pub fn router(app: Shared) -> (Router, Vec<(&'static str, String)>) {
     // Unknown paths get the same problem document as every other error.
     let router = router
         .fallback(|| async { Error::NotFound("no such route".into()) })
+        .layer(axum::middleware::from_fn_with_state(
+            app.clone(),
+            metrics::count,
+        ))
         .with_state(app);
     (router, seen)
 }

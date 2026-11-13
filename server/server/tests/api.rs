@@ -965,6 +965,28 @@ async fn a_catalog_belongs_to_one_workspace(s: Server) {
 }
 both!(a_catalog_belongs_to_one_workspace);
 
+#[tokio::test]
+async fn metrics_are_counts_behind_a_scrape_token() {
+    let s = server(fresh_db(false).await).await;
+    s.get("/api/v1/me", &ana()).await;
+    assert_eq!(
+        s.send("GET", "/metrics", None, axum::body::Body::empty())
+            .await
+            .status,
+        401
+    );
+    assert_eq!(s.bearer("GET", "/metrics", "wrong", None).await.status, 401);
+    let ok = s.bearer("GET", "/metrics", &"m".repeat(40), None).await;
+    assert_eq!(ok.status, 200);
+    let text = ok.text();
+    assert!(
+        text.contains("loamz_http_requests_total{method=\"GET\",status=\"200\"}"),
+        "{text}"
+    );
+    assert!(text.contains("# TYPE loamz_runs gauge"));
+    assert!(!text.contains("ana"), "counts only: no names or ids");
+}
+
 async fn bytes_live_under_the_workspaces_prefix(s: Server) {
     let main = s.acme().await;
     let other = s.workspace(&ana(), ACME, "Other").await;

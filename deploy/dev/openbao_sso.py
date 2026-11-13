@@ -35,4 +35,13 @@ call("POST", "auth/oidc/role/default", {
     "bound_claims": {"roles": ["admin"]}, "token_policies": ["loamz-admin"], "token_ttl": "8h",
     "allowed_redirect_uris": ["http://127.0.0.1:8200/ui/vault/auth/oidc/oidc/callback", "http://localhost:8200/ui/vault/auth/oidc/oidc/callback", "http://localhost:8250/oidc/callback"],
 })
-print("OpenBao: sign in with Keycloak is on")
+
+# Break-glass: when Loamz Data is down, an owner holding the Keycloak role `break-glass` signs in (role `break-glass`, one hour) and can
+# read the bucket's credential and nothing else. Every use is in the audit log (deploy/dev/openbao.hcl: the container's output).
+call("PUT", "sys/policies/acl/break-glass", {"policy": 'path "secret/data/loamz-data/bucket" { capabilities = ["read"] }'})
+call("POST", "auth/oidc/role/break-glass", {
+    "role_type": "oidc", "user_claim": "preferred_username", "oidc_scopes": ["profile", "email"],
+    "bound_claims": {"roles": ["break-glass"]}, "token_policies": ["break-glass"], "token_ttl": "1h", "token_max_ttl": "1h",
+    "allowed_redirect_uris": ["http://127.0.0.1:8200/ui/vault/auth/oidc/oidc/callback", "http://localhost:8200/ui/vault/auth/oidc/oidc/callback", "http://localhost:8250/oidc/callback"],
+})
+print("OpenBao: sign in with Keycloak is on, and break-glass access is set up")

@@ -71,9 +71,11 @@ a SQL connection for BI tools, job schedules and alerts, abuse protection, safe 
 | Warm engine (Rust, DuckDB, all cores), on machines and serverless | compute | | | 📅 | | | |
 | Arrow results, streamed | compute | | | 📅 | | | |
 | Ranged reads instead of downloading tables | compute | | | 📅 | | | |
-| Notifications instead of polling; credential cache | compute | | | 📅 | | | |
+| Credential cache: the same table read twice asks the store once | compute | ✅ | | | | | |
+| Notifications instead of polling | compute | | | 📅 | | | |
 | Sandboxes for agents: a workspace folder per thread, a query path | compute | | | | 📅 | | |
-| Quotas per workspace; sandbox lifecycle | compute | | | | | 📅 | |
+| Run cap per workspace (below the organization's), set by account admins | compute | ✅ | | | | | |
+| Sandbox lifecycle (create, idle, stop, delete) | compute | | | | | 📅 | |
 | Schedules, triggers and failure alerts for jobs | compute | | | | | ❓ | |
 | **Storage** | | | | | | | |
 | S3-compatible store; short-lived credentials scoped to one folder (R2) | storage | ✅ | | | | | |
@@ -88,11 +90,14 @@ a SQL connection for BI tools, job schedules and alerts, abuse protection, safe 
 | One sign-in for operator tools: OpenBao and RustFS through Keycloak (development) | identity | ✅ | | | | | |
 | The same in production: the realm template and each tool's settings | identity | | | | | 📅 | |
 | Tables readable without our server (version hint) | recovery | ✅ | | | | | |
-| Continuous backups of the catalog and sign-in (Keycloak); break-glass | recovery | | | | | 📅 | |
+| Backups of the catalog and sign-in (`scripts/backup.sh`) and a restore check (`scripts/restore-check.sh`) | recovery | ✅ | | | | | |
+| Break-glass: an owner reads the bucket credential from OpenBao, audited (development) | recovery | ✅ | | | | | |
+| Continuous (WAL) archiving and the same in production | recovery | | | | | 📅 | |
 | **Platform** | | | | | | | |
 | Web console | platform | ✅ | | | | | |
 | Versioned public API, OpenAPI | platform | ✅ | | | | | |
-| Metrics and traces | platform | | | | | 📅 | |
+| Metrics: `/metrics` (request counts and times, queued and running runs), behind a vault token | platform | ✅ | | | | | |
+| Traces | platform | | | | | 📅 | |
 | Outbound traffic denied by default | platform | | | | | 📅 | |
 | Production deployment (`*.data.loamz.com`) | platform | | | | | 📅 | |
 | Limits an organization's admin sets (`Entitlements`), with safety caps | platform | | | | | 📅 | |

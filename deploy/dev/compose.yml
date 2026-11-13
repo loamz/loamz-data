@@ -72,7 +72,9 @@ services:
 
   openbao:
     image: openbao/openbao:latest
-    command: ["server", "-dev", "-dev-root-token-id=loamz-dev-only", "-dev-listen-address=0.0.0.0:8200"]
+    command: ["server", "-dev", "-dev-root-token-id=loamz-dev-only", "-dev-listen-address=0.0.0.0:8200", "-config=/openbao/config/openbao.hcl"]
+    volumes:
+      - ./openbao.hcl:/openbao/config/openbao.hcl:ro
     cap_add:
       - IPC_LOCK
     network_mode: "service:keycloak"

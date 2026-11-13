@@ -20,7 +20,7 @@ For the people building Loamz Data.
 | [design/](design/) | how each part works | [governance](design/governance.md) · [data](design/data.md) · [compute](design/compute.md) · [storage](design/storage.md) · [life of a query](design/life-of-a-query.md) |
 | [proposals/](proposals/) | what we agreed to build next | [0001 fast data plane](proposals/0001-fast-data-plane.md) · [0002 foundation](proposals/0002-foundation.md) |
 
-Also: [contributing](../CONTRIBUTING.md) (set up, test, code style) and the [API](../specs/data/v1/openapi.yaml) (OpenAPI).
+Also: [handoff](handoff.md) (briefs for other coding agents), [contributing](../CONTRIBUTING.md) (set up, test, code style) and the [API](../specs/data/v1/openapi.yaml) (OpenAPI).
 
 | word | means |
 |---|---|

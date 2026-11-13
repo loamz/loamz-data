@@ -259,7 +259,31 @@ pub async fn vend(app: &App, ids: &[&str], write: bool, ttl: Duration) -> Result
     let issuer = app.issuer.as_ref().ok_or_else(|| {
         Error::Unavailable("this server's storage cannot give other machines access to data".into())
     })?;
-    Ok(issuer.issue(ids, write, ttl).await?)
+    // The same folders and access, asked for again while the credentials still last nearly as long as wanted (within a minute): reuse
+    // them. A run asks for its time limit plus five minutes, so reused credentials still outlast the run.
+    let mut key: Vec<&str> = ids.to_vec();
+    key.sort_unstable();
+    let key = format!("{}|{write}", key.join(","));
+    let now = std::time::Instant::now();
+    if let Ok(cache) = app.credential_cache.lock()
+        && let Some((c, until)) = cache.get(&key)
+        && until.saturating_duration_since(now) >= ttl.saturating_sub(Duration::from_mins(1))
+    {
+        return Ok(c.clone());
+    }
+    let fresh = issuer.issue(ids, write, ttl).await?;
+    if let Ok(mut cache) = app.credential_cache.lock() {
+        // What the store honours is at least a minute and at most an hour; count on the least it can be.
+        cache.retain(|_, (_, until)| *until > now);
+        cache.insert(
+            key,
+            (
+                fresh.clone(),
+                now + ttl.clamp(Duration::from_mins(1), Duration::from_hours(1)),
+            ),
+        );
+    }
+    Ok(fresh)
 }
 
 async fn vend_for_client(app: &App, id: &str, write: bool) -> Result<Option<(Credentials, bool)>> {

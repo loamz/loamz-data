@@ -118,6 +118,12 @@ CREATE TABLE tasks (
 );
 CREATE INDEX tasks_due ON tasks (state, lease_until);
 
+-- A cap on the runs a workspace may have queued or running at once, below its organization's. No row: no cap of its own.
+CREATE TABLE workspace_quotas (
+    workspace_id    TEXT PRIMARY KEY,
+    max_active_runs BIGINT NOT NULL
+);
+
 -- Which compute may read a catalog. A catalog with none listed can be read from any compute of its workspace.
 CREATE TABLE catalog_compute (
     catalog_id TEXT NOT NULL,

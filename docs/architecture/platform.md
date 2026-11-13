@@ -62,7 +62,7 @@ flowchart TB
 | audit and observability | a tamper-evident audit chain for every change and refusal; run timings | metrics and traces for every request and run; one view of who read what, with which query | early |
 | usage | run timings (`queued_ms`, `run_ms`) | durable usage events per workspace: compute time, bytes read, storage; cost allocation (section 3) | before charging |
 | revocation | issued credentials expire with the run (its time limit plus five minutes); access is checked again when a run starts and when results are read | defined behavior when a grant or credential is revoked: new requests refused at once, cached credentials dropped, issued ones left to expire (kept short), running work cancelled when its input access is gone | before production |
-| backup and recovery | none | continuous backup of Postgres and of Keycloak's database; Iceberg version hints; break-glass access (0002 task 6) | before production |
+| backup and recovery | Iceberg version hints; `scripts/backup.sh` base backups with `scripts/restore-check.sh` proving a restore; break-glass role in OpenBao (policy `break-glass`, one hour, audited) | continuous (WAL) archiving of Postgres and of Keycloak's database, and the same in production (0002 task 6) | before production |
 | keys | none | OpenBao transit keys and rotation; an external KMS or HSM for the seal on request | enterprise |
 
 ## 3. Hosting and the cloud boundary

@@ -33,6 +33,8 @@ def add_dev(realm):
     if not _once(roles.setdefault("loamz-data", []), "name", "platform-admin"):
         roles["loamz-data"].append({"name": "platform-admin", "description": "The installation's admin: creates organizations and adds people to them."})
     roles.setdefault("loamz-openbao", [{"name": "admin", "description": "May sign in to OpenBao with full access (development)."}])
+    if not _once(roles["loamz-openbao"], "name", "break-glass"):
+        roles["loamz-openbao"].append({"name": "break-glass", "description": "May read the storage credential when Loamz Data is down: an hour, audited."})
     roles.setdefault("loamz-rustfs", [{"name": "consoleAdmin", "description": "May sign in to the RustFS console with full access (development)."}])
 
     if not _once(realm["clients"], "clientId", "loamz-openbao"):
@@ -53,7 +55,7 @@ def add_dev(realm):
         admin = {"username": "admin", "email": "admin@loamz.local", "firstName": "Loamz", "lastName": "Admin", "enabled": True, "emailVerified": True,
                  "credentials": [{"type": "password", "value": "admin", "temporary": True}], "clientRoles": {}}
         users.append(admin)
-    admin.setdefault("clientRoles", {}).update({"loamz-data": ["platform-admin"], "loamz-openbao": ["admin"], "loamz-rustfs": ["consoleAdmin"]})
+    admin.setdefault("clientRoles", {}).update({"loamz-data": ["platform-admin"], "loamz-openbao": ["admin", "break-glass"], "loamz-rustfs": ["consoleAdmin"]})
     for user in users:
         if user.get("serviceAccountClientId") == "loamz-data-directory":
             have = user["clientRoles"].setdefault("realm-management", [])

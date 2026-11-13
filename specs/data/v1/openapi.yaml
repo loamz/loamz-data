@@ -18,6 +18,17 @@ paths:
         '200':
           description: OK
       security: []
+  /metrics:
+    get:
+      summary: What the server says about itself for a monitoring system (Prometheus text). Needs the scrape token; without one configured there is no such route.
+      parameters: []
+      responses:
+        '200':
+          description: Request counts and times, and the runs waiting and running
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
   /readyz:
     get:
       summary: The database answers.
@@ -981,6 +992,45 @@ paths:
                   type: array
                   items:
                     type: string
+      responses:
+        '204':
+          description: Set
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/quota:
+    get:
+      summary: The workspace's own cap on queued and running runs (null means none besides the organization's).
+      parameters:
+      - *id002
+      responses:
+        '200':
+          description: The cap
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+    put:
+      summary: Set the workspace's cap on queued and running runs, or null to remove it. Account admins.
+      parameters:
+      - *id002
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - max_active_runs
+              properties:
+                max_active_runs:
+                  type: integer
+                  nullable: true
       responses:
         '204':
           description: Set

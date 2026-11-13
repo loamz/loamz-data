@@ -36,6 +36,8 @@ pub struct Settings {
     /// Without the reference, the directory is not connected: only people already in Keycloak can sign in.
     pub directory_client: String,
     pub directory_secret: Option<SecretRef>,
+    /// The token a monitoring system scrapes `/metrics` with, by reference. Without it there is no such route.
+    pub metrics_token: Option<SecretRef>,
     /// Where the secrets are: `OpenBao`, and how this server logs in to it. Needed when any setting names a secret.
     pub openbao: Option<OpenBaoSettings>,
 }
@@ -69,6 +71,7 @@ pub struct Secrets {
     pub bucket_issuer_token: Option<String>,
     pub serverless_token: Option<String>,
     pub directory_secret: Option<String>,
+    pub metrics_token: Option<String>,
 }
 
 impl Settings {
@@ -126,6 +129,13 @@ impl Settings {
         }
         if let Some(r) = &self.directory_secret {
             out.directory_secret = Some(fetch(vault, r).await?);
+        }
+        if let Some(r) = &self.metrics_token {
+            let t = fetch(vault, r).await?;
+            if t.len() < 32 {
+                return Err("the metrics token must be at least 32 characters".into());
+            }
+            out.metrics_token = Some(t);
         }
         Ok(out)
     }
@@ -386,6 +396,7 @@ impl Settings {
             directory_client: var("LOAMZ_DATA_DIRECTORY_CLIENT")
                 .unwrap_or_else(|| "loamz-data-directory".into()),
             directory_secret: reference("LOAMZ_DATA_DIRECTORY_SECRET_REF")?,
+            metrics_token: reference("LOAMZ_DATA_METRICS_TOKEN_REF")?,
             openbao: openbao()?,
             agent_clients: var("LOAMZ_DATA_AGENT_CLIENTS")
                 .map(|v| {

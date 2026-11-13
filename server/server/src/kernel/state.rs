@@ -19,10 +19,18 @@ pub struct App {
     pub issuer: Option<Arc<dyn Issuer>>,
     /// Where the secrets are, for the settings people make while it runs (a storage credential names its secrets). None: no vault.
     pub vault: Option<Arc<dyn SecretStore>>,
+    pub metrics: crate::metrics::Metrics,
+    /// The bearer token a monitoring system scrapes `/metrics` with, from the vault. None: there is no such route.
+    pub metrics_token: Option<String>,
     /// The directory of people and organizations, where the installation's admin creates them. None: it is not connected.
     pub directory: Option<Arc<dyn Directory>>,
     /// Table metadata files, which never change once written: read from the bucket once.
     pub metadata_cache: std::sync::Mutex<super::cache::BoundedCache>,
+    /// Short-lived storage credentials already issued, by the folders and the access they open, while they still last nearly as long as wanted:
+    /// the same table read twice in a row does not ask the store twice. Nothing here is per person; authorization comes first.
+    pub credential_cache: std::sync::Mutex<
+        std::collections::HashMap<String, (loamz_lake::grants::Credentials, std::time::Instant)>,
+    >,
     /// Wakes the serverless worker the moment a statement is queued, instead of when it next looks.
     pub queued: tokio::sync::Notify,
     /// One pooled connection to the serverless endpoints, so a statement does not pay for a new TLS handshake each time.
@@ -51,8 +59,11 @@ impl App {
                 .with_agent_clients(settings.agent_clients.clone()),
             issuer: settings.storage.issuer(secrets)?,
             vault: None,
+            metrics: crate::metrics::Metrics::default(),
+            metrics_token: secrets.metrics_token.clone(),
             directory: settings.directory(secrets)?,
             metadata_cache: std::sync::Mutex::new(super::cache::BoundedCache::new(64 << 20)),
+            credential_cache: std::sync::Mutex::default(),
             queued: tokio::sync::Notify::new(),
             serverless_http: reqwest::Client::builder()
                 .pool_idle_timeout(std::time::Duration::from_secs(90))

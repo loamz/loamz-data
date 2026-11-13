@@ -64,7 +64,7 @@ Status: **Built** is in the code today; **Planned** names its proposal and task 
 | S3 | Any store with STS (RustFS, S3); R2 through its own API. | Built on RustFS (0002 task 1); S3 untested |
 | S4 | Default storage on RustFS: nothing to set up. | Built for development (0002 task 3); per-workspace prefixes planned (task 5) |
 | S5 | Every secret lives in OpenBao; the catalog keeps references only. | Built for the server's own secrets (0002 task 6); production OpenBao (HA, audit) planned |
-| S6 | Data is readable without the Loamz server: a version hint per table, continuous backups of the catalog and of sign-in (Keycloak), break-glass access for owners. | Version hint built; backups and break-glass planned (0002 task 6) |
+| S6 | Data is readable without the Loamz server: a version hint per table, continuous backups of the catalog and of sign-in (Keycloak), break-glass access for owners. | Version hint, base backups with a restore check and break-glass (development) built; continuous archiving and production planned (0002 task 6) |
 
 ### Clients
 | id | requirement | status |

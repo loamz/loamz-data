@@ -1055,6 +1055,77 @@ async fn compute_belongs_to_its_workspace(s: Server) {
 }
 both!(compute_belongs_to_its_workspace);
 
+/// A workspace can be given its own cap on active runs, below its organization's; only an account admin sets it.
+async fn a_workspace_can_have_its_own_run_cap(s: Server) {
+    let l = lab(&s).await;
+    attach(&s).await;
+    let quota = format!("/api/v1/workspaces/{}/quota", l.ws);
+    let statement = format!("/api/v1/workspaces/{}/sql/statements", l.ws);
+    let ask = || async {
+        s.post(
+            &statement,
+            &ana(),
+            json!({"sql": "SELECT * FROM sales.raw.orders", "wait_s": 0}),
+        )
+        .await
+    };
+    assert_eq!(
+        s.get(&quota, &ana()).await.json()["max_active_runs"],
+        json!(null)
+    );
+    s.assign(&l.ws, &[&bob()]).await;
+    assert_eq!(
+        s.put(&quota, &bob(), json!({"max_active_runs": 1}))
+            .await
+            .status,
+        403,
+        "only account admins"
+    );
+    assert_eq!(
+        s.put(&quota, &ana(), json!({"max_active_runs": 0}))
+            .await
+            .status,
+        400
+    );
+    assert_eq!(
+        s.put(&quota, &ana(), json!({"max_active_runs": 1}))
+            .await
+            .status,
+        204
+    );
+    assert_eq!(ask().await.status, 202, "one is allowed");
+    let second = ask().await;
+    assert_eq!(second.status, 429, "{}", second.text());
+    assert!(second.text().contains("this workspace"));
+    // Removing the cap lifts it.
+    assert_eq!(
+        s.put(&quota, &ana(), json!({"max_active_runs": null}))
+            .await
+            .status,
+        204
+    );
+    assert_eq!(ask().await.status, 202);
+}
+both!(a_workspace_can_have_its_own_run_cap);
+
+/// The same table loaded twice in a row asks the store for credentials once.
+#[tokio::test]
+async fn storage_credentials_are_reused_while_they_last() {
+    let issuer = std::sync::Arc::new(common::CountingIssuer::default());
+    let s = common::server_with_issuer(fresh_db(false).await, issuer.clone()).await;
+    let l = lab(&s).await;
+    let table = format!(
+        "/api/v1/workspaces/{}/iceberg/v1/sales/namespaces/raw/tables/orders",
+        l.ws
+    );
+    let asked = || issuer.0.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(s.get(&table, &ana()).await.status, 200);
+    let first = asked();
+    assert!(first >= 1, "a table load asks for credentials");
+    assert_eq!(s.get(&table, &ana()).await.status, 200);
+    assert_eq!(asked(), first, "the second load reuses them");
+}
+
 /// A catalog can say which of its workspace's compute may read it. Without a list, any may.
 async fn a_catalog_can_name_the_compute_that_may_read_it(s: Server) {
     let l = lab(&s).await;

@@ -155,6 +155,24 @@ async fn list_targets(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>
     ))
 }
 
+/// The workspace's own cap on active runs (null: none).
+async fn get_quota(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
+    Ok(Json(
+        json!({"max_active_runs": service::quota(&app, &ctx(&c)).await?}),
+    ))
+}
+
+#[derive(Deserialize)]
+struct Quota {
+    max_active_runs: Option<i64>,
+}
+
+async fn set_quota(State(app): State<Shared>, c: WsCtx, body: Bytes) -> Result<StatusCode> {
+    let req: Quota = body_json(&body)?;
+    service::set_quota(&app, &ctx(&c), req.max_active_runs).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Which compute may read a catalog (an empty list: any compute of the workspace).
 async fn catalog_policy(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
     let ids = service::catalog_policy(&app, &ctx(&c), &param(&c.params, "catalog")?).await?;
@@ -452,6 +470,8 @@ pub fn routes() -> Routes {
     Routes::new()
         .get("/api/v1/workspaces/{ws}/compute/targets", list_targets)
         .get("/api/v1/workspaces/{ws}/compute/providers", providers)
+        .get("/api/v1/workspaces/{ws}/quota", get_quota)
+        .put("/api/v1/workspaces/{ws}/quota", set_quota)
         .get(
             "/api/v1/workspaces/{ws}/catalogs/{catalog}/compute",
             catalog_policy,

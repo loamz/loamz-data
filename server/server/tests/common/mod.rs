@@ -200,6 +200,27 @@ impl Reply {
     }
 }
 
+/// An issuer that counts how often it was asked, for the credential cache test.
+#[derive(Default)]
+pub struct CountingIssuer(pub std::sync::atomic::AtomicUsize);
+
+#[async_trait]
+impl loamz_lake::grants::Issuer for CountingIssuer {
+    async fn issue(
+        &self,
+        _volumes: &[&str],
+        _write: bool,
+        _ttl: std::time::Duration,
+    ) -> Result<loamz_lake::grants::Credentials, loamz_lake::files::FileError> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(loamz_lake::grants::Credentials {
+            key_id: "k".into(),
+            secret: "s".into(),
+            session_token: "t".into(),
+        })
+    }
+}
+
 /// A vault that holds a few secrets, so a test can name them without a real `OpenBao`.
 pub struct FakeVault;
 
@@ -295,11 +316,26 @@ pub async fn server_with_limits(db: Db, max_upload: u64, max_active_runs: i64) -
 }
 
 /// A server whose directory of people is not connected.
+/// A server that asks this issuer for storage credentials.
+pub async fn server_with_issuer(db: Db, issuer: Arc<dyn loamz_lake::grants::Issuer>) -> Server {
+    build_with(db, 1024 * 1024, 32, true, Some(issuer)).await
+}
+
 pub async fn server_without_directory(db: Db) -> Server {
     build(db, 1024 * 1024, 32, false).await
 }
 
 async fn build(db: Db, max_upload: u64, max_active_runs: i64, directory: bool) -> Server {
+    build_with(db, max_upload, max_active_runs, directory, None).await
+}
+
+async fn build_with(
+    db: Db,
+    max_upload: u64,
+    max_active_runs: i64,
+    directory: bool,
+    issuer: Option<Arc<dyn loamz_lake::grants::Issuer>>,
+) -> Server {
     let dir = std::env::temp_dir().join(format!("loamz-data-stores-{}", new_id()));
     let settings = Settings {
         listen: "127.0.0.1:0".parse().unwrap(),
@@ -314,12 +350,15 @@ async fn build(db: Db, max_upload: u64, max_active_runs: i64, directory: bool) -
         agent_clients: vec!["loamz-agents".into()],
         directory_client: "loamz-data-directory".into(),
         directory_secret: None,
+        metrics_token: None,
         openbao: None,
     };
     db.migrate(&MIGRATIONS).await.unwrap();
     let fake = Arc::new(FakeDirectory::default());
     let mut app = App::new(&settings, &Secrets::default(), db).unwrap();
     app.vault = Some(Arc::new(FakeVault));
+    app.issuer = issuer;
+    app.metrics_token = Some("m".repeat(40));
     if directory {
         app.directory = Some(fake.clone());
     }

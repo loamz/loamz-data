@@ -85,6 +85,7 @@ pub async fn delete(c: &mut sqlx::AnyConnection, id: &str) -> Result<()> {
         "entitlements",
         "saved_queries",
         "service_principals",
+        "workspace_quotas",
     ] {
         sqlx::query(&format!("DELETE FROM {table} WHERE workspace_id = $1"))
             .bind(id)
