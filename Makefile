@@ -1,5 +1,5 @@
 # Root entry points. Rust: one Cargo workspace.
-.PHONY: lint test test-web budget check help worker check-worker
+.PHONY: lint test test-web budget check help worker check-worker agent-bundle
 
 help:
 	@echo "make lint     cargo fmt --check + clippy"
@@ -9,6 +9,7 @@ help:
 	@echo "make check    lint + test (everything except the SQL worker)"
 	@echo "make worker   build the SQL worker against DuckDB's prebuilt library (downloaded once) and put it beside the runner"
 	@echo "make check-worker  lint and test the SQL worker"
+	@echo "make agent-bundle  build the compute agent bundle for customer machines"
 
 lint:
 	cargo fmt --check
@@ -40,3 +41,7 @@ worker:
 check-worker:
 	scripts/fetch-duckdb.sh
 	cd server/worker && cargo clippy --all-targets -- -D warnings && LD_LIBRARY_PATH=$(DUCKDB_LIB_DIR) cargo test
+
+# Customer machine agent bundle: self-contained installer holding runner, SQL worker, libduckdb, rootfs, and runsc.
+agent-bundle: worker
+	scripts/package-agent.sh
