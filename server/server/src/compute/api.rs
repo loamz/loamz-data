@@ -429,7 +429,7 @@ async fn lease(
                 o.remove("as");
             }
             let body = json!({
-                "run": {"id": l.run.id, "kind": l.run.kind, "org_id": l.run.org_id, "workspace_id": l.run.workspace_id, "spec": spec},
+                "run": {"id": l.run.id, "kind": l.run.kind, "org_id": l.run.org_id, "target_id": l.run.target_id, "workspace_id": l.run.workspace_id, "spec": spec},
                 "token": l.token,
                 "limits": {"memory_mb": l.limits.memory_mb, "cpu_millis": l.limits.cpu_millis, "timeout_s": l.limits.timeout_s},
                 "storage": l.storage,

@@ -1707,7 +1707,9 @@ dependencies = [
 name = "loamz-worker"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "duckdb",
+ "serde_json",
 ]
 
 [[package]]
