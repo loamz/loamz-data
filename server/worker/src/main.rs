@@ -14,6 +14,11 @@ fn quote(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
 
+/// The first part of an engine's message: enough to say what went wrong, never a whole page.
+fn short(text: &str) -> String {
+    text.chars().take(300).collect()
+}
+
 fn literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
@@ -53,6 +58,7 @@ fn run(request: &Value, proxy_port: u16) -> Result<Value, String> {
         ));
     }
     let allowed: Vec<_> = inputs.iter().map(|(_, uri, _)| format!("{uri}/")).collect();
+    let started = std::time::Instant::now();
     let engine = loamz_worker::Engine::start_for_run(&allowed, |conn| {
         let memory = request["limits"]["memory_mb"].as_u64().unwrap_or(0);
         let cpu = request["limits"]["cpu_millis"].as_u64().unwrap_or(0);
@@ -65,21 +71,29 @@ fn run(request: &Value, proxy_port: u16) -> Result<Value, String> {
             conn.execute_batch("SET extension_directory = '/opt/duckdb-extensions'; LOAD httpfs; LOAD iceberg")?;
             let endpoint = format!("127.0.0.1:{proxy_port}");
             let field = |key| text(storage, key).map_err(|e| duckdb::Error::InvalidParameterName(e.into()));
-            let sql = "CREATE TEMP SECRET loamz_run (TYPE s3, KEY_ID ?, SECRET ?, SESSION_TOKEN ?, ENDPOINT ?, URL_STYLE 'path', REGION 'auto', USE_SSL false)";
-            conn.execute(sql, duckdb::params![field("key_id")?, field("secret")?, field("session_token")?, endpoint])?;
+            // CREATE SECRET cannot take parameters, so the values are written as quoted text.
+            let sql = format!(
+                "CREATE TEMP SECRET loamz_run (TYPE s3, KEY_ID {}, SECRET {}, SESSION_TOKEN {}, ENDPOINT {}, URL_STYLE 'path', REGION 'auto', USE_SSL false)",
+                literal(field("key_id")?), literal(field("secret")?), literal(field("session_token")?), literal(&endpoint)
+            );
+            conn.execute_batch(&sql)?;
             let mut catalogs = std::collections::HashSet::new();
             let mut schemas = std::collections::HashSet::new();
             for (parts, uri, version) in &inputs {
                 if catalogs.insert(parts[0].clone()) { conn.execute_batch(&format!("ATTACH ':memory:' AS {}", quote(&parts[0])))?; }
-                if schemas.insert((parts[0].clone(), parts[1].clone())) { conn.execute_batch(&format!("CREATE SCHEMA {}.{}", quote(&parts[0]), quote(&parts[1])))?; }
+                if schemas.insert((parts[0].clone(), parts[1].clone())) { conn.execute_batch(&format!("CREATE SCHEMA IF NOT EXISTS {}.{}", quote(&parts[0]), quote(&parts[1])))?; }
                 conn.execute_batch(&format!("CREATE VIEW {}.{}.{} AS SELECT * FROM iceberg_scan({}, version = {})", quote(&parts[0]), quote(&parts[1]), quote(&parts[2]), literal(uri), literal(version)))?;
             }
         }
         Ok(())
-    }).map_err(|_| "the SQL sandbox could not prepare the authorized tables".to_owned())?;
-    engine
+    }).map_err(|e| format!("the SQL sandbox could not prepare the authorized tables: {}", short(&e.to_string())))?;
+    let prepared = started.elapsed();
+    let mut answer = engine
         .answer(sql, limit)
-        .map_err(|_| "the SQL statement could not be run".to_owned())
+        .map_err(|e| format!("the SQL statement could not be run: {}", short(&e.to_string())))?;
+    // Where the time went, in milliseconds: getting the tables ready, then running the statement.
+    answer["stats"] = json!({"prepare_ms": prepared.as_millis() as u64, "run_ms": (started.elapsed() - prepared).as_millis() as u64});
+    Ok(answer)
 }
 
 fn report(result: Result<Value, String>) -> Value {

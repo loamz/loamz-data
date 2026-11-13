@@ -7,7 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-duckdb = { version = "=1.20000.1", features = ["bundled"] }
+duckdb = { version = "=1.20000.1", features = ["bundled", "parquet"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 serde_json = "1"
 
