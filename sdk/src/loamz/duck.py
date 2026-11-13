@@ -45,8 +45,8 @@ class TableHandle:
         endpoint = f"{self.base_url}/api/v1/workspaces/{self.workspace_id}/iceberg"
         # Attach the Iceberg catalog as lz or the catalog name
         sql = (
-            f"ATTACH '{self.catalog}' AS lz "
-            f"(TYPE iceberg, ENDPOINT '{endpoint}', TOKEN '{self.token}')"
+            f"ATTACH {_literal(self.catalog)} AS lz "
+            f"(TYPE iceberg, ENDPOINT {_literal(endpoint)}, TOKEN {_literal(self.token)})"
         )
         con.execute(sql)
         return con

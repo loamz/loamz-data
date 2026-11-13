@@ -34,6 +34,9 @@ pub trait Directory: Send + Sync {
 
     /// Makes the person a member of the organization (already a member is fine).
     async fn add_member(&self, alias: &str, subject: &str) -> Result<()>;
+
+    /// Gets the person's current group paths from the identity provider.
+    async fn groups(&self, subject: &str) -> Result<Vec<String>>;
 }
 
 /// Keycloak's admin API, reached as a service account (client credentials) that can manage users and organizations.
@@ -226,6 +229,37 @@ impl Directory for Keycloak {
                 "the directory refused to add a member ({s})"
             ))),
         }
+    }
+
+    async fn groups(&self, subject: &str) -> Result<Vec<String>> {
+        let mut url = reqwest::Url::parse(&format!("{}/", self.admin))
+            .map_err(|e| Error::Internal(format!("the directory URL: {e}")))?;
+        url.path_segments_mut()
+            .map_err(|()| Error::Internal("the directory URL cannot hold path segments".into()))?
+            .pop_if_empty()
+            .push("users")
+            .push(subject)
+            .push("groups");
+        let groups: Vec<Value> = self
+            .http
+            .get(url)
+            .bearer_auth(self.bearer().await?)
+            .send()
+            .await
+            .map_err(unreachable)?
+            .error_for_status()
+            .map_err(unreachable)?
+            .json()
+            .await
+            .map_err(unreachable)?;
+        groups
+            .iter()
+            .map(|group| {
+                group["path"].as_str().map(str::to_owned).ok_or_else(|| {
+                    Error::Internal("the directory returned a group without a path".into())
+                })
+            })
+            .collect()
     }
 }
 

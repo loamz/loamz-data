@@ -730,7 +730,7 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
     )
     .await?;
     let limits = limits_for(&target, None, None, None, 120).map_err(Error::Invalid)?;
-    let spec = json!({"as": As::of(ctx.identity), "sql": statement, "limit": limit, "tables": tables, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
+    let spec = json!({"as": As::of(ctx.identity), "source_sql": req.sql, "sql": statement, "limit": limit, "tables": tables, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
     let run = new_run(ctx, "sql", &req.sql, &target, &spec);
     queue(app, ctx, &run, "sql.submit").await?;
     Ok(run)
@@ -835,6 +835,20 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
     Ok(run)
 }
 
+async fn refresh_groups(app: &App, who: &mut As) -> Result<()> {
+    if who.service {
+        return Ok(());
+    }
+    if let Some(directory) = &app.directory {
+        who.groups = directory.groups(&who.subject).await?;
+    } else if !who.groups.is_empty() {
+        return Err(Error::Unavailable(
+            "current group membership cannot be checked".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// A run, if the person may see it: their own, or any in a workspace they administer.
 ///
 /// # Errors
@@ -866,17 +880,43 @@ pub async fn require_detail(app: &App, ctx: &Ctx<'_>, run: &Run) -> Result<()> {
         ),
         _ => return Err(hidden()),
     };
-    let (workspace, standing) = workspaces::open(app, ctx.identity, &run.workspace_id)
+    let mut viewer = ctx.identity.clone();
+    if viewer.kind == WhoKind::Person {
+        let Some(directory) = &app.directory else {
+            if !viewer.groups.is_empty() {
+                return Err(hidden());
+            }
+            return require_detail_with_identity(app, &viewer, run, &spec, items, entitlement)
+                .await;
+        };
+        viewer.groups = directory
+            .groups(&viewer.subject)
+            .await
+            .map_err(|_| hidden())?;
+    }
+    require_detail_with_identity(app, &viewer, run, &spec, items, entitlement).await
+}
+
+async fn require_detail_with_identity(
+    app: &App,
+    identity: &Identity,
+    run: &Run,
+    spec: &Value,
+    items: &[Value],
+    entitlement: &str,
+) -> Result<()> {
+    let hidden = || Error::NotFound("no such run".into());
+    let (workspace, standing) = workspaces::open(app, identity, &run.workspace_id)
         .await
         .map_err(|_| hidden())?;
     if workspace.org_id != run.org_id
-        || !workspaces::entitled(app, ctx.identity, &workspace.id, standing, entitlement)
+        || !workspaces::entitled(app, identity, &workspace.id, standing, entitlement)
             .await
             .map_err(|_| hidden())?
     {
         return Err(hidden());
     }
-    let sides = orgs::sides(app, ctx.identity, &run.org_id)
+    let sides = orgs::sides(app, identity, &run.org_id)
         .await
         .map_err(|_| hidden())?;
     for item in items {
@@ -896,9 +936,54 @@ pub async fn require_detail(app: &App, ctx: &Ctx<'_>, run: &Run) -> Result<()> {
         if entry.classification == "sealed" {
             return Err(hidden());
         }
-        iam::require(app, ctx.identity, &run.org_id, &sides, need, &target)
+        iam::require(app, identity, &run.org_id, &sides, need, &target)
             .await
             .map_err(|_| hidden())?;
+    }
+
+    let mut who: As = serde_json::from_value(spec["as"].clone()).map_err(|_| hidden())?;
+    refresh_groups(app, &mut who).await.map_err(|_| hidden())?;
+    let reads = items
+        .iter()
+        .filter_map(|item| item["id"].as_str().map(str::to_owned))
+        .collect();
+    let writes = if run.kind == "job" {
+        vec![spec["output"].as_str().ok_or_else(hidden)?.to_owned()]
+    } else {
+        vec![]
+    };
+    let subject = who.identity(
+        &run.org_id,
+        Scope {
+            run: run.id.clone(),
+            reads,
+            writes,
+        },
+    );
+    if run.kind == "sql" {
+        let current_sql = guarded_sql(app, &subject, run, spec)
+            .await
+            .map_err(|_| hidden())?;
+        if spec["sql"].as_str() != Some(&current_sql) {
+            return Err(hidden());
+        }
+    } else {
+        let mut policy_identity = subject.clone();
+        policy_identity.scope = None;
+        let sides = orgs::sides(app, &subject, &run.org_id)
+            .await
+            .map_err(|_| hidden())?;
+        for item in items {
+            if item["kind"] == "table" {
+                let id = item["id"].as_str().ok_or_else(hidden)?;
+                if catalogs::is_restricted(app, &policy_identity, &run.org_id, &sides, id)
+                    .await
+                    .map_err(|_| hidden())?
+                {
+                    return Err(hidden());
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1032,6 +1117,32 @@ fn table_ids(run: &Run, spec: &Value) -> Vec<String> {
     }
 }
 
+async fn guarded_sql(app: &App, identity: &Identity, run: &Run, spec: &Value) -> Result<String> {
+    let invalid = || Error::Internal("invalid queued SQL specification".into());
+    let source = spec["source_sql"].as_str().ok_or_else(invalid)?;
+    let tables = spec["tables"].as_array().ok_or_else(invalid)?;
+    let analysis = sql::analyze(source).map_err(Error::Internal)?;
+    if analysis.relations.len() != tables.len() {
+        return Err(invalid());
+    }
+    let mut policy_identity = identity.clone();
+    policy_identity.scope = None;
+    let sides = orgs::sides(app, &policy_identity, &run.org_id).await?;
+    let mut rules = std::collections::HashMap::new();
+    for (rel, table) in analysis.relations.iter().zip(tables) {
+        let id = table["id"].as_str().ok_or_else(invalid)?;
+        if table["name"].as_str() != Some(&rel.join(".")) {
+            return Err(invalid());
+        }
+        if let Some(found) =
+            catalogs::rules_for(app, &policy_identity, &run.org_id, &sides, id).await?
+        {
+            rules.insert(rel.clone(), found);
+        }
+    }
+    sql::guard(source, &rules).map_err(Error::Internal)
+}
+
 /// What a machine needs to read some tables itself: credentials limited to those tables' folders and to reading, good for the
 /// run's time and a little more, and where each table's current metadata is.
 async fn storage_for(app: &App, org: &str, ids: &[String], timeout_s: i64) -> Result<Value> {
@@ -1058,8 +1169,7 @@ async fn storage_for(app: &App, org: &str, ids: &[String], timeout_s: i64) -> Re
     }))
 }
 
-/// Check the current workspace, entitlements and object grants before handing a queued run to a worker.
-/// Groups in the original identity are a snapshot; changes at the identity provider are not yet refreshed.
+/// Check the current workspace, entitlements, object grants and table rules before handing a run to a worker.
 async fn authorize_lease(app: &App, target: &Target, run: &Run, spec: &Value) -> Result<()> {
     let invalid = || Error::Internal("invalid queued run specification".into());
     let (items, entitlement) = match run.kind.as_str() {
@@ -1119,6 +1229,13 @@ async fn authorize_lease(app: &App, target: &Target, run: &Run, spec: &Value) ->
             _ => return Err(invalid()),
         };
         iam::require(app, &identity, &run.org_id, &sides, need, &securable).await?;
+        if run.kind == "job" && entry.kind == Kind::Table && {
+            let mut policy_identity = identity.clone();
+            policy_identity.scope = None;
+            catalogs::is_restricted(app, &policy_identity, &run.org_id, &sides, &entry.id).await?
+        } {
+            return Err(Error::Unauthorized);
+        }
         // The catalog's own say over which compute may read it holds when the work is handed out, not only when it was asked for.
         let policy = catalogs::compute_policy_of(app, &run.org_id, &entry.id).await?;
         if !policy.is_empty() && !policy.contains(&target.id) {
@@ -1181,14 +1298,73 @@ pub async fn lease(app: &App, target: &Target) -> Result<Option<Lease>> {
         let mut conn = app.db.pool().acquire().await?;
         store::lease_one(&mut conn, &target.id, now, now + LEASE_MS).await?
     };
-    let Some(run) = leased else { return Ok(None) };
-    let spec: Value = serde_json::from_str(&run.spec)
+    let Some(mut run) = leased else {
+        return Ok(None);
+    };
+    let mut spec: Value = serde_json::from_str(&run.spec)
         .map_err(|e| Error::Internal(format!("a run has a spec that is not JSON: {e}")))?;
+    let refresh = async {
+        let mut who: As = serde_json::from_value(spec["as"].clone())
+            .map_err(|_| Error::Internal("invalid queued run specification".into()))?;
+        refresh_groups(app, &mut who).await?;
+        let items = match run.kind.as_str() {
+            "sql" => spec["tables"].as_array(),
+            "job" => spec["inputs"].as_array(),
+            _ => None,
+        }
+        .ok_or_else(|| Error::Internal("invalid queued run specification".into()))?;
+        let reads = items
+            .iter()
+            .map(|item| {
+                item["id"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| Error::Internal("invalid queued run specification".into()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let writes = if run.kind == "job" {
+            vec![
+                spec["output"]
+                    .as_str()
+                    .ok_or_else(|| Error::Internal("invalid queued run specification".into()))?
+                    .to_owned(),
+            ]
+        } else {
+            vec![]
+        };
+        spec["as"] = serde_json::to_value(&who)
+            .map_err(|_| Error::Internal("invalid queued run specification".into()))?;
+        let identity = who.identity(
+            &run.org_id,
+            Scope {
+                run: run.id.clone(),
+                reads,
+                writes,
+            },
+        );
+        if run.kind == "sql" {
+            let statement = guarded_sql(app, &identity, &run, &spec).await?;
+            spec["sql"] = json!(statement);
+        }
+        Ok::<(), Error>(())
+    }
+    .await;
+    if let Err(error) = refresh {
+        tracing::warn!(run = %run.id, error = ?error, "queued work could not refresh its identity");
+        fail_unauthorized_lease(app, target, &run).await?;
+        return Ok(None);
+    }
     if let Err(error) = authorize_lease(app, target, &run, &spec).await {
         tracing::warn!(run = %run.id, error = ?error, "queued work could not be authorized");
         fail_unauthorized_lease(app, target, &run).await?;
         return Ok(None);
     }
+    store::update_leased_spec(app.db.pool(), &run.id, &target.id, &spec.to_string()).await?;
+    let mut worker_spec = spec.clone();
+    if let Some(fields) = worker_spec.as_object_mut() {
+        fields.remove("source_sql");
+    }
+    run.spec = worker_spec.to_string();
     let limits = Limits {
         memory_mb: spec["memory_mb"].as_i64().unwrap_or(1024),
         cpu_millis: spec["cpu_millis"].as_i64().unwrap_or(1000),

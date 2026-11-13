@@ -283,6 +283,7 @@ mod tests {
             "x IN (SELECT id FROM other.schema.t)",
             "EXISTS (SELECT 1)",
             "read_text('/etc/passwd') = ''",
+            "read_blob('/inputs/tables/x/a.parquet') IS NOT NULL",
             "(SELECT 1) = 1",
             "x = 1; DROP TABLE t",
             "sum(x) OVER () > 1",
