@@ -58,3 +58,4 @@ nav:
       - Agents: api/agent.md
       - Health: api/healthz.md
       - Readiness: api/readyz.md
+      - Metrics: api/metrics.md

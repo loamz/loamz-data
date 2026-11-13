@@ -17,11 +17,12 @@ def get_dev_token(who: str = "ana") -> str | None:
         out = subprocess.check_output(
             [sys.executable, str(token_script), who],
             text=True,
-            stderr=subprocess.DEVNULL,
-            timeout=5,
+            stderr=subprocess.PIPE,
+            timeout=25,
         ).strip()
         return out.splitlines()[-1] if out else None
-    except Exception:
+    except Exception as e:
+        print(f"Warning: failed to get dev token for {who}: {e}", file=sys.stderr)
         return None
 
 

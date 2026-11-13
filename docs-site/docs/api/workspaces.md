@@ -525,6 +525,7 @@ Its token is in the answer, once. It starts with `lsp_`, is sent as a bearer tok
   - `classification` (`any`): 
   - `placement` (`any`): 
   - `consistency` (`any`): A volume can only promise snapshot.
+  - `location` (`string`): A catalog only. The name of one of the workspace's storage locations (in the installation's own bucket) to keep its data in. Leave empty for the workspace's default storage. Workspace admins only.
 
 ### Responses
 
@@ -600,6 +601,55 @@ Its token is in the answer, once. It starts with `lsp_`, is sent as a bearer tok
   **Fields:**
 
   - `owner` (`string`): 
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `204` | Done |
+| `400` | An RFC 9457 problem document. |
+| `401` | An RFC 9457 problem document. |
+| `403` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+
+---
+
+## `GET` /api/v1/workspaces/{ws}/securables/{id}/policy
+
+**The row filter and column masks of a table (empty when it has none). Needs MANAGE.**
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+| `id` | `path` | Yes | `string` | A securable id, or `metastore` where grants are concerned. |
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `200` | {row_filter, masks} |
+| `401` | An RFC 9457 problem document. |
+| `403` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+
+---
+
+## `PUT` /api/v1/workspaces/{ws}/securables/{id}/policy
+
+**Set the rules of a table, replacing any before them; an empty body removes them. `row_filter` keeps only the rows where it is true; `masks` shows an expression in place of a column. A rule may use columns, values, a few plain functions, `current_principal()` and `in_group('name')`; anything else is refused. Whoever manages the table sees it whole; everyone else reads it only through SQL on Loamz compute, where the rules are applied (a job or an Iceberg client is refused). Needs MANAGE.**
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+| `id` | `path` | Yes | `string` | A securable id, or `metastore` where grants are concerned. |
+
+### Request Body
+
+- **Content-Type**: `application/json` (`object`)
 
 ### Responses
 
@@ -860,6 +910,52 @@ Its token is in the answer, once. It starts with `lsp_`, is sent as a bearer tok
 |---|---|---|---|---|
 | `ws` | `path` | Yes | `string` | A workspace id. |
 | `catalog` | `path` | Yes | `string` |  |
+
+### Request Body
+
+- **Content-Type**: `application/json` (`object`)
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `204` | Set |
+| `400` | An RFC 9457 problem document. |
+| `401` | An RFC 9457 problem document. |
+| `403` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+
+---
+
+## `GET` /api/v1/workspaces/{ws}/quota
+
+**The workspace's own cap on queued and running runs (null means none besides the organization's).**
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `200` | The cap |
+| `401` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+
+---
+
+## `PUT` /api/v1/workspaces/{ws}/quota
+
+**Set the workspace's cap on queued and running runs, or null to remove it. Account admins.**
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
 
 ### Request Body
 

@@ -177,6 +177,7 @@ A person who already exists is only added. A new one is made with a temporary pa
 |---|---|
 | `200` | OK |
 | `401` | An RFC 9457 problem document. |
+| `403` | An RFC 9457 problem document. |
 | `404` | An RFC 9457 problem document. |
 
 ---
@@ -214,9 +215,9 @@ A person who already exists is only added. A new one is made with a temporary pa
 
 ## `POST` /api/v1/orgs/{org}/erase
 
-**Erase a principal's data in this organization. Account admins.**
+**Erase a person's data in this organization. Account admins.**
 
-Queues a durable task that removes everything the principal owns, their files, grants, workspace assignments and admin rights, and checks it is gone. The audit trail is kept.
+Queues a durable task that removes everything the person owns, their files, grants, workspace assignments and admin rights, and checks it is gone. The audit trail is kept and uses stable organization-scoped pseudonyms for identities.
 
 ### Parameters
 
@@ -239,7 +240,6 @@ Queues a durable task that removes everything the principal owns, their files, g
 | `202` | An erase task was queued |
 | `400` | An RFC 9457 problem document. |
 | `401` | An RFC 9457 problem document. |
-| `403` | An RFC 9457 problem document. |
 | `404` | An RFC 9457 problem document. |
 
 ---
@@ -304,7 +304,6 @@ Queues a durable task that removes everything the principal owns, their files, g
 |---|---|
 | `200` | `intact`, the entry count, and the first broken entry if any |
 | `401` | An RFC 9457 problem document. |
-| `403` | An RFC 9457 problem document. |
 | `404` | An RFC 9457 problem document. |
 
 ---

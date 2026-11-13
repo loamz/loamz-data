@@ -202,3 +202,79 @@ jobs:
           pkill -f "loamz-data serve" 2>/dev/null || true
           pkill -f "loamz-runner agent" 2>/dev/null || true
           pkill -f "vite" 2>/dev/null || true
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@0a5c61591373683505ea898e09a6ea81b3051ad4 # v5.0.0
+        with:
+          python-version: "3.12"
+      - name: Install documentation dependencies
+        run: |
+          python3 -m pip install -r docs-site/requirements.txt
+      - name: Verify OpenAPI documentation coverage
+        run: |
+          python3 docs-site/check_api.py
+      - name: Build documentation site strictly
+        working-directory: docs-site
+        run: |
+          mkdocs build --strict
+
+  sdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: rustup show
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@0a5c61591373683505ea898e09a6ea81b3051ad4 # v5.0.0
+        with:
+          python-version: "3.12"
+      - name: Start dev services
+        run: |
+          docker compose -f deploy/dev/compose.yml up -d
+          python3 deploy/dev/seed.py
+      - name: Prepare runner sandbox dependencies
+        run: |
+          scripts/fetch-runsc.sh ~/.cache/loamz/runsc
+          server/runner/rootfs/build.sh ~/.cache/loamz/rootfs
+      - name: Build server and runner release binaries
+        run: |
+          cargo build --release --locked -p loamz-data-server -p loamz-runner
+      - name: Seed sample data
+        run: |
+          python3 -m venv ~/.cache/loamz/modal-venv
+          ~/.cache/loamz/modal-venv/bin/pip install duckdb==1.2.0
+          scripts/dev.sh > /tmp/dev.log 2>&1 &
+          DEV_PID=$!
+          for attempt in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8020/readyz > /dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          scripts/sample_data.py 1
+          kill $DEV_PID $(pgrep -P $DEV_PID 2>/dev/null) 2>/dev/null || true
+          pkill -f "loamz-data serve" 2>/dev/null || true
+          pkill -f "loamz-runner agent" 2>/dev/null || true
+          pkill -f "vite" 2>/dev/null || true
+      - name: Run SDK tests against dev stack
+        run: |
+          scripts/dev.sh > /tmp/dev.log 2>&1 &
+          DEV_PID=$!
+          for attempt in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8020/readyz > /dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          cd sdk && uv run --all-extras pytest -v
+      - name: Build SDK wheel
+        working-directory: sdk
+        run: |
+          uv build
+      - name: Teardown stack
+        if: always()
+        run: |
+          pkill -f "loamz-data serve" 2>/dev/null || true
+          pkill -f "loamz-runner agent" 2>/dev/null || true
+          pkill -f "vite" 2>/dev/null || true

@@ -13,7 +13,7 @@ TOKEN = os.environ.get("OPENBAO_TOKEN", "loamz-dev-only")
 def call(method, path, body=None, ok=(200, 204)):
     req = urllib.request.Request(f"{BAO}/v1/{path}", data=json.dumps(body).encode() if body is not None else None, headers={"X-Vault-Token": TOKEN}, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=30) as r:
             return r.status
     except urllib.error.HTTPError as e:
         if e.code in ok:
