@@ -1,3 +1,4 @@
+import uuid
 import pytest
 from loamz.client import Client
 from loamz.errors import LoamzError
@@ -94,3 +95,24 @@ def test_table_handle_duckdb(base_url, ana_token):
     result = con.execute("SELECT count(*) FROM lz.main.trips").fetchone()
     assert result is not None
     assert result[0] > 0
+
+
+def test_import_file_makes_a_table_and_adds_to_it(base_url, ana_token, tmp_path):
+    pytest.importorskip("duckdb")
+    client = Client(base_url, token=ana_token)
+    ws = client.workspace("Main")
+    name = f"imp_{uuid.uuid4().hex[:8]}"
+    csv = tmp_path / "pets.csv"
+    csv.write_text("id,name\n1,Rex\n2,Mia\n")
+    handle = ws.table(f"nyc.main.{name}")
+    assert handle.import_file(csv) == 2
+    more = tmp_path / "more.csv"
+    more.write_text("id,name\n3,Bo\n")
+    assert handle.import_file(more, append=True) == 1
+    total = ws.sql(f"SELECT count(*) FROM nyc.main.{name}").rows[0][0]
+    assert total == 3
+    other = tmp_path / "x.txt"
+    other.write_text("nope")
+    with pytest.raises(ValueError):
+        handle.import_file(other)
+

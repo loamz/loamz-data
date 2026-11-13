@@ -64,3 +64,19 @@ con = handle.duckdb()
 res = con.execute("SELECT count(*) FROM lz.main.trips").fetchall()
 print(res)
 ```
+
+## Bring data in
+
+```sh
+loamz import trips.parquet nyc.main.trips            # a new table from a CSV or Parquet file
+loamz import more.csv nyc.main.trips --append        # add rows to a table that exists
+```
+
+```python
+rows = client.workspace("Main").table("nyc.main.trips").import_file("trips.parquet")
+```
+
+The file is read on your machine and written straight to the table's storage with short-lived credentials from the catalog, so
+the data does not pass through the server. You need permission to create (or modify) the table. A table with row or column rules
+cannot be written this way by someone the rules apply to.
+

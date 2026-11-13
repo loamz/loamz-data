@@ -89,6 +89,14 @@ def main(argv: list[str] | None = None) -> int:
     sub_sql.add_argument("--limit", type=int, default=1000, help="Row limit (default: 1000)")
     sub_sql.add_argument("--json", action="store_true", help="Output as JSON")
 
+    # import <file> <catalog.schema.table>
+    sub_import = subparsers.add_parser(
+        "import", parents=[common_parser], help="Bring a CSV or Parquet file in as a table"
+    )
+    sub_import.add_argument("file", help="A .csv or .parquet file on this machine")
+    sub_import.add_argument("table", help="Where it goes, as catalog.schema.table")
+    sub_import.add_argument("--append", action="store_true", help="Add the rows to a table that exists")
+
     args = parser.parse_args(argv)
 
     try:
@@ -178,6 +186,14 @@ def main(argv: list[str] | None = None) -> int:
                     rows = [[t.name, t.id, t.owner] for t in tables]
                     print(_format_table(headers, rows))
                 return 0
+
+        if args.command == "import":
+            if len(args.table.split(".")) != 3:
+                print("Error: name the table as catalog.schema.table.", file=sys.stderr)
+                return 1
+            rows = ws.table(args.table).import_file(args.file, append=args.append)
+            print(f"{rows} rows from {args.file} are in {args.table}")
+            return 0
 
         if args.command == "sql":
             result = ws.sql(args.statement, limit=args.limit)

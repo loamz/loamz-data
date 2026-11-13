@@ -35,7 +35,7 @@ Cloud, behind `Entitlements` and `UsageSink`).
 |---|---|---|---|
 | M1 | Merge what exists | isolation tests, SDK and CLI, security (CI, SBOM, threat model) and the docs site are in `main`, `make check` green | done |
 | M2 | Fast | `bench/run.py 3` shows the machine column under 0.5 s with the same answers | in progress: sandboxed warm worker written, release build and benchmark to do |
-| M3 | Data in | a CSV or Parquet upload becomes a table from the console | in progress: staging and schema rules written, endpoint to do |
+| M3 | Data in | a CSV or Parquet file becomes a table with `loamz import` (written straight to storage, not through the server) | CLI and SDK written; an upload from the console needs a write path on compute, after beta |
 | M4 | Governed | storage roots, row filters and column masks, erase with a provable audit chain | roots and rules done; erase in review |
 | M5 | Production | deployed from `loamz-deploy`, backups and WAL archiving running, restore check passes | in progress: roles written, being run on a throwaway machine |
 | M6 | Ready to show | docs site live, console screens for every feature, end-to-end browser tests, a hostile security review | to do |
