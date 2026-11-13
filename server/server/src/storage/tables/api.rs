@@ -17,7 +17,7 @@ use super::{
     service::{self, Loaded, NewTable},
 };
 use crate::{
-    governance::context::WsCtx,
+    governance::context::{FileCtx, WsCtx},
     kernel::{
         error::{Catalog, Error, Result},
         http::{Routes, json as body_json},
@@ -63,7 +63,7 @@ fn loaded(l: &Loaded, endpoint: Option<(&str, &str)>) -> Value {
     json!({"metadata-location": l.metadata_location, "metadata": l.metadata, "config": config})
 }
 
-async fn config(c: WsCtx, Query(q): Query<HashMap<String, String>>) -> Out<Json<Value>> {
+async fn config(FileCtx(c): FileCtx, Query(q): Query<HashMap<String, String>>) -> Out<Json<Value>> {
     let _ = &c;
     let warehouse = q
         .get("warehouse")
@@ -74,7 +74,7 @@ async fn config(c: WsCtx, Query(q): Query<HashMap<String, String>>) -> Out<Json<
     ))
 }
 
-async fn list_namespaces(State(app): State<Shared>, c: WsCtx) -> Out<Json<Value>> {
+async fn list_namespaces(State(app): State<Shared>, FileCtx(c): FileCtx) -> Out<Json<Value>> {
     let names = service::namespaces(&app, &ask(&c), &param(&c, "prefix")?).await?;
     let list: Vec<Value> = names.iter().map(|n| json!([n])).collect();
     Ok(Json(json!({"namespaces": list})))
@@ -85,7 +85,11 @@ struct NewNamespace {
     namespace: Vec<String>,
 }
 
-async fn create_namespace(State(app): State<Shared>, c: WsCtx, body: Bytes) -> Out<Json<Value>> {
+async fn create_namespace(
+    State(app): State<Shared>,
+    FileCtx(c): FileCtx,
+    body: Bytes,
+) -> Out<Json<Value>> {
     let req: NewNamespace = body_json(&body)?;
     let [name] = req.namespace.as_slice() else {
         return Err(Error::Invalid("a namespace is one name".into()).into());
@@ -94,13 +98,13 @@ async fn create_namespace(State(app): State<Shared>, c: WsCtx, body: Bytes) -> O
     Ok(Json(json!({"namespace": [name], "properties": {}})))
 }
 
-async fn get_namespace(State(app): State<Shared>, c: WsCtx) -> Out<Json<Value>> {
+async fn get_namespace(State(app): State<Shared>, FileCtx(c): FileCtx) -> Out<Json<Value>> {
     let (prefix, ns) = (param(&c, "prefix")?, param(&c, "ns")?);
     service::namespace_exists(&app, &ask(&c), &prefix, &ns).await?;
     Ok(Json(json!({"namespace": [ns], "properties": {}})))
 }
 
-async fn list_tables(State(app): State<Shared>, c: WsCtx) -> Out<Json<Value>> {
+async fn list_tables(State(app): State<Shared>, FileCtx(c): FileCtx) -> Out<Json<Value>> {
     let (prefix, ns) = (param(&c, "prefix")?, param(&c, "ns")?);
     let names = service::tables(&app, &ask(&c), &prefix, &ns).await?;
     let ids: Vec<Value> = names
@@ -124,7 +128,11 @@ struct CreateTable {
     stage_create: bool,
 }
 
-async fn create_table(State(app): State<Shared>, c: WsCtx, body: Bytes) -> Out<Json<Value>> {
+async fn create_table(
+    State(app): State<Shared>,
+    FileCtx(c): FileCtx,
+    body: Bytes,
+) -> Out<Json<Value>> {
     let req: CreateTable = body_json(&body)?;
     let made = service::create(
         &app,
@@ -149,7 +157,7 @@ async fn create_table(State(app): State<Shared>, c: WsCtx, body: Bytes) -> Out<J
     Ok(Json(loaded(&made, app.stores.bucket_place())))
 }
 
-async fn load_table(State(app): State<Shared>, c: WsCtx) -> Out<Json<Value>> {
+async fn load_table(State(app): State<Shared>, FileCtx(c): FileCtx) -> Out<Json<Value>> {
     let l = service::load(
         &app,
         &ask(&c),
@@ -169,7 +177,11 @@ struct Commit {
     updates: Vec<Value>,
 }
 
-async fn commit_table(State(app): State<Shared>, c: WsCtx, body: Bytes) -> Out<Json<Value>> {
+async fn commit_table(
+    State(app): State<Shared>,
+    FileCtx(c): FileCtx,
+    body: Bytes,
+) -> Out<Json<Value>> {
     let req: Commit = body_json(&body)?;
     let (location, metadata) = service::commit(
         &app,
@@ -209,7 +221,11 @@ struct Transaction {
 
 /// Several tables in one commit are not supported (they would need one atomic move across tables): one table, as clients send
 /// for a single statement.
-async fn commit_transaction(State(app): State<Shared>, c: WsCtx, body: Bytes) -> Out<StatusCode> {
+async fn commit_transaction(
+    State(app): State<Shared>,
+    FileCtx(c): FileCtx,
+    body: Bytes,
+) -> Out<StatusCode> {
     let req: Transaction = body_json(&body)?;
     let [change] = req.changes.as_slice() else {
         return Err(Error::Invalid("commit one table at a time".into()).into());

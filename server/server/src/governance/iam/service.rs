@@ -35,6 +35,11 @@ pub fn within_scope(identity: &Identity, need: Privilege, target: &Target) -> bo
     let list = match need {
         Privilege::Select | Privilege::ReadVolume => &scope.reads,
         Privilege::Modify | Privilege::WriteVolume => &scope.writes,
+        // A run that declared a table to write may look at the catalog and schema above it, and create a table in a schema it named.
+        Privilege::UseCatalog | Privilege::UseSchema | Privilege::Browse => {
+            return scope.may_see(target.id());
+        }
+        Privilege::CreateTable => return scope.may_create_in(target.id()),
         _ => return false,
     };
     list.iter().any(|id| id == target.id())

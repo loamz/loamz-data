@@ -2072,3 +2072,171 @@ async fn a_policy_added_after_job_submission_blocks_raw_table_input(s: Server) {
     );
 }
 both!(a_policy_added_after_job_submission_blocks_raw_table_input);
+
+// ---- jobs that write tables, and file import ----------------------------------------------------------------------
+
+async fn a_job_that_writes_tables_reaches_only_those_tables(s: Server) {
+    let l = lab(&s).await;
+    let (secret, _) = attach(&s).await;
+    let runs = format!("/api/v1/workspaces/{}/runs", l.ws);
+    // A write names a schema that exists and a table in full; a job needs somewhere to leave its results.
+    for (body, status) in [
+        (json!({"script": "1", "table_writes": ["sales.raw"]}), 400),
+        (json!({"script": "1", "table_writes": ["nope.raw.t"]}), 404),
+        (
+            json!({"script": "1", "table_writes": ["sales.nope.t"]}),
+            404,
+        ),
+        (json!({"script": "1"}), 400),
+    ] {
+        let r = s.post(&runs, &ana(), body.clone()).await;
+        assert_eq!(r.status, status, "{body}: {}", r.text());
+    }
+    let job = json!({"script": "print(1)", "table_writes": ["sales.raw.orders", "sales.raw.fresh"], "timeout_s": 30});
+    let made = s.post(&runs, &ana(), job).await;
+    assert_eq!(made.status, 202, "{}", made.text());
+    let lease = agent(&s, "POST", "/api/v1/agent/lease", &secret, None)
+        .await
+        .json();
+    let writes = lease["run"]["spec"]["table_writes"].as_array().unwrap();
+    assert_eq!(writes.len(), 2);
+    assert_eq!(
+        writes[0]["id"],
+        json!(l.orders),
+        "an existing table is named by its id"
+    );
+    assert!(
+        writes[1].get("id").is_none(),
+        "a table to create has none yet"
+    );
+    let jt = lease["token"].as_str().unwrap().to_owned();
+
+    // The token reaches the declared table, and the catalog above it; not the other table, not the person's other things.
+    let base = format!(
+        "/api/v1/workspaces/{}/iceberg/v1/sales/namespaces/raw/tables",
+        l.ws
+    );
+    let get = |path: String| {
+        let (s, jt) = (&s, jt.clone());
+        async move { s.bearer("GET", &path, &jt, None).await }
+    };
+    assert_eq!(get(format!("{base}/orders")).await.status, 200);
+    assert_eq!(
+        get(format!("{base}/secrets")).await.status,
+        404,
+        "a table the job did not declare is not there for it"
+    );
+    assert_eq!(
+        get(format!(
+            "/api/v1/workspaces/{}/iceberg/v1/sales/namespaces/raw",
+            l.ws
+        ))
+        .await
+        .status,
+        200,
+        "the schema above a declared table can be looked at"
+    );
+    let change = json!({"requirements": [], "updates": [{"action": "set-properties", "updates": {"by": "job"}}]});
+    assert_eq!(
+        s.bearer("POST", &format!("{base}/orders"), &jt, Some(change.clone()))
+            .await
+            .status,
+        200,
+        "the declared table can be changed"
+    );
+    assert_eq!(
+        s.bearer("POST", &format!("{base}/secrets"), &jt, Some(change))
+            .await
+            .status,
+        404
+    );
+    // Everything else of the person's stays out of reach of the token.
+    assert_eq!(
+        s.bearer(
+            "GET",
+            &format!("/api/v1/workspaces/{}/securables", l.ws),
+            &jt,
+            None
+        )
+        .await
+        .status,
+        401,
+        "a job's token opens file and table routes only"
+    );
+}
+both!(a_job_that_writes_tables_reaches_only_those_tables);
+
+async fn a_file_import_is_a_job_the_server_wrote(s: Server) {
+    let l = lab(&s).await;
+    let (secret, _) = attach(&s).await;
+    assert_eq!(
+        s.upload(&l.ws, &l.out, "data.csv", &ana(), b"id\n1\n2\n")
+            .await
+            .status,
+        201
+    );
+    let url = format!("/api/v1/workspaces/{}/imports", l.ws);
+    let ask = |body: serde_json::Value| {
+        let (s, url) = (&s, url.clone());
+        async move { s.post(&url, &ana(), body).await }
+    };
+    let good = json!({"target": "sales.raw.fresh", "volume": l.out, "path": "data.csv"});
+    // What is wrong is said now, not by a failed run.
+    for (body, status) in [
+        (
+            json!({"target": "sales.raw", "volume": l.out, "path": "data.csv"}),
+            400,
+        ),
+        (
+            json!({"target": "Sales.Raw.Fresh", "volume": l.out, "path": "data.csv"}),
+            400,
+        ),
+        (
+            json!({"target": "sales.raw.fresh", "volume": l.out, "path": "../x.csv"}),
+            400,
+        ),
+        (
+            json!({"target": "sales.raw.fresh", "volume": l.out, "path": "a//b.csv"}),
+            400,
+        ),
+        (
+            json!({"target": "sales.raw.fresh", "volume": l.out, "path": "data.xlsx"}),
+            400,
+        ),
+        (
+            json!({"target": "sales.raw.fresh", "volume": l.out, "path": "data.csv", "mode": "replace"}),
+            400,
+        ),
+        (
+            json!({"target": "sales.raw.orders", "volume": l.out, "path": "data.csv"}),
+            409,
+        ),
+        (
+            json!({"target": "sales.raw.missing", "volume": l.out, "path": "data.csv", "mode": "append"}),
+            404,
+        ),
+    ] {
+        let r = ask(body.clone()).await;
+        assert_eq!(r.status, status, "{body}: {}", r.text());
+    }
+    let r = ask(good).await;
+    assert_eq!(r.status, 202, "{}", r.text());
+    let lease = agent(&s, "POST", "/api/v1/agent/lease", &secret, None)
+        .await
+        .json();
+    let spec = &lease["run"]["spec"];
+    assert_eq!(spec["table_writes"][0]["name"], "sales.raw.fresh");
+    assert_eq!(spec["inputs"][0]["kind"], "volume");
+    assert_eq!(spec["output"], "", "an import leaves no files");
+    let script = spec["script"].as_str().unwrap();
+    assert!(
+        script.contains("bytes.fromhex"),
+        "the values are filled in, not the person's text"
+    );
+    assert!(
+        !script.contains("data.csv"),
+        "the file's name is data inside the program, not source text"
+    );
+    assert!(!script.contains("__SPEC__"));
+}
+both!(a_file_import_is_a_job_the_server_wrote);

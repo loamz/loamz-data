@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use super::{
     model::{IDLE_STOP_MS, Run, RunFilter, Target, is_terminal},
-    service::{self, Ctx, JobRequest, Report, SqlRequest},
+    service::{self, Ctx, ImportRequest, JobRequest, Report, SqlRequest},
 };
 use crate::{
     governance::context::WsCtx,
@@ -236,6 +236,16 @@ async fn statement(State(app): State<Shared>, c: WsCtx, body: Bytes) -> Result<R
         restricted_view(&run, &c)
     };
     Ok((code, Json(view)).into_response())
+}
+
+async fn submit_import(
+    State(app): State<Shared>,
+    c: WsCtx,
+    body: Bytes,
+) -> Result<(StatusCode, Json<Value>)> {
+    let req: ImportRequest = body_json(&body)?;
+    let run = service::submit_import(&app, &ctx(&c), req).await?;
+    Ok((StatusCode::ACCEPTED, Json(run_view(&run, false))))
 }
 
 async fn submit_job(
@@ -490,6 +500,7 @@ pub fn routes() -> Routes {
         )
         .post("/api/v1/workspaces/{ws}/sql/statements", statement)
         .post("/api/v1/workspaces/{ws}/runs", submit_job)
+        .post("/api/v1/workspaces/{ws}/imports", submit_import)
         .get("/api/v1/workspaces/{ws}/runs", list_runs)
         .get("/api/v1/workspaces/{ws}/runs/{id}", get_run)
         .post("/api/v1/workspaces/{ws}/runs/{id}/cancel", cancel_run)

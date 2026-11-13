@@ -13,6 +13,7 @@ use serde_json::Value;
 
 use crate::{
     check::verify,
+    door::{CatalogGrant, Doors, StorageGrant},
     exec::{Gvisor, prepare_workspace, private_dir, run},
     spec::{Sandbox, User, oci_config},
 };
@@ -352,8 +353,83 @@ async fn files_under(dir: &Path) -> Result<Vec<String>, String> {
 pub const RUN_SQL: &str = include_str!("sandbox/run_sql.py");
 /// What `RUN_SQL` imports: how rows become JSON, shared with serverless endpoints.
 pub const LOAMZ_SQL: &str = include_str!("sandbox/loamz_sql.py");
+/// The local addresses for a write lease's two doors, put beside a job's code.
+pub const LOAMZ_DOORS: &str = include_str!("sandbox/loamz_doors.py");
 
 /// Does the work, whatever happens to it, and says how it ended. The run's folder is removed afterwards.
+/// Opens a write lease's two doors in `dir`, from what the server put in the lease: the run's declared tables, and credentials for the
+/// folders it may use.
+async fn open_doors(lease: &Lease, data_url: &str, dir: &Path) -> Result<Doors, String> {
+    let io = |e: std::io::Error| e.to_string();
+    private_dir(dir).map_err(io)?;
+    let storage = lease
+        .storage
+        .as_ref()
+        .filter(|s| s["mode"] == "write")
+        .ok_or("this server cannot give this machine write access to storage")?;
+    let text = |key: &str| {
+        storage[key]
+            .as_str()
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| "the storage access is incomplete".to_owned())
+    };
+    let list = |key: &str| -> Vec<String> {
+        storage[key]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect()
+    };
+    let bucket = text("bucket")?;
+    let create_roots = list("create_roots");
+    let (mut tables, mut schemas) = (Vec::new(), Vec::new());
+    for w in lease.run.spec["table_writes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        let name = w["name"].as_str().ok_or("a table write has no name")?;
+        if w["id"].is_string() {
+            tables.push(name.to_owned());
+        } else {
+            let mut parts = name.split('.');
+            if let (Some(c), Some(s)) = (parts.next(), parts.next()) {
+                schemas.push(format!("{c}.{s}"));
+            }
+            // Creating a table also commits it: the run may do both for the name it declared.
+            tables.push(name.to_owned());
+        }
+    }
+    let doors = Doors::start(dir).map_err(io)?;
+    doors
+        .open(
+            StorageGrant {
+                endpoint: text("endpoint")?,
+                region: storage["region"].as_str().unwrap_or("auto").to_owned(),
+                bucket: bucket.clone(),
+                key_id: text("key_id")?,
+                secret: text("secret")?,
+                session_token: text("session_token")?,
+                read_prefixes: list("read_prefixes"),
+                write_prefixes: list("write_prefixes"),
+                create_roots: create_roots.clone(),
+            },
+            CatalogGrant {
+                base: data_url.to_owned(),
+                workspace: lease.run.workspace_id.clone(),
+                token: lease.token.clone(),
+                tables,
+                schemas,
+                bucket,
+                create_roots,
+            },
+        )
+        .await;
+    Ok(doors)
+}
+
 pub async fn execute(
     lease: &Lease,
     machine: &Machine,
@@ -373,6 +449,8 @@ pub async fn execute(
 struct Staged {
     mounts: Vec<(String, PathBuf)>,
     script: &'static str,
+    /// The sandbox is given a write lease's two doors (and so may open the sockets mounted at `/inputs/doors`).
+    doors: bool,
 }
 
 async fn go(
@@ -394,9 +472,23 @@ async fn go(
         workspace: lease.run.workspace_id.clone(),
         token: lease.token.clone(),
     };
-    let staged = stage(lease, &api, dir).await?;
+    let writing = lease.run.kind == "job"
+        && lease.run.spec["table_writes"]
+            .as_array()
+            .is_some_and(|a| !a.is_empty());
+    let doors = if writing {
+        Some(open_doors(lease, data_url, &dir.join("doors")).await?)
+    } else {
+        None
+    };
+    let staged = stage(lease, &api, dir, writing).await?;
     let workspace = dir.join("workspace");
-    let report = sandboxed(lease, machine, dir, &workspace, staged, stop).await?;
+    let report = sandboxed(lease, machine, dir, &workspace, staged, stop).await;
+    // The lease ends with the run: from here both doors refuse everything.
+    if let Some(doors) = &doors {
+        doors.close().await;
+    }
+    let report = report?;
     // Only a run that ended well has anything to collect.
     if report.state == "running" {
         collect(lease, &api, &workspace, report).await
@@ -406,7 +498,7 @@ async fn go(
 }
 
 /// Fetches what the work declared, through the API with its own token, and writes the code to run beside it.
-async fn stage(lease: &Lease, api: &Api, dir: &Path) -> Result<Staged, String> {
+async fn stage(lease: &Lease, api: &Api, dir: &Path, writing: bool) -> Result<Staged, String> {
     let io = |e: std::io::Error| e.to_string();
     let spec = &lease.run.spec;
     let code = dir.join("job");
@@ -436,6 +528,7 @@ async fn stage(lease: &Lease, api: &Api, dir: &Path) -> Result<Staged, String> {
         return Ok(Staged {
             mounts,
             script: "run_sql.py",
+            doors: false,
         });
     }
     for i in spec["inputs"].as_array().into_iter().flatten() {
@@ -460,9 +553,16 @@ async fn stage(lease: &Lease, api: &Api, dir: &Path) -> Result<Staged, String> {
     )
     .await
     .map_err(io)?;
+    if writing {
+        tokio::fs::write(code.join("loamz_doors.py"), LOAMZ_DOORS)
+            .await
+            .map_err(io)?;
+        mounts.push(("doors".to_owned(), dir.join("doors")));
+    }
     Ok(Staged {
         mounts,
         script: "main.py",
+        doors: writing,
     })
 }
 
@@ -477,6 +577,7 @@ async fn sandboxed(
     stop: impl Future<Output = ()>,
 ) -> Result<Report, String> {
     let io = |e: std::io::Error| e.to_string();
+    let doors = staged.doors;
     let user = if machine.gvisor.rootless {
         User::MappedRoot
     } else {
@@ -502,7 +603,12 @@ async fn sandboxed(
         .await
         .map_err(io)?;
 
-    let (cmd, clean) = machine.gvisor.commands(&bundle, &lease.run.id);
+    // A write lease's sandbox may open the two sockets it was given, and still has no network.
+    let (cmd, clean) = if doors {
+        machine.gvisor.worker_commands(&bundle, &lease.run.id)
+    } else {
+        machine.gvisor.commands(&bundle, &lease.run.id)
+    };
     let out = run(
         cmd,
         Duration::from_secs(lease.limits.timeout_s),
@@ -565,9 +671,12 @@ async fn collect(
         }
         return Ok(report);
     }
-    let output = lease.run.spec["output"]
-        .as_str()
-        .ok_or("the job has no output volume")?;
+    // A job that left no output volume (it only writes tables) has nothing to upload.
+    let output = lease.run.spec["output"].as_str().unwrap_or_default();
+    if output.is_empty() {
+        "succeeded".clone_into(&mut report.state);
+        return Ok(report);
+    }
     let files = files_under(workspace).await?;
     let mut total = 0_u64;
     for rel in &files {
