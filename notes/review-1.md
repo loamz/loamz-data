@@ -132,3 +132,89 @@ Before the fixes, the focused tests failed for the expected reasons:
 
 The policy test `governance::catalogs::policy::tests::a_rule_can_never_read_or_run_anything_else`
 also now names `read_blob`; the policy allow-list already rejects it.
+
+### Attack outcomes
+
+The initial tables are the phase-one hypotheses. These outcomes record the
+code path and the closest focused test. "Held (static)" means the parser or
+authorization structure prevents the attack, but the SDK's optional DuckDB
+runtime was unavailable for end-to-end execution.
+
+#### A. Row filters and column masks
+
+| Attack | Result | Test/evidence | Fix |
+|---|---|---|---|
+| `schema.table.col` after wrapping | Held (static); the base relation becomes a derived table, so its original qualification cannot access unwrapped rows. | `a_table_with_rules_is_read_only_through_them`; runtime not exercised. | None. |
+| `catalog.schema.table.col` after wrapping | Held (static), same derived-table boundary. | `a_table_with_rules_is_read_only_through_them`; runtime not exercised. | None. |
+| Table alias collides with a CTE name | Held; each parsed base relation is authorized and each table factor is independently wrapped. | `every_way_to_name_the_table_is_covered`, `a_name_from_with_is_not_a_table_but_the_tables_inside_it_are`. | None. |
+| Mask names a missing column | Held by DuckDB's `SELECT * REPLACE` missing-column error; no result is produced. | `a_table_with_rules_is_read_only_through_them` covers rewrite shape; no DuckDB runtime test. | None; runtime remains unverified. |
+| Same last table name in different schemas | Held; authorization keys are full lower-cased catalog/schema/table tuples. | `finds_every_table_a_query_reads`. | None. |
+| View or nested query reads a protected table | Nested query held; views are not accepted as tables by the catalog lookup. | `a_name_from_with_is_not_a_table_but_the_tables_inside_it_are`; view rejection reviewed in `readable_table`. | None. |
+| Protected table in one `UNION` arm | Held by AST traversal of all relations and per-factor wrapping. | `union_tables_with_the_same_name_get_their_own_rules`. | None. |
+| `* EXCLUDE` / `EXCEPT` / `REPLACE` exposes a masked value | Held by applying the mask inside the derived table before the caller's projection. | `duckdb_syntax_is_understood`, `a_table_with_rules_is_read_only_through_them`; runtime not exercised. | None. |
+| Filter errors on selected rows | Query fails rather than returning rows from before the filter. | Static rewrite boundary; no DuckDB runtime test. | None; error/timing side channels are not eliminated. |
+| Identifier case and quoting | Unquoted case is normalized; quoted identifiers retain parser values. | `finds_every_table_a_query_reads`, `every_way_to_name_the_table_is_covered`. | None. |
+| Read same table under two aliases | Held; every table factor is wrapped; relation deduplication is only for policy lookup. | `every_way_to_name_the_table_is_covered`. | None. |
+| File/network reader in a policy | Held; policy expression allow-list refuses non-approved functions. | `a_rule_can_never_read_or_run_anything_else`. | None. |
+| DuckDB file-reading scalar function in user SQL | **Broke; fixed.** `read_blob` and `read_text` were callable in a query with an authorized table. | `reading_files_is_not_reading_tables`; API assertion in `rules_apply_to_everyone_who_does_not_manage_the_table`. | Refuse both AST function calls, including qualified/case-varied names; table functions were already refused. |
+| Timing/error side channel for masks | Not fully addressed; failures can still differ based on a caller's expression. | No direct test. | No general side-channel mitigation added; scope is masked query results, not constant-time execution. |
+| Group removed after SQL is queued | **Broke; fixed.** Lease used the saved group snapshot. | `rules_apply_to_everyone_who_does_not_manage_the_table`. | Refresh groups at lease and regenerate the guarded statement. |
+| Group removed after SQL completes | **Broke; fixed.** Results could outlive the policy context that produced them. | `completed_sql_results_are_hidden_after_group_revocation`. | Re-evaluate the current guarded statement before returning details; otherwise hide results. |
+| Job queued before row policy is added | **Broke; fixed.** Raw table files could be handed to the job. | `a_policy_added_after_job_submission_blocks_raw_table_input`. | Check table restriction at lease before vending credentials. |
+| Nested/parser edge hides a base table | Held by parser traversal and rejection of non-full table names. | `a_name_from_with_is_not_a_table_but_the_tables_inside_it_are`, `tables_must_be_named_in_full`. | None. |
+| Policy text rewrites into executable SQL | Held; expressions are parsed, allow-listed, substituted as AST values, and applied only after validation. | `plain_rules_are_saved`, `a_rule_can_never_read_or_run_anything_else`, `words_about_the_person_become_values`. | None. |
+
+#### B. Catalogs on storage locations
+
+| Attack | Result | Test/evidence | Fix |
+|---|---|---|---|
+| `..` path segments | Held; prefix segments reject `.` and `..`. | `prefixes_are_plain_folders`. | None. |
+| Percent-encoded traversal/separators | Held; `%` and separators other than `/` are not valid segment characters. | `prefixes_are_plain_folders` now includes `%2e%2e`. | None. |
+| `_` or `%` widens the catalog lookup | Held; `catalogs_under` escapes `LIKE` metacharacters. | `location_like_wildcards_do_not_match_other_catalog_prefixes` covers `_`; `%` is rejected in stored prefixes. | None. |
+| Trailing slash creates an alternate root | Held; `normalize_prefix` trims leading/trailing slashes before storage. | `prefixes_are_plain_folders`. | None. |
+| Unicode normalization collision | Held; non-ASCII prefix characters are rejected. | `prefixes_are_plain_folders`; static. | None. |
+| Case variation escapes containment | Bucket names are lowercase-only; object prefixes are case-sensitive, matching object-store paths. | `buckets_are_named_as_s3_does`, `locations_overlap_when_one_is_inside_the_other`. | None. |
+| Overlap across workspaces | Held in a single transaction; all locations for endpoint and bucket are checked, not just the current workspace. | `a_catalog_keeps_its_data_where_its_location_says`; cross-workspace overlap not separately tested. | None. |
+| Delete races catalog creation | **Residual integrity risk, not reproduced.** The delete pre-check and catalog location lookup happen before their write transactions; process-local serialization does not coordinate multiple server instances. | No concurrent Postgres regression test. | Not fixed; needs a database-wide serialization/constraint strategy. |
+| Location changes after catalog creation | Held; locations have no edit route; catalogs retain their resolved folder. | Route inventory and `a_catalog_keeps_its_data_where_its_location_says`. | None. |
+| Delete misses a descendant catalog | Held; `catalogs_under` uses an escaped, separator-bounded prefix. | `a_catalog_keeps_its_data_where_its_location_says`, `location_like_wildcards_do_not_match_other_catalog_prefixes`. | None. |
+| `LIKE` escape handling | Held; backslash, `%`, and `_` are escaped and the query declares an escape character. | `location_like_wildcards_do_not_match_other_catalog_prefixes`; `%` prefix invalid. | None. |
+| Foreign credential/location selects another store | Held for catalog placement; credential must belong to workspace and catalog locations must resolve to the server's own writable store. | `a_catalog_keeps_its_data_where_its_location_says`; route tests verify workspace denial. | None. |
+| Two location records resolve to same prefix | Held by overlap check for identical endpoint/bucket/prefix. | `locations_overlap_when_one_is_inside_the_other`; no concurrent test. | None. |
+| Empty/root prefix claims whole bucket | Location may represent a bucket root, but `managed_prefix` refuses it for catalogs; own shared bucket roots are also refused. | `a_catalog_keeps_its_data_where_its_location_says`; root cases static. | None. |
+| Concurrent overlapping location creates | **Residual integrity risk, not reproduced.** The in-process lock does not serialize writes from separate server instances. | No concurrent Postgres regression test. | Not fixed; same database-wide serialization gap as delete/create. |
+| Failure deletes metadata or bytes before refusal | Held; create/delete metadata changes and audit are transactional; no bytes are deleted by location deletion. | `a_change_that_fails_leaves_no_record`, `a_catalog_keeps_its_data_where_its_location_says`. | None. |
+
+#### C. `loamz import`
+
+| Attack | Result | Test/evidence | Fix |
+|---|---|---|---|
+| SQL injection through file path | Held; path is a SQL string literal. | `test_import_escapes_file_path_and_target_identifiers`. | None. |
+| SQL injection through table name | Held; target components use quoted identifiers. | `test_import_escapes_file_path_and_target_identifiers`. | None. |
+| SQL injection through schema name | Held; target components use quoted identifiers. | `test_import_escapes_file_path_and_target_identifiers`. | None. |
+| Quotes, semicolons or comments in identifiers | Held by doubling identifier quotes; punctuation remains inside identifier. | `test_import_escapes_file_path_and_target_identifiers`. | None. |
+| Absolute path, `..`, symlink or glob reads unintended files | The importer reads the explicit local file the caller selected; `Path.is_file()` follows symlinks, so it is not a sandbox against the local process owner. | No separate test; this is a local SDK operation. | No local-file sandbox added. |
+| URL/network read via import path | Held; `Path.is_file()` rejects URLs and reader choice is fixed to CSV/Parquet. | `test_import_escapes_file_path_and_target_identifiers`; static. | None. |
+| Credentials exposed in process arguments | Held; attach uses a DuckDB SQL string in-process, not subprocess argv. | `test_duckdb_attach_escapes_catalog_endpoint_and_token`. | None. |
+| Credentials or paths logged | No logging in importer; errors may include a local file path from Python/DuckDB. Token is not included in the raised messages by this code path. | Static review; no log-capture test. | None. |
+| Append without modify permission | Server's Iceberg endpoint authorizes the write; SDK does not bypass server grants. | Existing integration `test_import_file_makes_a_table_and_adds_to_it`; server-side authorization reviewed. | None. |
+| Unexpected overwrite | Held; non-append uses `CREATE TABLE`, which errors on an existing table rather than replacing it. | `test_import_file_makes_a_table_and_adds_to_it`; no overwrite-specific assertion. | None. |
+| Import into a different catalog/schema | The selected `TableHandle` components determine the target; components are quoted. | `test_import_escapes_file_path_and_target_identifiers`; runtime unavailable. | None. |
+| Inferred names/types change target | File schema determines columns only; destination is the fixed handle target. | Static review; no malformed-schema integration case. | None. |
+| Failed import leaves partial table/data | Not independently verified against DuckDB transaction behavior. | No local DuckDB runtime installed. | Not changed; local runtime validation remains open. |
+| Symlink changes between validation and read | Possible for a caller with write access to the same local filesystem; this is not a privilege boundary against the SDK caller. | No race test. | No path snapshot/copy added. |
+| Malformed/unsupported file reports success | Fixed reader raises on parse failure; row count follows successful import. | Existing `test_import_file_makes_a_table_and_adds_to_it`; malformed-file case untested. | None. |
+| Extension/autoload sends secrets remotely | The code explicitly installs/loads DuckDB extensions and passes the token to the Iceberg attach; extension supply-chain/network behavior was not runtime-tested. | No DuckDB runtime installed. | Not independently validated. |
+| Option-like path changes CLI parsing | Path is passed as a quoted SQL string, not an argv option. | `test_import_escapes_file_path_and_target_identifiers`. | None. |
+| Existing table/schema reused silently | `CREATE TABLE` errors if table exists; append is explicit. Schema creation is `IF NOT EXISTS`. | Existing integration `test_import_file_makes_a_table_and_adds_to_it`; conflict case not separately tested. | None. |
+
+### Phase 4: hostile re-read
+
+The stale group snapshot, stale result context, and job raw-file handoff were
+the three concrete authorization gaps found on re-read. Their regressions are
+`rules_apply_to_everyone_who_does_not_manage_the_table`,
+`completed_sql_results_are_hidden_after_group_revocation`, and
+`a_policy_added_after_job_submission_blocks_raw_table_input`. The location
+create/delete race remains an unaddressed integrity risk across server
+instances; local SQLite concurrency and the Postgres test suite are still
+needed before treating the review as complete.

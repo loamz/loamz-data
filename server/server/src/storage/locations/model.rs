@@ -120,7 +120,9 @@ mod tests {
         assert_eq!(normalize_prefix("").unwrap(), "");
         assert_eq!(normalize_prefix("/").unwrap(), "");
         assert_eq!(normalize_prefix("/team-a/raw/").unwrap(), "team-a/raw");
-        for bad in ["a//b", "a/../b", "./a", "a b", "a?x", "a/*"] {
+        for bad in [
+            "a//b", "a/../b", "./a", "a b", "a?x", "a/*", "a/%2e%2e", "café",
+        ] {
             assert!(normalize_prefix(bad).is_err(), "{bad:?}");
         }
     }

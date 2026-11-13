@@ -1339,9 +1339,7 @@ async fn location_like_wildcards_do_not_match_other_catalog_prefixes(s: Server) 
         .as_str()
         .unwrap()
         .to_owned();
-    let location = |name: &str, prefix: &str| {
-        json!({"name": name, "credential_id": cred, "bucket": "loamz-data", "prefix": prefix})
-    };
+    let location = |name: &str, prefix: &str| json!({"name": name, "credential_id": cred, "bucket": "loamz-data", "prefix": prefix});
     let pattern = s
         .post(
             &format!("{base}/locations"),

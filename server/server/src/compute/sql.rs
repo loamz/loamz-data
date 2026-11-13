@@ -66,7 +66,10 @@ impl Visitor for Collector {
         let Some(ObjectNamePart::Identifier(name)) = function.name.0.last() else {
             return ControlFlow::Continue(());
         };
-        if matches!(name.value.to_ascii_lowercase().as_str(), "read_blob" | "read_text") {
+        if matches!(
+            name.value.to_ascii_lowercase().as_str(),
+            "read_blob" | "read_text"
+        ) {
             self.refused = Some("file-reading functions are not allowed; read tables by their catalog.schema.table name".into());
             return ControlFlow::Break(());
         }
@@ -283,6 +286,33 @@ mod tests {
             sql.contains("AS o"),
             "the statement's own alias is kept: {sql}"
         );
+    }
+
+    #[test]
+    fn union_tables_with_the_same_name_get_their_own_rules() {
+        let rules = HashMap::from([
+            (
+                rel("sales", "raw", "orders"),
+                Resolved {
+                    filter: Some("region = 'EU'".into()),
+                    masks: vec![],
+                },
+            ),
+            (
+                rel("archive", "raw", "orders"),
+                Resolved {
+                    filter: Some("region = 'US'".into()),
+                    masks: vec![],
+                },
+            ),
+        ]);
+        let guarded = guard(
+            "SELECT id FROM sales.raw.orders UNION ALL SELECT id FROM archive.raw.orders",
+            &rules,
+        )
+        .unwrap();
+        assert!(guarded.contains("region = 'EU'"), "{guarded}");
+        assert!(guarded.contains("region = 'US'"), "{guarded}");
     }
 
     #[test]
