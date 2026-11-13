@@ -13,12 +13,18 @@ import loamz_doors  # noqa: E402
 SPEC = json.loads(bytes.fromhex("__SPEC__").decode())
 
 catalog, schema, table = SPEC["target"].split(".")
-sources = [d for d in os.listdir("/inputs") if d not in ("job", "doors")]
-if len(sources) != 1:
-    sys.exit("expected exactly one source volume")
-path = os.path.normpath(os.path.join("/inputs", sources[0], SPEC["path"]))
-if not path.startswith(f"/inputs/{sources[0]}/") or not os.path.isfile(path):
-    sys.exit("the source file is not there")
+# The source volume is mounted under its own name; folders left over from other runs may also be there, so look for the file itself.
+relative = os.path.normpath(SPEC["path"])
+if relative.startswith(("..", "/")):
+    sys.exit("the source file's path is not valid")
+found = [
+    os.path.join("/inputs", d, relative)
+    for d in sorted(os.listdir("/inputs"))
+    if d not in ("job", "doors") and os.path.isfile(os.path.join("/inputs", d, relative))
+]
+if len(found) != 1:
+    sys.exit(f"the source file was found in {len(found)} places, not one")
+path = found[0]
 
 catalog_endpoint, storage_endpoint = loamz_doors.start(SPEC["workspace"])
 con = duckdb.connect(

@@ -190,6 +190,8 @@ struct Asked {
     query: String,
     content_type: Option<String>,
     range: Option<String>,
+    /// `Content-MD5`, which a bulk delete must carry for the store to accept it.
+    md5: Option<String>,
     body: Vec<u8>,
     close: bool,
 }
@@ -222,7 +224,8 @@ async fn read_request(stream: &mut UnixStream) -> Result<Option<Asked>, u16> {
         return Err(400);
     };
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
-    let (mut length, mut content_type, mut range, mut close) = (0_usize, None, None, false);
+    let (mut length, mut content_type, mut range, mut md5, mut close) =
+        (0_usize, None, None, None, false);
     for line in lines.filter(|l| !l.is_empty()) {
         let (name, value) = line.split_once(':').ok_or(400_u16)?;
         let value = value.trim();
@@ -232,6 +235,8 @@ async fn read_request(stream: &mut UnixStream) -> Result<Option<Asked>, u16> {
             content_type = Some(value.to_owned());
         } else if name.eq_ignore_ascii_case("range") {
             range = Some(value.to_owned());
+        } else if name.eq_ignore_ascii_case("content-md5") {
+            md5 = Some(value.to_owned());
         } else if name.eq_ignore_ascii_case("connection") {
             close = value.eq_ignore_ascii_case("close");
         } else if name.eq_ignore_ascii_case("transfer-encoding")
@@ -262,6 +267,7 @@ async fn read_request(stream: &mut UnixStream) -> Result<Option<Asked>, u16> {
         query: query.to_owned(),
         content_type,
         range,
+        md5,
         body,
         close,
     }))
@@ -402,6 +408,8 @@ pub fn catalog_allows(grant: &CatalogGrant, method: &str, path: &str) -> bool {
         return false;
     };
     match (kind.as_str(), parts.len()) {
+        // A commit of one or more tables at once: which tables is checked against the body (`commit_names_allowed`).
+        ("transactions", 3) if parts[2] == "commit" => method == "POST",
         // namespaces: list, get one, and the tables of one
         ("namespaces", 2 | 3) => reading,
         ("namespaces", 4) if parts[3] == "tables" => {
@@ -424,6 +432,37 @@ pub fn catalog_allows(grant: &CatalogGrant, method: &str, path: &str) -> bool {
     }
 }
 
+/// Whether every table a multi-table commit changes is one the run declared. The body is the catalog's `table-changes` list, each with an
+/// `identifier` (`namespace` and `name`); the catalog is the one in the path.
+#[must_use]
+pub fn commit_names_allowed(grant: &CatalogGrant, path: &str, body: &[u8]) -> bool {
+    let prefix = format!("/api/v1/workspaces/{}/iceberg/v1/", grant.workspace);
+    let Some(catalog) = path
+        .strip_prefix(&prefix)
+        .and_then(|r| r.split('/').next())
+        .map(pct_decode)
+    else {
+        return false;
+    };
+    let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return false;
+    };
+    let Some(changes) = json["table-changes"].as_array().filter(|c| !c.is_empty()) else {
+        return false;
+    };
+    changes.iter().all(|change| {
+        let namespace: Vec<&str> = change["identifier"]["namespace"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|n| n.as_str()).collect())
+            .unwrap_or_default();
+        let (Some(name), [schema]) = (change["identifier"]["name"].as_str(), namespace.as_slice())
+        else {
+            return false;
+        };
+        grant.tables.contains(&format!("{catalog}.{schema}.{name}"))
+    })
+}
+
 async fn forward_catalog(
     http: &reqwest::Client,
     grant: &CatalogGrant,
@@ -441,6 +480,13 @@ async fn forward_catalog(
     }
     if asked.query.contains(['\r', '\n']) {
         return Answer::plain(400);
+    }
+    if path.ends_with("/transactions/commit") && !commit_names_allowed(grant, &path, &asked.body) {
+        tracing::warn!(
+            path,
+            "the catalog door refused a commit that names a table the run did not declare"
+        );
+        return Answer::plain(403);
     }
     let url = if asked.query.is_empty() {
         format!("{}{}", grant.base.trim_end_matches('/'), asked.path)
@@ -496,15 +542,29 @@ async fn forward_catalog(
     }
 }
 
-/// The folder a newly created table keeps its files in, from the catalog's reply (`metadata-location`), if it is inside a root the
-/// run may create under: `s3://<bucket>/<root><table folder>/metadata/...` gives `<root><table folder>/`.
+/// The folder a newly created table keeps its files in, from the catalog's reply, if it is inside a root the run may create under.
+/// The reply names the table's location (`metadata.location`, `s3://<bucket>/<folder>`) and, once its first metadata file is written,
+/// that file (`metadata-location`, `s3://<bucket>/<folder>/metadata/...`); either gives `<folder>/`.
 #[must_use]
 pub fn created_folder(reply: &[u8], bucket: &str, roots: &[String]) -> Option<String> {
     let json: serde_json::Value = serde_json::from_slice(reply).ok()?;
-    let location = json["metadata-location"].as_str()?;
-    let key = location.strip_prefix(&format!("s3://{bucket}/"))?;
-    let folder = key.split("/metadata/").next()?;
-    let folder = format!("{}/", folder.trim_end_matches('/'));
+    let from = |uri: &str, cut_metadata: bool| -> Option<String> {
+        let key = uri.strip_prefix(&format!("s3://{bucket}/"))?;
+        let key = if cut_metadata {
+            key.split("/metadata/").next()?
+        } else {
+            key
+        };
+        Some(format!("{}/", key.trim_end_matches('/')))
+    };
+    let folder = json["metadata"]["location"]
+        .as_str()
+        .and_then(|u| from(u, false))
+        .or_else(|| {
+            json["metadata-location"]
+                .as_str()
+                .and_then(|u| from(u, true))
+        })?;
     let inside = roots
         .iter()
         .any(|r| folder.len() > r.len() && folder.starts_with(r.as_str()));
@@ -531,6 +591,42 @@ async fn serve_storage(
         async move { forward_storage(&http, &g, &learned, asked).await }
     })
     .await;
+}
+
+/// Whether every key a bulk delete (`POST /<bucket>?delete`, an XML body of `<Key>` entries) names is in a folder the run may write.
+#[must_use]
+pub fn delete_keys_allowed(grant: &StorageGrant, made: &[String], path: &str, body: &[u8]) -> bool {
+    if path.trim_start_matches('/').trim_end_matches('/') != grant.bucket {
+        return false;
+    }
+    let Ok(text) = std::str::from_utf8(body) else {
+        return false;
+    };
+    let mut keys = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("<Key>") {
+        let after = &rest[start + 5..];
+        let Some(end) = after.find("</Key>") else {
+            return false;
+        };
+        keys.push(
+            after[..end]
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&apos;", "'")
+                .replace("&amp;", "&"),
+        );
+        rest = &after[end + 6..];
+    }
+    let under = |k: &str, prefixes: &[String]| prefixes.iter().any(|p| k.starts_with(p.as_str()));
+    !keys.is_empty()
+        && keys.len() <= 1000
+        && keys.iter().all(|k| {
+            !k.is_empty()
+                && !k.split('/').any(|p| p == ".." || p == ".")
+                && (under(k, &grant.write_prefixes) || under(k, made))
+        })
 }
 
 /// The S3 operations a write lease allows, and where. `path` is `/<bucket>/<key>` as sent, `query` as sent; `made` are the folders the
@@ -576,6 +672,7 @@ pub fn storage_allows(
         "continuation-token",
         "start-after",
         "encoding-type",
+        "delete",
     ];
     if pairs.iter().any(|(k, _)| !known.contains(&k.as_str())) {
         return Err("a sub-resource that is not allowed");
@@ -588,6 +685,8 @@ pub fn storage_allows(
             .map(|(_, v)| v.as_str());
         return match (method, prefix) {
             ("GET", Some(p)) if plain(p) && may_read(p) => Ok(()),
+            // A bulk delete: which keys is checked against the body (`delete_keys_allowed`).
+            ("POST", None) if has("delete") => Ok(()),
             _ => Err("a listing outside the leased folders"),
         };
     }
@@ -602,6 +701,7 @@ pub fn storage_allows(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn forward_storage(
     http: &reqwest::Client,
     grant: &StorageGrant,
@@ -609,6 +709,18 @@ async fn forward_storage(
     asked: Asked,
 ) -> Answer {
     let made = learned.read().await.clone();
+    let bulk_delete = asked.method == "POST"
+        && asked
+            .query
+            .split('&')
+            .any(|p| p == "delete" || p.starts_with("delete="));
+    if bulk_delete && !delete_keys_allowed(grant, &made, &asked.path, &asked.body) {
+        tracing::warn!(
+            path = asked.path,
+            "the storage door refused a bulk delete that names a key outside the writable folders"
+        );
+        return Answer::plain(403);
+    }
     if let Err(why) = storage_allows(grant, &made, &asked.method, &asked.path, &asked.query) {
         tracing::warn!(
             method = asked.method,
@@ -648,6 +760,9 @@ async fn forward_storage(
     }
     if let Some(range) = &asked.range {
         request = request.header("Range", range);
+    }
+    if let Some(md5) = &asked.md5 {
+        request = request.header("Content-MD5", md5);
     }
     if !asked.body.is_empty() {
         request = request.body(asked.body);
@@ -1080,5 +1195,67 @@ mod tests {
         ] {
             assert_eq!(created_folder(bad, "lake", &roots), None);
         }
+    }
+
+    #[test]
+    fn a_commit_and_a_bulk_delete_name_only_what_the_run_may_change() {
+        let c = catalog();
+        let path = "/api/v1/workspaces/w1/iceberg/v1/sales/transactions/commit";
+        assert!(catalog_allows(&c, "POST", path));
+        let change = |schema: &str, name: &str| {
+            format!(
+                r#"{{"table-changes":[{{"identifier":{{"namespace":["{schema}"],"name":"{name}"}},"requirements":[],"updates":[]}}]}}"#
+            )
+        };
+        assert!(commit_names_allowed(
+            &c,
+            path,
+            change("raw", "orders").as_bytes()
+        ));
+        assert!(!commit_names_allowed(
+            &c,
+            path,
+            change("raw", "secrets").as_bytes()
+        ));
+        assert!(!commit_names_allowed(
+            &c,
+            path,
+            change("clean", "orders").as_bytes()
+        ));
+        assert!(!commit_names_allowed(&c, path, br#"{"table-changes":[]}"#));
+        assert!(!commit_names_allowed(&c, path, b"nonsense"));
+
+        let g = storage();
+        let del = |keys: &[&str]| {
+            let mut body = String::new();
+            for k in keys {
+                body.push_str("<Object><Key>");
+                body.push_str(k);
+                body.push_str("</Key></Object>");
+            }
+            delete_keys_allowed(
+                &g,
+                &[],
+                "/lake",
+                format!("<Delete>{body}</Delete>").as_bytes(),
+            )
+        };
+        assert!(del(&[
+            "ws/cat/tbl/data/a.parquet",
+            "ws/cat/tbl/metadata/x.json"
+        ]));
+        assert!(!del(&["ws/cat/tbl/data/a.parquet", "ws/cat/other/x"]));
+        assert!(!del(&["ws/cat/in/readonly"]));
+        assert!(!del(&["ws/cat/tbl/../other/x"]));
+        assert!(!del(&[]));
+        assert!(!delete_keys_allowed(
+            &g,
+            &[],
+            "/other",
+            b"<Delete><Object><Key>ws/cat/tbl/a</Key></Object></Delete>"
+        ));
+        // A bulk delete is allowed to start only on the bucket itself.
+        assert!(storage_allows(&g, &[], "POST", "/lake", "delete").is_ok());
+        assert!(storage_allows(&g, &[], "POST", "/lake/ws/cat/tbl/x", "delete").is_err());
     }
 }
