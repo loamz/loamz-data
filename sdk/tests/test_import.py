@@ -56,4 +56,5 @@ def test_import_escapes_file_path_and_target_identifiers(monkeypatch, tmp_path):
     assert handle.import_file(path) == 1
 
     assert statements[1].startswith('CREATE TABLE lz."sch""ema; --"."ta""ble" AS SELECT ')
-    assert "'data''; SELECT ''injected''; --.csv'" in statements[1]
+    escaped_path = str(path).replace("'", "''")
+    assert f"'{escaped_path}'" in statements[1]
