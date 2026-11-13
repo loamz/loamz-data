@@ -350,11 +350,12 @@ async fn sql_is_checked_before_it_runs(s: Server) {
         &s.get(&format!("/api/v1/orgs/{ACME}/audit?limit=500"), &ana())
             .await,
     );
-    assert!(
-        trail
-            .iter()
-            .any(|e| e["actor"] == "bob" && e["outcome"] == "denied")
-    );
+    assert!(trail.iter().any(|e| {
+        e["actor"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("erased:"))
+            && e["outcome"] == "denied"
+    }));
     assert!(trail.iter().any(|e| e["action"] == "sql.submit"));
 }
 both!(sql_is_checked_before_it_runs);

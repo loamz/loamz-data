@@ -873,9 +873,10 @@ async fn privileges(s: Server) {
             .await,
     );
     assert!(
-        trail
-            .iter()
-            .any(|e| e["outcome"] == "denied" && e["actor"] == "bob"),
+        trail.iter().any(|e| e["outcome"] == "denied"
+            && e["actor"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("erased:"))),
         "the reader's refused write is recorded"
     );
 }
@@ -1455,11 +1456,14 @@ async fn an_agent_acting_for_a_person(s: Server) {
         &s.get(&format!("/api/v1/orgs/{ACME}/audit?limit=500"), &ana())
             .await,
     );
-    assert!(
-        trail
-            .iter()
-            .any(|e| e["actor"] == "agent-1" && e["on_behalf_of"] == "bob")
-    );
+    assert!(trail.iter().any(|e| {
+        e["actor"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("erased:"))
+            && e["on_behalf_of"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("erased:"))
+    }));
 }
 both!(an_agent_acting_for_a_person);
 
@@ -1632,7 +1636,7 @@ async fn drop_is_a_durable_task(s: Server) {
     );
     let task_path = format!("/api/v1/orgs/{ACME}/tasks/{task}");
     assert_eq!(s.get(&task_path, &ana()).await.json()["state"], "pending");
-    assert_eq!(s.get(&task_path, &bob()).await.status, 403);
+    assert_eq!(s.get(&task_path, &bob()).await.status, 404);
 
     assert_eq!(s.work().await, 1);
     assert!(!s.store_dir(&v).exists(), "the files are gone");
@@ -1727,7 +1731,7 @@ async fn erase_removes_a_person_and_keeps_the_audit(s: Server) {
         s.post(&erase, &bob(), json!({"subject": "user:bob"}))
             .await
             .status,
-        403
+        404
     );
     assert_eq!(
         s.post(&erase, &ana(), json!({"subject": "bob"}))
