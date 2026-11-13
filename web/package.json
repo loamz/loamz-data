@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "test:browser": "node e2e/history-smoke.mjs",
+    "test:e2e": "node e2e/workflow.spec.mjs",
     "design:sync": "bash scripts/sync-design.sh"
   },
   "dependencies": {
