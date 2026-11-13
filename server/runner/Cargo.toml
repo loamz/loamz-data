@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 futures = "0.3"
+bytes = "1"
 object_store = { version = "0.14.2", default-features = false, features = ["aws-base", "reqwest", "ring"] }
 # Unify object_store's reqwest 0.13 TLS backend with the existing ring provider.
 reqwest13 = { package = "reqwest", version = "0.13", default-features = false, features = ["rustls-no-provider"] }

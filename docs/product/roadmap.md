@@ -27,8 +27,10 @@ a SQL connection for BI tools, job schedules and alerts, abuse protection, safe 
 
 ## The plan to the first beta (13 Nov)
 
-**Beta means:** a new paying customer can sign in, bring their own data, query it fast, connect their tools, and trust that nobody
-else can see it; it runs in production with backups and docs. Billing is by hand and invitation only (it lives in the private Loamz
+**Beta means:** nearly every feature a customer needs, not a minimum. A customer signs in, points us at **their own bucket and their own
+machines (or Modal account)**, and pays for those themselves: we run governance only. They bring data in, query it fast, connect their
+tools, and trust that nobody else can see it. It runs in production with backups and docs, for the owner and fewer than three invited
+customers. Billing is by hand and invitation only (it lives in the private Loamz
 Cloud, behind `Entitlements` and `UsageSink`).
 
 | # | Milestone | Done when | State |
@@ -40,8 +42,12 @@ Cloud, behind `Entitlements` and `UsageSink`).
 | M5 | Production | deployed from `loamz-deploy`, backups and WAL archiving running, restore check passes | in progress: roles written, being run on a throwaway machine |
 | M6 | Ready to show | docs site live, console screens for every feature, end-to-end browser tests, a hostile security review | to do |
 
-**Not in the beta:** functions, MLflow, agent sandboxes, job schedules and alerts, BI connectors, search, network isolation, traces,
-a store per storage location (a customer's own bucket), external objects and storage grants.
+**New for the beta (13 Nov decisions):** a store per storage location (the customer's own bucket: S3, R2, MinIO), a write-only API for
+their storage keys into OpenBao, external objects and storage grants, an installer for a customer's machine (runner, gVisor, worker),
+and a guide for pointing a Modal account at us.
+
+**Scope still to confirm with the owner:** which of functions, MLflow, agent sandboxes, job schedules and alerts, BI connectors,
+search, network isolation and traces are in the beta.
 
 > **Note:** this roadmap is a plan, not a promise. Built features are marked in the Today column.
 

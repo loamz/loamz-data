@@ -15,5 +15,5 @@ export default defineConfig({
       "/agents": { target: process.env.AGENTS_URL ?? "http://127.0.0.1:8000", rewrite: (p: string) => p.replace(/^\/agents/, "") },
     },
   },
-  test: { environment: "node" },
+  test: { environment: "node", exclude: ["e2e/**", "node_modules/**"] },
 });

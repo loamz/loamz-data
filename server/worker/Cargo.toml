@@ -10,7 +10,8 @@ rust-version = "1.95"
 [workspace]
 
 [dependencies]
-duckdb = { version = "=1.20000.1", features = ["bundled", "parquet"] }
+# Linked to DuckDB's own prebuilt library (DUCKDB_LIB_DIR, see scripts/fetch-duckdb.sh), not compiled from source: no `bundled`.
+duckdb = { version = "=1.20000.1" }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 serde_json = "1"
 

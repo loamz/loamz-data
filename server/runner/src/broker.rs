@@ -1,6 +1,12 @@
-//! A read-only, per-run object broker reached through one private Unix socket.
+//! A read-only object broker reached through one private Unix socket: the only way a SQL worker reaches storage.
+//!
+//! It serves `GET` and `HEAD` for exactly the folders the current lease names, and nothing else. Connections are kept open, and what
+//! it reads is kept in a small cache: Iceberg metadata, manifests and Parquet files are never changed once written (a new version is
+//! a new file), so the same bytes can be served again without asking the store. The cache is in the broker, outside the sandbox, and
+//! every request is checked against the lease before the cache is looked at, so it can never serve a folder the lease does not name.
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -9,10 +15,10 @@ use std::{
     time::Duration,
 };
 
+use bytes::Bytes;
 use futures::StreamExt;
 use object_store::{
-    GetOptions, GetRange, ObjectStore, ObjectStoreExt, aws::AmazonS3Builder,
-    path::Path as ObjectPath,
+    GetRange, ObjectStore, ObjectStoreExt, aws::AmazonS3Builder, path::Path as ObjectPath,
 };
 use serde_json::Value;
 use tokio::{
@@ -29,11 +35,105 @@ struct Grant {
     generation: u64,
 }
 
+/// Objects up to this size are fetched whole, once: a footer, a manifest or a small Parquet file is then served from memory.
+const SMALL_OBJECT: u64 = 16 << 20;
+/// How much the cache may hold.
+const CACHE_BUDGET: usize = 384 << 20;
+/// A connection that sends nothing for this long is closed.
+const IDLE: Duration = Duration::from_secs(20);
+/// Open connections at once. DuckDB keeps one per open file and thread, and keeps them open, so this is far above one query's need.
+const MAX_CONNECTIONS: usize = 128;
+
+#[derive(Clone)]
+struct Meta {
+    size: u64,
+    etag: Option<String>,
+}
+
+#[derive(Default)]
+struct CacheInner {
+    tick: u64,
+    used: usize,
+    heads: HashMap<String, Meta>,
+    /// (object, start, end) to its bytes and when it was last used.
+    blobs: HashMap<(String, u64, u64), (Bytes, u64)>,
+}
+
+/// What the broker has already read. Kept for the life of the worker.
+#[derive(Default)]
+struct Cache {
+    inner: Mutex<CacheInner>,
+    hits: AtomicU64,
+}
+
+impl Cache {
+    fn head(&self, key: &str) -> Option<Meta> {
+        self.inner.lock().ok()?.heads.get(key).cloned()
+    }
+
+    fn put_head(&self, key: &str, meta: Meta) {
+        if let Ok(mut c) = self.inner.lock() {
+            if c.heads.len() > 100_000 {
+                c.heads.clear();
+            }
+            c.heads.insert(key.to_owned(), meta);
+        }
+    }
+
+    /// The bytes of `start..end` of an object: from the whole object if it is held, or from exactly that range.
+    fn get(&self, key: &str, size: u64, start: u64, end: u64) -> Option<Bytes> {
+        let mut c = self.inner.lock().ok()?;
+        c.tick += 1;
+        let tick = c.tick;
+        if let Some((whole, used)) = c.blobs.get_mut(&(key.to_owned(), 0, size)) {
+            *used = tick;
+            let (a, b) = (usize::try_from(start).ok()?, usize::try_from(end).ok()?);
+            self.hits.fetch_add(1, Ordering::Relaxed);
+            return Some(whole.slice(a..b.min(whole.len())));
+        }
+        let (bytes, used) = c.blobs.get_mut(&(key.to_owned(), start, end))?;
+        *used = tick;
+        self.hits.fetch_add(1, Ordering::Relaxed);
+        Some(bytes.clone())
+    }
+
+    fn put(&self, key: &str, start: u64, end: u64, bytes: Bytes) {
+        if bytes.len() > CACHE_BUDGET / 4 {
+            return;
+        }
+        let Ok(mut c) = self.inner.lock() else {
+            return;
+        };
+        while c.used + bytes.len() > CACHE_BUDGET {
+            let Some(oldest) = c
+                .blobs
+                .iter()
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(k, _)| k.clone())
+            else {
+                break;
+            };
+            if let Some((gone, _)) = c.blobs.remove(&oldest) {
+                c.used = c.used.saturating_sub(gone.len());
+            }
+        }
+        c.tick += 1;
+        let tick = c.tick;
+        c.used += bytes.len();
+        if let Some((old, _)) = c.blobs.insert((key.to_owned(), start, end), (bytes, tick)) {
+            c.used = c.used.saturating_sub(old.len());
+        }
+    }
+}
+
 /// The broker never accepts a caller-supplied endpoint or credentials from a socket request.
 pub struct Broker {
     access: Arc<RwLock<Option<Arc<Grant>>>>,
     generation: Arc<AtomicU64>,
     bytes: Arc<AtomicU64>,
+    cache: Arc<Cache>,
+    /// Clients to the store, by the credentials they use: a statement with the same credentials as the last reuses its client.
+    clients: Mutex<HashMap<String, Arc<dyn ObjectStore>>>,
     task: JoinHandle<()>,
     requests: Arc<Mutex<Vec<tokio::task::AbortHandle>>>,
     socket: PathBuf,
@@ -46,31 +146,37 @@ impl Broker {
         let access = Arc::new(RwLock::new(None));
         let generation = Arc::new(AtomicU64::new(0));
         let bytes = Arc::new(AtomicU64::new(0));
+        let cache = Arc::new(Cache::default());
         let requests = Arc::new(Mutex::new(Vec::<tokio::task::AbortHandle>::new()));
         let task = tokio::spawn({
-            let (access, generation, bytes) = (
+            let (access, generation, bytes, cache) = (
                 Arc::clone(&access),
                 Arc::clone(&generation),
                 Arc::clone(&bytes),
+                Arc::clone(&cache),
             );
             let requests = Arc::clone(&requests);
             async move {
-                let permits = Arc::new(tokio::sync::Semaphore::new(32));
+                let permits = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
                 while let Ok((stream, _)) = listener.accept().await {
                     let Ok(permit) = Arc::clone(&permits).try_acquire_owned() else {
+                        tracing::warn!("the storage broker is at its connection limit");
+                        let mut stream = stream;
+                        let _ = error(&mut stream, 503, "Busy").await;
                         continue;
                     };
-                    let (access, generation, bytes) = (
+                    let (access, generation, bytes, cache) = (
                         Arc::clone(&access),
                         Arc::clone(&generation),
                         Arc::clone(&bytes),
+                        Arc::clone(&cache),
                     );
                     if let Ok(mut requests) = requests.lock() {
                         let handle = tokio::spawn(async move {
                             let _permit = permit;
                             let _ = tokio::time::timeout(
                                 Duration::from_mins(5),
-                                serve(stream, access, generation, bytes),
+                                serve(stream, access, generation, bytes, cache),
                             )
                             .await;
                         });
@@ -84,6 +190,8 @@ impl Broker {
             access,
             generation,
             bytes,
+            cache,
+            clients: Mutex::default(),
             task,
             requests,
             socket,
@@ -108,16 +216,36 @@ impl Broker {
         };
         let bucket = field("bucket")?.to_owned();
         let endpoint = field("endpoint")?;
-        let store = AmazonS3Builder::new()
-            .with_endpoint(endpoint)
-            .with_bucket_name(&bucket)
-            .with_access_key_id(field("key_id")?)
-            .with_secret_access_key(field("secret")?)
-            .with_token(field("session_token")?)
-            .with_region("auto")
-            .with_allow_http(endpoint.starts_with("http://"))
-            .build()
-            .map_err(|_| "the storage access could not be prepared")?;
+        let (key_id, secret, token) = (field("key_id")?, field("secret")?, field("session_token")?);
+        let client_key = format!("{endpoint}|{bucket}|{key_id}|{token}");
+        let reused = self
+            .clients
+            .lock()
+            .ok()
+            .and_then(|c| c.get(&client_key).cloned());
+        let store: Arc<dyn ObjectStore> = if let Some(client) = reused {
+            client
+        } else {
+            let built: Arc<dyn ObjectStore> = Arc::new(
+                AmazonS3Builder::new()
+                    .with_endpoint(endpoint)
+                    .with_bucket_name(&bucket)
+                    .with_access_key_id(key_id)
+                    .with_secret_access_key(secret)
+                    .with_token(token)
+                    .with_region("auto")
+                    .with_allow_http(endpoint.starts_with("http://"))
+                    .build()
+                    .map_err(|_| "the storage access could not be prepared")?,
+            );
+            if let Ok(mut c) = self.clients.lock() {
+                if c.len() >= 8 {
+                    c.clear();
+                }
+                c.insert(client_key, Arc::clone(&built));
+            }
+            built
+        };
         let mut prefixes = Vec::new();
         for table in tables {
             let id = table["id"].as_str().ok_or("a table has no identity")?;
@@ -134,7 +262,7 @@ impl Broker {
         *self.access.write().await = Some(Arc::new(Grant {
             bucket,
             prefixes,
-            store: Arc::new(store),
+            store,
             generation,
         }));
         Ok(())
@@ -154,6 +282,12 @@ impl Broker {
     pub fn bytes_read(&self) -> u64 {
         self.bytes.load(Ordering::Relaxed)
     }
+
+    /// How many reads were answered from the cache.
+    #[must_use]
+    pub fn cache_hits(&self) -> u64 {
+        self.cache.hits.load(Ordering::Relaxed)
+    }
 }
 
 impl Drop for Broker {
@@ -170,6 +304,10 @@ impl Drop for Broker {
 }
 
 async fn error(stream: &mut UnixStream, code: u16, reason: &str) -> std::io::Result<()> {
+    if code != 403 {
+        // A refusal for a folder outside the lease is expected; anything else is worth knowing about.
+        tracing::warn!(code, reason, "the storage broker refused a request");
+    }
     stream
         .write_all(
             format!("HTTP/1.1 {code} {reason}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
@@ -209,8 +347,8 @@ async fn read_header(stream: &mut UnixStream) -> std::io::Result<Vec<u8>> {
 
 fn parse_headers<'a>(
     lines: impl Iterator<Item = &'a str>,
-) -> Result<(Option<GetRange>, Option<String>), u16> {
-    let (mut range, mut if_match) = (None, None);
+) -> Result<(Option<GetRange>, Option<String>, bool), u16> {
+    let (mut range, mut if_match, mut close) = (None, None, false);
     for line in lines.filter(|line| !line.is_empty()) {
         let (name, value) = line.split_once(':').ok_or(400_u16)?;
         if name.eq_ignore_ascii_case("range") {
@@ -223,13 +361,15 @@ fn parse_headers<'a>(
                 return Err(400);
             }
             if_match = Some(value.trim().to_owned());
+        } else if name.eq_ignore_ascii_case("connection") {
+            close = value.trim().eq_ignore_ascii_case("close");
         } else if name.eq_ignore_ascii_case("transfer-encoding")
             || (name.eq_ignore_ascii_case("content-length") && value.trim() != "0")
         {
             return Err(400);
         }
     }
-    Ok((range, if_match))
+    Ok((range, if_match, close))
 }
 
 async fn serve(
@@ -237,95 +377,201 @@ async fn serve(
     access: Arc<RwLock<Option<Arc<Grant>>>>,
     generation: Arc<AtomicU64>,
     bytes: Arc<AtomicU64>,
+    cache: Arc<Cache>,
 ) -> std::io::Result<()> {
-    let Ok(raw) = read_header(&mut stream).await else {
-        return error(&mut stream, 400, "Bad Request").await;
-    };
-    let Ok(header) = std::str::from_utf8(&raw) else {
-        return error(&mut stream, 400, "Bad Request").await;
+    // One connection serves many requests, until the client closes it, asks to, or says nothing for a minute.
+    loop {
+        let Ok(Ok(raw)) = tokio::time::timeout(IDLE, read_header(&mut stream)).await else {
+            return Ok(());
+        };
+        match handle(&mut stream, &raw, &access, &generation, &bytes, &cache).await {
+            Ok(true) => {}
+            Ok(false) => return Ok(()),
+            Err(e) => {
+                tracing::warn!(error = %e, "the storage broker lost a connection");
+                return Err(e);
+            }
+        }
+    }
+}
+
+/// Answers one request. `false` means the connection should now be closed.
+#[allow(clippy::too_many_lines)]
+async fn handle(
+    stream: &mut UnixStream,
+    raw: &[u8],
+    access: &Arc<RwLock<Option<Arc<Grant>>>>,
+    generation: &Arc<AtomicU64>,
+    bytes: &Arc<AtomicU64>,
+    cache: &Arc<Cache>,
+) -> std::io::Result<bool> {
+    let Ok(header) = std::str::from_utf8(raw) else {
+        error(stream, 400, "Bad Request").await?;
+        return Ok(false);
     };
     let mut lines = header.split("\r\n");
     let mut first = lines.next().unwrap_or("").split_whitespace();
     let (Some(method), Some(target), Some("HTTP/1.1"), None) =
         (first.next(), first.next(), first.next(), first.next())
     else {
-        return error(&mut stream, 400, "Bad Request").await;
+        error(stream, 400, "Bad Request").await?;
+        return Ok(false);
     };
     if !matches!(method, "GET" | "HEAD") || target.contains('?') {
-        return error(&mut stream, 403, "Forbidden").await;
+        error(stream, 403, "Forbidden").await?;
+        return Ok(false);
     }
     let Some(grant) = access.read().await.clone() else {
-        return error(&mut stream, 403, "Forbidden").await;
+        error(stream, 403, "Forbidden").await?;
+        return Ok(false);
     };
     let Some((bucket, key)) = target.strip_prefix('/').and_then(|v| v.split_once('/')) else {
-        return error(&mut stream, 400, "Bad Request").await;
+        error(stream, 400, "Bad Request").await?;
+        return Ok(false);
     };
     let Ok(path) = ObjectPath::from_url_path(key) else {
-        return error(&mut stream, 400, "Bad Request").await;
+        error(stream, 400, "Bad Request").await?;
+        return Ok(false);
     };
+    // The lease is checked first, every time: what is in the cache is never served to a folder the lease does not name.
     if bucket != grant.bucket
         || !grant
             .prefixes
             .iter()
             .any(|prefix| path.as_ref().starts_with(prefix))
     {
-        return error(&mut stream, 403, "Forbidden").await;
+        error(stream, 403, "Forbidden").await?;
+        return Ok(false);
     }
-    let (range, if_match) = match parse_headers(lines) {
+    let (range, if_match, close) = match parse_headers(lines) {
         Ok(parsed) => parsed,
-        Err(416) => return error(&mut stream, 416, "Range Not Satisfiable").await,
-        Err(_) => return error(&mut stream, 400, "Bad Request").await,
-    };
-    if method == "HEAD" {
-        let Ok(meta) = grant.store.head(&path).await else {
-            return error(&mut stream, 404, "Not Found").await;
-        };
-        if generation.load(Ordering::SeqCst) != grant.generation {
-            return error(&mut stream, 403, "Forbidden").await;
+        Err(416) => {
+            error(stream, 416, "Range Not Satisfiable").await?;
+            return Ok(false);
         }
-        let etag = etag_header(meta.e_tag.as_deref());
-        return stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n{etag}Accept-Ranges: bytes\r\nConnection: close\r\n\r\n", meta.size).as_bytes()).await;
-    }
-    let ranged = range.is_some();
-    let opts = GetOptions {
-        range,
-        if_match,
-        ..Default::default()
+        Err(_) => {
+            error(stream, 400, "Bad Request").await?;
+            return Ok(false);
+        }
     };
-    let Ok(result) = grant.store.get_opts(&path, opts).await else {
-        return error(&mut stream, 404, "Not Found").await;
+    let connection = if close { "close" } else { "keep-alive" };
+    let name = format!("{bucket}/{}", path.as_ref());
+    let meta = if let Some(m) = cache.head(&name) {
+        m
+    } else {
+        let Ok(found) = grant.store.head(&path).await else {
+            error(stream, 404, "Not Found").await?;
+            return Ok(false);
+        };
+        let m = Meta {
+            size: found.size,
+            etag: found.e_tag.clone(),
+        };
+        cache.put_head(&name, m.clone());
+        m
     };
     if generation.load(Ordering::SeqCst) != grant.generation {
-        return error(&mut stream, 403, "Forbidden").await;
+        error(stream, 403, "Forbidden").await?;
+        return Ok(false);
     }
-    let length = result.range.end.saturating_sub(result.range.start);
-    let content_range = if ranged {
-        format!(
-            "Content-Range: bytes {}-{}/{}\r\n",
-            result.range.start,
-            result.range.end.saturating_sub(1),
-            result.meta.size
-        )
-    } else {
-        String::new()
+    let etag = etag_header(meta.etag.as_deref());
+    if method == "HEAD" {
+        stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n{etag}Accept-Ranges: bytes\r\nConnection: {connection}\r\n\r\n", meta.size).as_bytes()).await?;
+        return Ok(!close);
+    }
+    if if_match.is_some_and(|wanted| {
+        meta.etag
+            .as_deref()
+            .is_some_and(|have| have != wanted && wanted != "*")
+    }) {
+        error(stream, 412, "Precondition Failed").await?;
+        return Ok(false);
+    }
+    let ranged = range.is_some();
+    let size = meta.size;
+    let (start, end) = match range {
+        None => (0, size),
+        Some(GetRange::Offset(o)) => (o, size),
+        Some(GetRange::Bounded(r)) => (r.start, r.end.min(size)),
+        Some(GetRange::Suffix(n)) => (size.saturating_sub(n), size),
     };
+    if start > end || (start >= size && size > 0) {
+        error(stream, 416, "Range Not Satisfiable").await?;
+        return Ok(false);
+    }
     let status = if ranged {
         "206 Partial Content"
     } else {
         "200 OK"
     };
-    let etag = etag_header(result.meta.e_tag.as_deref());
-    stream.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {length}\r\n{content_range}{etag}Accept-Ranges: bytes\r\nConnection: close\r\n\r\n").as_bytes()).await?;
+    let content_range = if ranged {
+        format!(
+            "Content-Range: bytes {start}-{}/{size}\r\n",
+            end.saturating_sub(1)
+        )
+    } else {
+        String::new()
+    };
+    let response_head = format!(
+        "HTTP/1.1 {status}\r\nContent-Length: {}\r\n{content_range}{etag}Accept-Ranges: bytes\r\nConnection: {connection}\r\n\r\n",
+        end - start
+    );
+
+    // From memory if it has been read before; a small object is read whole, once; a range of a big one is read as asked.
+    let remembered = cache.get(&name, size, start, end);
+    let body = if let Some(b) = remembered {
+        Some(b)
+    } else if size <= SMALL_OBJECT {
+        let Ok(whole) = grant.store.get(&path).await else {
+            error(stream, 404, "Not Found").await?;
+            return Ok(false);
+        };
+        let Ok(all) = whole.bytes().await else {
+            error(stream, 502, "Bad Gateway").await?;
+            return Ok(false);
+        };
+        cache.put(&name, 0, size, all.clone());
+        let (a, b) = (
+            usize::try_from(start).unwrap_or(0),
+            usize::try_from(end).unwrap_or(0),
+        );
+        Some(all.slice(a..b.min(all.len())))
+    } else if ranged {
+        let Ok(part) = grant.store.get_range(&path, start..end).await else {
+            error(stream, 404, "Not Found").await?;
+            return Ok(false);
+        };
+        cache.put(&name, start, end, part.clone());
+        Some(part)
+    } else {
+        None
+    };
+    if generation.load(Ordering::SeqCst) != grant.generation {
+        error(stream, 403, "Forbidden").await?;
+        return Ok(false);
+    }
+    stream.write_all(response_head.as_bytes()).await?;
+    if let Some(body) = body {
+        stream.write_all(&body).await?;
+        bytes.fetch_add(body.len() as u64, Ordering::Relaxed);
+        return Ok(!close);
+    }
+    // A whole big object, asked for without a range: streamed, not held.
+    let Ok(result) = grant.store.get(&path).await else {
+        tracing::warn!(object = %path, "the store would not give a whole object");
+        return Ok(false);
+    };
     let mut body = result.into_stream();
     while let Some(chunk) = body.next().await {
         if generation.load(Ordering::SeqCst) != grant.generation {
-            break;
+            tracing::warn!(object = %path, "the lease ended while an object was being sent");
+            return Ok(false);
         }
         let chunk = chunk.map_err(std::io::Error::other)?;
         stream.write_all(&chunk).await?;
         bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
     }
-    Ok(())
+    Ok(!close)
 }
 
 fn etag_header(tag: Option<&str>) -> String {
@@ -341,6 +587,8 @@ mod tests {
 
     async fn request(socket: &Path, request: &str) -> Vec<u8> {
         let mut stream = UnixStream::connect(socket).await.unwrap();
+        // One request, then the broker closes: without this a kept-open connection would never end the read.
+        let request = request.replacen("\r\n\r\n", "\r\nConnection: close\r\n\r\n", 1);
         stream.write_all(request.as_bytes()).await.unwrap();
         let mut response = Vec::new();
         stream.read_to_end(&mut response).await.unwrap();
@@ -394,6 +642,81 @@ mod tests {
         broker.clear().await;
         let response = request(&socket, "GET /bucket/allowed/file HTTP/1.1\r\n\r\n").await;
         assert!(response.starts_with(b"HTTP/1.1 403"));
+        drop(broker);
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    /// Reads one response off an open connection: the header, then exactly Content-Length bytes.
+    async fn one_response(stream: &mut UnixStream) -> (String, Vec<u8>) {
+        let mut head = Vec::new();
+        let mut byte = [0_u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            stream.read_exact(&mut byte).await.unwrap();
+            head.push(byte[0]);
+        }
+        let head = String::from_utf8(head).unwrap();
+        let length: usize = head
+            .lines()
+            .find_map(|l| l.strip_prefix("Content-Length: "))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let mut body = vec![0_u8; length];
+        stream.read_exact(&mut body).await.unwrap();
+        (head, body)
+    }
+
+    #[tokio::test]
+    async fn repeat_reads_come_from_memory_and_one_connection_serves_many_requests() {
+        let dir = std::env::temp_dir().join(format!("loamz-broker-cache-{}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let broker = Broker::start(&dir).unwrap();
+        let store = Arc::new(InMemory::new());
+        store
+            .put(&ObjectPath::from("allowed/file"), "abcdefghij".into())
+            .await
+            .unwrap();
+        let generation = broker.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        *broker.access.write().await = Some(Arc::new(Grant {
+            bucket: "bucket".into(),
+            prefixes: vec!["allowed/".into()],
+            store: store.clone(),
+            generation,
+        }));
+        let mut stream = UnixStream::connect(dir.join("socket")).await.unwrap();
+        let ask = "GET /bucket/allowed/file HTTP/1.1\r\nRange: bytes=2-4\r\n\r\n";
+        stream.write_all(ask.as_bytes()).await.unwrap();
+        let (head, body) = one_response(&mut stream).await;
+        assert!(head.starts_with("HTTP/1.1 206") && head.contains("Connection: keep-alive"));
+        assert_eq!(body, b"cde");
+        assert_eq!(broker.cache_hits(), 0);
+
+        // The object is gone from the store, and the same connection still gets the answer: it came from memory.
+        store
+            .delete(&ObjectPath::from("allowed/file"))
+            .await
+            .unwrap();
+        stream.write_all(ask.as_bytes()).await.unwrap();
+        let (_, again) = one_response(&mut stream).await;
+        assert_eq!(again, b"cde");
+        // A different range of the same small object is also served from memory.
+        let other = "GET /bucket/allowed/file HTTP/1.1\r\nRange: bytes=0-1\r\n\r\n";
+        stream.write_all(other.as_bytes()).await.unwrap();
+        let (_, first) = one_response(&mut stream).await;
+        assert_eq!(first, b"ab");
+        assert_eq!(broker.cache_hits(), 2);
+
+        // Memory never widens the lease: a folder it does not name is refused, cached or not.
+        let mut outside = UnixStream::connect(dir.join("socket")).await.unwrap();
+        outside
+            .write_all(b"GET /bucket/other/file HTTP/1.1\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut refused = Vec::new();
+        outside.read_to_end(&mut refused).await.unwrap();
+        assert!(refused.starts_with(b"HTTP/1.1 403"));
+        drop(stream);
         drop(broker);
         tokio::fs::remove_dir_all(dir).await.unwrap();
     }

@@ -7,8 +7,8 @@ help:
 	@echo "make budget   release build: idle memory, start time, one binary"
 	@echo "make test-web  web app: types and unit tests"
 	@echo "make check    lint + test (everything except the SQL worker)"
-	@echo "make worker   release build of the SQL worker (compiles DuckDB from source: long the first time; keep CARGO_BUILD_JOBS the same between builds)"
-	@echo "make check-worker  lint and test the SQL worker (also compiles DuckDB)"
+	@echo "make worker   build the SQL worker against DuckDB's prebuilt library (downloaded once) and put it beside the runner"
+	@echo "make check-worker  lint and test the SQL worker"
 
 lint:
 	cargo fmt --check
@@ -25,10 +25,18 @@ budget:
 
 check: lint test test-web
 
-# The SQL worker embeds DuckDB, which is compiled from C++ source: ten minutes or more the first time. It is kept out of `check` so
-# everyday work never pays for it; CI runs `check-worker`. Changing CARGO_BUILD_JOBS between builds makes cargo compile DuckDB again.
+# The SQL worker links DuckDB's own prebuilt library (scripts/fetch-duckdb.sh downloads it once), so building it takes seconds. It is its
+# own workspace so `cargo check --workspace` (an editor does this on every save) never has to look at it.
+DUCKDB_LIB_DIR ?= $(HOME)/.cache/loamz/duckdb
+export DUCKDB_LIB_DIR
+export DUCKDB_INCLUDE_DIR ?= $(DUCKDB_LIB_DIR)
+
 worker:
-	cd server/worker && cargo build --release && mkdir -p ../../target/release && cp target/release/loamz-worker ../../target/release/
+	scripts/fetch-duckdb.sh
+	cd server/worker && cargo build --release
+	mkdir -p target/release
+	cp server/worker/target/release/loamz-worker $(DUCKDB_LIB_DIR)/libduckdb.so target/release/
 
 check-worker:
-	cd server/worker && cargo clippy --all-targets -- -D warnings && cargo test
+	scripts/fetch-duckdb.sh
+	cd server/worker && cargo clippy --all-targets -- -D warnings && LD_LIBRARY_PATH=$(DUCKDB_LIB_DIR) cargo test

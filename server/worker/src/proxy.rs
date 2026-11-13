@@ -12,6 +12,9 @@ use std::{
     time::Duration,
 };
 
+/// Open connections at once (two threads each: the sandbox allows a few hundred). DuckDB keeps one open per file and thread.
+const MAX_CONNECTIONS: usize = 64;
+
 /// There is no outbound network: every connection reaches only this Unix socket.
 pub fn start(socket: PathBuf) -> io::Result<u16> {
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
@@ -19,7 +22,7 @@ pub fn start(socket: PathBuf) -> io::Result<u16> {
     let active = Arc::new(AtomicUsize::new(0));
     std::thread::spawn(move || {
         for client in listener.incoming().flatten() {
-            if active.fetch_add(1, Ordering::AcqRel) >= 32 {
+            if active.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
                 active.fetch_sub(1, Ordering::AcqRel);
                 continue;
             }

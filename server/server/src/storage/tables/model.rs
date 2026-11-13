@@ -465,6 +465,17 @@ pub fn apply(meta: &Value, updates: &[Value], at_ms: i64) -> Result<Value, Strin
     Ok(m)
 }
 
+/// Records the metadata file a commit replaces in the new metadata's `metadata-log`, as the Iceberg spec asks: newer `DuckDB` uses the
+/// log to find a table as it was when a transaction began. The log keeps the last 100 versions.
+pub fn log_previous(meta: &mut Value, previous_location: &str, previous_ms: i64) {
+    let mut log = meta["metadata-log"].as_array().cloned().unwrap_or_default();
+    log.push(json!({"timestamp-ms": previous_ms, "metadata-file": previous_location}));
+    if log.len() > 100 {
+        log.drain(..log.len() - 100);
+    }
+    meta["metadata-log"] = Value::Array(log);
+}
+
 /// The file the next version of the metadata is written to: numbered, and unique so two writers never share a name.
 #[must_use]
 pub fn next_metadata_path(current: &str, unique: &str) -> String {
@@ -843,5 +854,22 @@ mod tests {
         assert!(
             table_stats(&json!({"current-snapshot-id": -1, "snapshots": []}))["records"].is_null()
         );
+    }
+
+    #[test]
+    fn a_commit_remembers_the_file_it_replaces() {
+        let mut m = empty_metadata();
+        log_previous(&mut m, "s3://b/t/metadata/0-a.metadata.json", 5);
+        log_previous(&mut m, "s3://b/t/metadata/1-b.metadata.json", 9);
+        let log = m["metadata-log"].as_array().unwrap();
+        assert_eq!(log.len(), 2);
+        assert_eq!(
+            log[1]["metadata-file"],
+            "s3://b/t/metadata/1-b.metadata.json"
+        );
+        for i in 0..150 {
+            log_previous(&mut m, &format!("f{i}"), i);
+        }
+        assert_eq!(m["metadata-log"].as_array().unwrap().len(), 100);
     }
 }

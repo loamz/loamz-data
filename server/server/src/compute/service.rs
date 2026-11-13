@@ -1292,6 +1292,7 @@ async fn fail_unauthorized_lease(app: &App, target: &Target, run: &Run) -> Resul
 ///
 /// # Errors
 /// The database could not be reached.
+#[allow(clippy::too_many_lines)]
 pub async fn lease(app: &App, target: &Target) -> Result<Option<Lease>> {
     let now = now_ms();
     let leased = {

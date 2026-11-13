@@ -32,3 +32,4 @@ Also: [handoff](handoff.md) (briefs for other coding agents), [contributing](../
 
 Pictures and diagrams show the target design. A part that is not built yet says *planned*; the [requirements](product/requirements.md)
 say what is built.
+- [Proposal 0003: the beta](proposals/0003-beta.md): scope, who does what, waves and the beta gate.

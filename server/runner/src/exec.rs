@@ -5,6 +5,11 @@ use std::{process::Stdio, time::Duration};
 
 use tokio::{io::AsyncReadExt, process::Command};
 
+/// A duration in whole milliseconds, for logs.
+fn millis(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
+
 /// A cancellation signal for one leased run.
 pub type StopSignal = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
@@ -111,8 +116,8 @@ where
         };
         tracing::info!(
             run = lease.run.id,
-            authorize_ms = authorized.as_millis() as u64,
-            worker_ms = (began.elapsed() - authorized).as_millis() as u64,
+            authorize_ms = millis(authorized),
+            worker_ms = millis(began.elapsed().saturating_sub(authorized)),
             "warm statement"
         );
         if let Some(broker) = &worker.broker {

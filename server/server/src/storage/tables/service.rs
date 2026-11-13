@@ -498,7 +498,12 @@ pub async fn commit(
     .await?;
     let current = read_metadata(app, &entry.folder, &entry.metadata).await?;
     model::check_requirements(&current, requirements).map_err(Error::Conflict)?;
-    let next = model::apply(&current, updates, now_ms()).map_err(Error::Invalid)?;
+    let mut next = model::apply(&current, updates, now_ms()).map_err(Error::Invalid)?;
+    model::log_previous(
+        &mut next,
+        &format!("{}/{}", app.stores.uri(&entry.folder)?, entry.metadata),
+        current["last-updated-ms"].as_i64().unwrap_or(0),
+    );
     let rel = model::next_metadata_path(&entry.metadata, &new_id());
     write_metadata(app, &entry.folder, &rel, &next).await?;
     let mut uow = Uow::begin(app).await?;

@@ -64,6 +64,15 @@ async fn start_in(
         binary_dir.join("loamz-worker"),
         std::fs::Permissions::from_mode(0o555),
     )?;
+    // DuckDB's library is a file beside the worker; the worker finds it there (its rpath is its own folder). It is linked, not
+    // copied, when it can be: it is large and the same for every worker.
+    let library = binary.with_file_name("libduckdb.so");
+    if library.is_file() {
+        let target = binary_dir.join("libduckdb.so");
+        if std::fs::hard_link(&library, &target).is_err() {
+            std::fs::copy(&library, &target)?;
+        }
+    }
     if user == User::Nobody {
         chown(&broker_dir, Some(user.uid()), Some(user.uid()))?;
     }
