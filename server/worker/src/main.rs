@@ -88,9 +88,12 @@ fn run(request: &Value, proxy_port: u16) -> Result<Value, String> {
         Ok(())
     }).map_err(|e| format!("the SQL sandbox could not prepare the authorized tables: {}", short(&e.to_string())))?;
     let prepared = started.elapsed();
-    let mut answer = engine
-        .answer(sql, limit)
-        .map_err(|e| format!("the SQL statement could not be run: {}", short(&e.to_string())))?;
+    let mut answer = engine.answer(sql, limit).map_err(|e| {
+        format!(
+            "the SQL statement could not be run: {}",
+            short(&e.to_string())
+        )
+    })?;
     // Where the time went, in milliseconds: getting the tables ready, then running the statement.
     answer["stats"] = json!({"prepare_ms": prepared.as_millis() as u64, "run_ms": (started.elapsed() - prepared).as_millis() as u64});
     Ok(answer)
