@@ -1,0 +1,45 @@
+# cargo-deny configuration for Loamz Data
+# See: https://embarkstudios.github.io/cargo-deny/
+
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071: RSA timing side-channel in rsa crate (used only by local test-key generation)
+    "RUSTSEC-2023-0071",
+    # RUSTSEC-2026-0459: SQLite CVE-2026-119375 in libsqlite3-sys 0.30 bundled by sqlx-sqlite; local vector only
+    "RUSTSEC-2026-0459",
+    # RUSTSEC-2024-0449: unsafe-libyaml unmaintained; pulled in by serde_yaml in dev-dependencies
+    "RUSTSEC-2024-0449",
+]
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.8
+
+# Exceptions for transitive dependencies with compatible permissive licenses
+[[licenses.exceptions]]
+name = "ar_archive_writer"
+allow = ["Apache-2.0 WITH LLVM-exception"]
+# LLVM exception allows linking with compiled LLVM / Rust runtime code in stacker
+
+[[licenses.exceptions]]
+name = "webpki-roots"
+allow = ["CDLA-Permissive-2.0"]
+# Permissive data license for Mozilla root CA certificates distribution in rustls
+
+[[licenses.exceptions]]
+name = "webpki-root-certs"
+allow = ["CDLA-Permissive-2.0"]
+# Permissive data license for platform root certificate bundle in rustls
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
