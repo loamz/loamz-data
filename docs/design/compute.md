@@ -109,7 +109,40 @@ flowchart LR
 - **Workspace lifetime:** the sandbox is disposable and the folder is the state, kept between turns and deleted with the thread. One machine first, so a local directory, checkpointed to the store when idle. NFSv4 if workspaces must be live on any worker.
 - **To decide:** how long an idle workspace is kept, and how big one may be.
 
-## 7. Speed (planned, proposal 0001)
+## 7. Speed (proposal 0001)
 
-A warm engine (Rust with embedded DuckDB, all cores) replaces per-run start-up (0001 task 2); results stream as Arrow (0001 task 3); files are
-pruned with the `data_files` index and read by range (0001 tasks 4, 5); waits use notifications instead of polling (0001 task 6).
+### The warm worker (built, 0001 task 2; numbers in `bench/README.md`)
+
+A SQL statement on a machine no longer starts a sandbox and downloads the table. The agent keeps **one warm worker per
+(organization, compute target)** inside the same gVisor sandbox as before, and sends it each statement over a pipe.
+
+```mermaid
+flowchart LR
+  L["lease: statement, tables,<br/>vended read-only credentials"] --> X["WarmExecutor (runner)"]
+  X --> P["Pool: one worker per<br/>(organization, target)"]
+  P --> W["loamz-worker in gVisor<br/>(no network)"]
+  X -->|"authorize exactly these tables"| B["Broker (host): read-only,<br/>ranged GET and HEAD, one Unix socket"]
+  W -->|"loopback proxy to the socket"| B
+  B --> S["object store"]
+```
+
+- **Isolation is the same as for a one-shot run, and one more thing.** The worker has no network, no host files and no other
+  organization's data. It serves one organization only; a different organization gets a different worker. Every statement runs on a
+  **fresh DuckDB connection** (so one statement cannot see another's temporary tables or secrets), locked down before it runs:
+  no local files, only the lease's folders as allowed paths, no extension loading, configuration locked.
+- **The worker never holds a key.** The credentials of a lease go to a *broker* in the agent, not into the sandbox. The broker
+  accepts only `GET` and `HEAD` for the lease's table folders, honours byte ranges and `If-Match`, counts bytes, and is cleared when
+  the run ends (a request in flight is cut off). The worker reaches it through one mounted Unix socket and a loopback bridge, because
+  DuckDB speaks HTTP.
+- **Reading less.** DuckDB reads Iceberg and Parquet by range through that broker, so a query that needs one column of a few row
+  groups no longer downloads the folder.
+- **When the warm worker is wrong, it dies.** A protocol error, a timeout, a cancel or a sandbox error removes that worker; the next
+  statement starts a fresh one. Workers are also recycled after a number of runs or when idle. Jobs (arbitrary Python) still use the
+  one-shot sandbox.
+- **Row filters and masks** are already in the statement text when it arrives (section 7 of governance), so the warm worker needs
+  no knowledge of them.
+
+### Still planned
+
+Results stream as Arrow (0001 task 3); files are pruned with the `data_files` index (0001 task 4); waits use notifications instead of
+polling (0001 task 6).
