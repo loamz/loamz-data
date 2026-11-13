@@ -25,6 +25,24 @@ Safe to run for others: secrets in OpenBao, data readable without our server, ba
 admin sets (`Entitlements`), revocation rules, metrics and traces, and the production deployment. The first beta ships at the end of this phase. Under consideration for it: bring data in, access tokens with a CLI and SDK,
 a SQL connection for BI tools, job schedules and alerts, abuse protection, safe upgrades and user docs.
 
+## The plan to the first beta (13 Nov)
+
+**Beta means:** a new paying customer can sign in, bring their own data, query it fast, connect their tools, and trust that nobody
+else can see it; it runs in production with backups and docs. Billing is by hand and invitation only (it lives in the private Loamz
+Cloud, behind `Entitlements` and `UsageSink`).
+
+| # | Milestone | Done when | State |
+|---|---|---|---|
+| M1 | Merge what exists | isolation tests, SDK and CLI, security (CI, SBOM, threat model) and the docs site are in `main`, `make check` green | done |
+| M2 | Fast | `bench/run.py 3` shows the machine column under 0.5 s with the same answers | in progress: sandboxed warm worker written, release build and benchmark to do |
+| M3 | Data in | a CSV or Parquet upload becomes a table from the console | in progress: staging and schema rules written, endpoint to do |
+| M4 | Governed | storage roots, row filters and column masks, erase with a provable audit chain | roots and rules done; erase in review |
+| M5 | Production | deployed from `loamz-deploy`, backups and WAL archiving running, restore check passes | in progress: roles written, being run on a throwaway machine |
+| M6 | Ready to show | docs site live, console screens for every feature, end-to-end browser tests, a hostile security review | to do |
+
+**Not in the beta:** functions, MLflow, agent sandboxes, job schedules and alerts, BI connectors, search, network isolation, traces,
+a store per storage location (a customer's own bucket), external objects and storage grants.
+
 > **Note:** this roadmap is a plan, not a promise. Built features are marked in the Today column.
 
 ## Full roadmap
