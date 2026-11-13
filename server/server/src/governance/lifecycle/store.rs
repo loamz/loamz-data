@@ -3,6 +3,11 @@ use sqlx::{Any, Executor, Row};
 use super::model::Task;
 use crate::kernel::error::Result;
 
+pub struct RunForErase {
+    pub id: String,
+    pub spec: String,
+}
+
 const COLUMNS: &str = "id, org_id, kind, subject, requested_by, on_behalf_of, state, attempts, lease_until, created_ms, last_error";
 
 fn row(r: &sqlx::any::AnyRow) -> Result<Task> {
@@ -97,5 +102,86 @@ pub async fn fail<'e, E: Executor<'e, Database = Any>>(
         .bind(error)
         .execute(e)
         .await?;
+    Ok(())
+}
+
+pub async fn runs_for_erase(
+    c: &mut sqlx::AnyConnection,
+    org: &str,
+    subject: &str,
+) -> Result<Vec<RunForErase>> {
+    let rows = sqlx::query(
+        "SELECT id, spec FROM runs WHERE org_id = $1 AND (requested_by = $2 OR on_behalf_of = $2)",
+    )
+    .bind(org)
+    .bind(subject)
+    .fetch_all(&mut *c)
+    .await?;
+    rows.iter()
+        .map(|r| {
+            Ok(RunForErase {
+                id: r.try_get("id")?,
+                spec: r.try_get("spec")?,
+            })
+        })
+        .collect::<std::result::Result<_, sqlx::Error>>()
+        .map_err(Into::into)
+}
+
+pub async fn erase_person(
+    e: &mut sqlx::AnyConnection,
+    org: &str,
+    principal: &str,
+    subject: &str,
+    tombstone: &str,
+    now: i64,
+) -> Result<()> {
+    sqlx::query("UPDATE orgs SET created_by = $3 WHERE id = $1 AND created_by = $2")
+        .bind(org)
+        .bind(subject)
+        .bind(tombstone)
+        .execute(&mut *e)
+        .await?;
+    for (table, column) in [
+        ("account_admins", "added_by"),
+        ("workspaces", "created_by"),
+        ("grants", "granted_by"),
+        ("compute_targets", "created_by"),
+        ("service_principals", "created_by"),
+        ("storage_credentials", "created_by"),
+        ("storage_locations", "created_by"),
+    ] {
+        sqlx::query(&format!(
+            "UPDATE {table} SET {column} = $3 WHERE org_id = $1 AND {column} = $2"
+        ))
+        .bind(org)
+        .bind(subject)
+        .bind(tombstone)
+        .execute(&mut *e)
+        .await?;
+    }
+
+    sqlx::query("UPDATE tasks SET subject = $3, requested_by = CASE WHEN requested_by = $4 THEN $5 ELSE requested_by END, on_behalf_of = CASE WHEN on_behalf_of = $4 THEN $5 ELSE on_behalf_of END WHERE org_id = $1 AND (subject = $2 OR requested_by = $4 OR on_behalf_of = $4)")
+            .bind(org)
+            .bind(principal)
+            .bind(tombstone)
+            .bind(subject)
+            .bind(tombstone)
+            .execute(&mut *e)
+            .await?;
+    sqlx::query("UPDATE tasks SET last_error = REPLACE(REPLACE(last_error, $2, ''), $3, '') WHERE org_id = $1")
+        .bind(org)
+        .bind(subject)
+        .bind(principal)
+        .execute(&mut *e)
+        .await?;
+    sqlx::query("UPDATE runs SET requested_by = CASE WHEN requested_by = $3 THEN $4 ELSE requested_by END, on_behalf_of = CASE WHEN on_behalf_of = $3 THEN $4 ELSE on_behalf_of END, title = '', spec = '', result = '', stdout = '', stderr = '', error = '', cancel = CASE WHEN state IN ('queued','running') THEN 1 ELSE cancel END, finished_ms = CASE WHEN state IN ('queued','running') THEN $5 ELSE finished_ms END, state = CASE WHEN state IN ('queued','running') THEN 'cancelled' ELSE state END WHERE org_id = $1 AND (requested_by = $2 OR on_behalf_of = $2)")
+            .bind(org)
+            .bind(subject)
+            .bind(subject)
+            .bind(tombstone)
+            .bind(now)
+            .execute(&mut *e)
+            .await?;
     Ok(())
 }

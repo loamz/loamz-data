@@ -81,3 +81,18 @@ pub async fn remove_admin<'e, E: Executor<'e, Database = Any>>(
             .rows_affected(),
     )
 }
+
+pub async fn erasing<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    org: &str,
+    principal: &str,
+) -> Result<bool> {
+    Ok(sqlx::query(
+        "SELECT id FROM tasks WHERE org_id = $1 AND kind = 'erase' AND subject = $2 AND state = 'pending'",
+    )
+    .bind(org)
+    .bind(principal)
+    .fetch_optional(e)
+    .await?
+    .is_some())
+}

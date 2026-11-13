@@ -314,6 +314,25 @@ pub async fn require_admin(app: &App, identity: &Identity, org: &str) -> Result<
     }))
 }
 
+pub async fn require_admin_hidden(app: &App, identity: &Identity, org: &str) -> Result<()> {
+    match require_admin(app, identity, org).await {
+        Err(Error::Denied(_)) => Err(Error::NotFound("not found".into())),
+        result => result,
+    }
+}
+
+pub async fn is_erasing(app: &App, org: &str, principal: &str) -> Result<bool> {
+    store::erasing(app.db.pool(), org, principal).await
+}
+
+pub async fn is_erasing_in(
+    conn: &mut sqlx::AnyConnection,
+    org: &str,
+    principal: &str,
+) -> Result<bool> {
+    store::erasing(&mut *conn, org, principal).await
+}
+
 /// # Errors
 /// Not an admin, or the principal is not valid.
 pub async fn add_admin(app: &App, identity: &Identity, org: &str, principal: &str) -> Result<()> {
@@ -322,6 +341,9 @@ pub async fn add_admin(app: &App, identity: &Identity, org: &str, principal: &st
         return Err(Error::Invalid("principal is not valid".into()));
     }
     let mut uow = Uow::begin(app).await?;
+    if is_erasing_in(&mut uow.tx, org, principal).await? {
+        return Err(Error::NotFound("not found".into()));
+    }
     store::add_admin(&mut *uow.tx, org, principal, &identity.subject, now_ms()).await?;
     uow.audit(
         org,
@@ -391,6 +413,24 @@ pub async fn still_admin(app: &App, org: &str, principal: &str) -> Result<bool> 
         .await?
         .iter()
         .any(|a| a == principal))
+}
+
+pub async fn can_forget_principal_in(
+    conn: &mut sqlx::AnyConnection,
+    org: &str,
+    principal: &str,
+) -> Result<()> {
+    sqlx::query("UPDATE account_admins SET principal = principal WHERE org_id = $1")
+        .bind(org)
+        .execute(&mut *conn)
+        .await?;
+    let admins = store::admins(&mut *conn, org).await?;
+    if admins.len() == 1 && admins[0] == principal {
+        return Err(Error::Conflict(
+            "they are the account's only admin: add another admin first".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// One organization as the signed-in person sees it.

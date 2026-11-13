@@ -53,6 +53,30 @@ pub struct Entry {
 /// The first entry's `prev_hash`.
 pub const GENESIS: &str = "";
 
+#[must_use]
+pub fn tombstone(org: &str, subject: &str) -> String {
+    let mut h = Sha256::new();
+    for part in [org, subject] {
+        h.update((part.len() as u64).to_be_bytes());
+        h.update(part.as_bytes());
+    }
+    let digest = h.finalize();
+    let mut out = String::from("erased:");
+    for byte in digest {
+        use std::fmt::Write;
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+#[must_use]
+pub fn subject_token_len(value: &str) -> usize {
+    value
+        .char_indices()
+        .find(|(_, c)| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
+        .map_or(value.len(), |(i, _)| i)
+}
+
 /// Each field is length-prefixed, so two different entries can never produce the same bytes.
 #[must_use]
 pub fn hash(e: &Entry) -> String {
@@ -158,5 +182,12 @@ mod tests {
         let mut b = a.clone();
         b.org = "p".into();
         assert_ne!(hash(&a), hash(&b));
+    }
+
+    #[test]
+    fn subject_tokens_stop_at_non_subject_characters() {
+        assert_eq!(subject_token_len("bob, reader"), 3);
+        assert_eq!(subject_token_len("a-subject_2.id)"), 14);
+        assert_eq!(subject_token_len(",bob"), 0);
     }
 }
