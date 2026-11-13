@@ -79,12 +79,17 @@ async fn paths_that_could_leave_the_volume_are_refused() {
             "{bad:?} was accepted"
         );
     }
-    for bad in ["../v", "a/b", ""] {
+    // A folder is plain segments (`<workspace>/<catalog>/<id>`); nothing that could leave it.
+    for bad in ["../v", "a/../b", "a//b", "/a", "a/", "a/.", "a\\b", ""] {
         assert!(
             matches!(put(&v, bad, "f", b"x").await, Err(FileError::BadPath(_))),
             "volume {bad:?} was accepted"
         );
     }
+    assert!(
+        put(&v, "ws/cat/vol-1", "f", b"x").await.is_ok(),
+        "a nested folder is allowed"
+    );
 }
 
 #[tokio::test]

@@ -61,6 +61,9 @@ pub struct Securable {
     pub org_id: String,
     /// The workspace its catalog belongs to: a catalog has exactly one, and everything inside it carries the same.
     pub workspace_id: String,
+    /// Where its bytes are. A table or volume: its own folder in the store. A catalog: the root its objects' folders go under. A
+    /// schema: its catalog's root. A view has none.
+    pub folder: String,
     pub kind: Kind,
     pub parent_id: String,
     pub name: String,
@@ -86,6 +89,12 @@ pub struct Draft {
     pub consistency: String,
     /// A table is born with its first Iceberg metadata file already written under this id: `(id, path of the file)`.
     pub table: Option<(String, String)>,
+}
+
+/// The folder of an object made under `root`: `<root>/<id>`.
+#[must_use]
+pub fn join_folder(root: &str, id: &str) -> String {
+    format!("{root}/{id}")
 }
 
 /// Names are lower case words with digits and underscores, so they are safe in any URL, file name or SQL identifier.

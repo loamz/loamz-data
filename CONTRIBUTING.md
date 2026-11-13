@@ -11,7 +11,7 @@ scripts/dev.sh                                     # server :8020, workbench htt
 ```
 
 The first sign-in is `admin` (password `admin`, changed at once). It also opens OpenBao's UI (`http://127.0.0.1:8200`, method OIDC) and the RustFS console (`http://127.0.0.1:9001`, "Login with Loamz"): both are Keycloak clients (`deploy/dev/realm_dev.py`, `deploy/dev/openbao_sso.py`). OpenBao and RustFS share Keycloak's network in `compose.yml` so they reach it as `127.0.0.1:8082`, the address in its tokens. The fixed keys (`loamz-dev-only`) are for machines. The admin creates organizations and adds people in the console.
-For test data instead, `deploy/dev/seed.py` makes ana, bob, cyd, pia and the organization acme (passwords in `.dev/accounts.json`,
+`scripts/sample_data.py` loads real NYC taxi trips (3.5 million, one month) into acme's workspace Main as `nyc.main.trips`, so there is something to browse and query. For test people instead, `deploy/dev/seed.py` makes ana, bob, cyd, pia and the organization acme (passwords in `.dev/accounts.json`,
 which `deploy/dev/token.py` and the smoke tests use). `cargo build --release -p loamz-data-server -p loamz-runner` builds the release
 binaries the smoke tests run.
 

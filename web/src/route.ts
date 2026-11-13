@@ -10,11 +10,11 @@
 //                   /jobs                    jobs that ran, and the button to start one
 //                   /runs/<id>               one run: how it went and what it printed
 //                   /compute                 the compute work runs on
-//                   /settings[/<tab>]        its members, service principals and entitlements (tabs: members, principals, entitlements, workspace)
+//                   /settings[/<tab>]        its members, service principals, storage and entitlements (tabs: members, principals, storage, entitlements, workspace)
 
 import type { MouseEvent } from "react";
 
-export type SettingsTab = "members" | "principals" | "entitlements" | "workspace";
+export type SettingsTab = "members" | "principals" | "storage" | "entitlements" | "workspace";
 export type AccountTab = "workspaces" | "compute" | "people" | "admins" | "activity" | "erase";
 
 export type Route =
@@ -30,7 +30,7 @@ export type Route =
   | { screen: "settings"; ws: string; tab: SettingsTab }
   | { screen: "account"; org: string; tab: AccountTab };
 
-const SETTINGS_TABS: SettingsTab[] = ["members", "principals", "entitlements", "workspace"];
+const SETTINGS_TABS: SettingsTab[] = ["members", "principals", "storage", "entitlements", "workspace"];
 const TABS: AccountTab[] = ["workspaces", "compute", "people", "admins", "activity", "erase"];
 const WS = /^[0-9a-f-]{8,64}$/;
 

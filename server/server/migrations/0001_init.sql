@@ -47,18 +47,15 @@ CREATE TABLE entitlements (
     PRIMARY KEY (workspace_id, principal, entitlement)
 );
 
--- A catalog with any binding is visible only in the workspaces bound to it; one with none is visible in all.
-CREATE TABLE catalog_bindings (
-    workspace_id TEXT NOT NULL,
-    catalog_id   TEXT NOT NULL,
-    PRIMARY KEY (workspace_id, catalog_id)
-);
-CREATE INDEX catalog_bindings_catalog ON catalog_bindings (catalog_id);
-
 -- Catalogs, schemas, tables, volumes and views are all rows here, one level pointing at the one above.
 CREATE TABLE securables (
     id             TEXT PRIMARY KEY,
     org_id         TEXT NOT NULL,
+    -- the workspace its catalog belongs to: a catalog has exactly one, and everything inside it carries the same
+    workspace_id   TEXT NOT NULL,
+    -- where its bytes are: a table or volume, its own folder in the store; a catalog, the root its objects' folders go under
+    -- (`<workspace id>/<catalog id>`); a schema, its catalog's root; a view has none
+    folder         TEXT NOT NULL,
     kind           TEXT NOT NULL,
     parent_id      TEXT NOT NULL,
     name           TEXT NOT NULL,
@@ -70,10 +67,12 @@ CREATE TABLE securables (
     created_ms     BIGINT NOT NULL,
     -- a table's current Iceberg metadata file (a path inside the table's own folder); empty for everything else
     metadata       TEXT NOT NULL,
-    UNIQUE (org_id, parent_id, name)
+    -- a name is unique among the things beside it in a workspace: two workspaces can each have a catalog called `sales`
+    UNIQUE (org_id, workspace_id, parent_id, name)
 );
 CREATE INDEX securables_parent ON securables (org_id, parent_id);
 CREATE INDEX securables_owner ON securables (org_id, owner);
+CREATE INDEX securables_workspace ON securables (org_id, workspace_id);
 
 -- One privilege on one securable (or on the metastore, `metastore:<org>`) for one principal.
 CREATE TABLE grants (
@@ -177,3 +176,54 @@ CREATE TABLE run_tokens (
     expires_ms    BIGINT NOT NULL
 );
 CREATE INDEX run_tokens_run ON run_tokens (run_id);
+
+-- A service principal is an identity of one workspace that is not a person: a BI tool, an ML app, a pipeline. It signs in with a
+-- token we issue (shown once; only its hash is kept), can be given grants and entitlements as `sp:<id>`, and can open only its
+-- own workspace.
+CREATE TABLE service_principals (
+    id           TEXT PRIMARY KEY,
+    org_id       TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    secret_hash  TEXT NOT NULL,
+    created_by   TEXT NOT NULL,
+    created_ms   BIGINT NOT NULL,
+    UNIQUE (workspace_id, name)
+);
+CREATE UNIQUE INDEX service_principals_secret ON service_principals (secret_hash);
+
+-- Storage settings of a workspace: how the server reaches a store (a credential) and which part of it a workspace may use (a
+-- location). A credential holds references into the vault, never a secret. Locations never overlap: no two share a store and
+-- bucket with one prefix inside the other.
+CREATE TABLE storage_credentials (
+    id               TEXT PRIMARY KEY,
+    org_id           TEXT NOT NULL,
+    workspace_id     TEXT NOT NULL,
+    name             TEXT NOT NULL,
+    endpoint         TEXT NOT NULL,
+    region           TEXT NOT NULL,
+    key_id_ref       TEXT NOT NULL,
+    secret_ref       TEXT NOT NULL,
+    -- 'none', 'sts' (AssumeRole with a session policy) or 'r2' (Cloudflare's own API)
+    vending          TEXT NOT NULL,
+    role_arn         TEXT NOT NULL,
+    issuer_token_ref TEXT NOT NULL,
+    created_by       TEXT NOT NULL,
+    created_ms       BIGINT NOT NULL,
+    UNIQUE (workspace_id, name)
+);
+
+CREATE TABLE storage_locations (
+    id            TEXT PRIMARY KEY,
+    org_id        TEXT NOT NULL,
+    workspace_id  TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    credential_id TEXT NOT NULL,
+    bucket        TEXT NOT NULL,
+    -- no leading or trailing slash; empty is the whole bucket
+    prefix        TEXT NOT NULL,
+    created_by    TEXT NOT NULL,
+    created_ms    BIGINT NOT NULL,
+    UNIQUE (workspace_id, name)
+);
+CREATE INDEX storage_locations_credential ON storage_locations (credential_id);

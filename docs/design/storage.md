@@ -3,7 +3,7 @@
 Where the bytes live and how compute reaches them without holding a key. The system around it: [architecture](../architecture/overview.md).
 Code: `server/lake` (`objects.rs` the store, `grants.rs` credential vending, `files.rs` the folder store for tests).
 
-## 1. Model (planned, 0002 task 5)
+## 1. Model (credentials and locations built; roots, managed and external objects, default storage and storage grants planned: 0002 task 5)
 
 ```mermaid
 flowchart LR

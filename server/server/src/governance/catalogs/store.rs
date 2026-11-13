@@ -3,7 +3,7 @@ use sqlx::{Any, Executor, Row};
 use super::model::{Kind, Securable};
 use crate::kernel::error::{Error, Result};
 
-const COLUMNS: &str = "id, org_id, workspace_id, kind, parent_id, name, owner, classification, placement, consistency, state, created_ms, metadata";
+const COLUMNS: &str = "id, org_id, workspace_id, folder, kind, parent_id, name, owner, classification, placement, consistency, state, created_ms, metadata";
 
 fn row(r: &sqlx::any::AnyRow) -> Result<Securable> {
     let kind: String = r.try_get("kind")?;
@@ -11,6 +11,7 @@ fn row(r: &sqlx::any::AnyRow) -> Result<Securable> {
         id: r.try_get("id")?,
         org_id: r.try_get("org_id")?,
         workspace_id: r.try_get("workspace_id")?,
+        folder: r.try_get("folder")?,
         kind: Kind::parse(&kind)
             .ok_or_else(|| Error::Internal(format!("unknown kind {kind} in the database")))?,
         parent_id: r.try_get("parent_id")?,
@@ -27,11 +28,12 @@ fn row(r: &sqlx::any::AnyRow) -> Result<Securable> {
 
 pub async fn insert<'e, E: Executor<'e, Database = Any>>(e: E, s: &Securable) -> Result<()> {
     sqlx::query(&format!(
-        "INSERT INTO securables ({COLUMNS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
+        "INSERT INTO securables ({COLUMNS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"
     ))
     .bind(&s.id)
     .bind(&s.org_id)
     .bind(&s.workspace_id)
+    .bind(&s.folder)
     .bind(s.kind.as_str())
     .bind(&s.parent_id)
     .bind(&s.name)
@@ -80,12 +82,16 @@ pub async fn get<'e, E: Executor<'e, Database = Any>>(
 pub async fn name_taken<'e, E: Executor<'e, Database = Any>>(
     e: E,
     org: &str,
+    workspace: &str,
     parent: &str,
     name: &str,
 ) -> Result<bool> {
     Ok(
-        sqlx::query("SELECT id FROM securables WHERE org_id = $1 AND parent_id = $2 AND name = $3")
+        sqlx::query(
+            "SELECT id FROM securables WHERE org_id = $1 AND workspace_id = $2 AND parent_id = $3 AND name = $4",
+        )
             .bind(org)
+            .bind(workspace)
             .bind(parent)
             .bind(name)
             .fetch_optional(e)
@@ -166,13 +172,15 @@ pub async fn delete<'e, E: Executor<'e, Database = Any>>(e: E, org: &str, id: &s
 pub async fn child_by_name<'e, E: Executor<'e, Database = Any>>(
     e: E,
     org: &str,
+    workspace: &str,
     parent: &str,
     name: &str,
 ) -> Result<Option<Securable>> {
     let r = sqlx::query(&format!(
-        "SELECT {COLUMNS} FROM securables WHERE org_id = $1 AND parent_id = $2 AND name = $3"
+        "SELECT {COLUMNS} FROM securables WHERE org_id = $1 AND workspace_id = $2 AND parent_id = $3 AND name = $4"
     ))
     .bind(org)
+    .bind(workspace)
     .bind(parent)
     .bind(name)
     .fetch_optional(e)

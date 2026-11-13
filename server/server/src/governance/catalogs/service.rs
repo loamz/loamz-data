@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use super::{
-    model::{Draft, Kind, Securable, check},
+    model::{Draft, Kind, Securable, check, join_folder},
     store,
 };
 use crate::{
@@ -135,7 +135,6 @@ pub async fn create(
         }
         (t, Some(p))
     };
-    let _ = parent_entry;
     let need = match draft.kind {
         Kind::Catalog => Privilege::CreateCatalog,
         Kind::Schema => Privilege::CreateSchema,
@@ -151,10 +150,22 @@ pub async fn create(
         ));
     }
     let (id, metadata) = draft.table.unwrap_or_else(|| (new_id(), String::new()));
+    // Where its bytes go: a catalog has its own root in its workspace's prefix, a schema shares its catalog's, and a table or volume
+    // has a folder of its own under it.
+    let root = parent_entry
+        .as_ref()
+        .map_or_else(String::new, |p| p.folder.clone());
+    let folder = match draft.kind {
+        Kind::Catalog => join_folder(workspace, &id),
+        Kind::Schema => root,
+        Kind::Table | Kind::Volume => join_folder(&root, &id),
+        Kind::View => String::new(),
+    };
     let entry = Securable {
         id,
         org_id: org.to_owned(),
         workspace_id: workspace.to_owned(),
+        folder,
         kind: draft.kind,
         parent_id: draft.parent_id,
         name: draft.name,
@@ -168,7 +179,7 @@ pub async fn create(
         metadata,
     };
     let mut uow = Uow::begin(app).await?;
-    if store::name_taken(&mut *uow.tx, org, &entry.parent_id, &entry.name).await? {
+    if store::name_taken(&mut *uow.tx, org, workspace, &entry.parent_id, &entry.name).await? {
         return Err(Error::Conflict(format!(
             "{} already exists here",
             entry.name
@@ -422,7 +433,7 @@ pub async fn resolve(
     let gone = || Error::NotFound("not found".into());
     let mut parent = String::new();
     for name in path {
-        let next = store::child_by_name(app.db.pool(), org, &parent, name)
+        let next = store::child_by_name(app.db.pool(), org, workspace, &parent, name)
             .await?
             .filter(|s| s.state == "active")
             .ok_or_else(gone)?;

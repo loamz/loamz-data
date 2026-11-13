@@ -202,11 +202,14 @@ pub fn empty_metadata() -> Value {
     })
 }
 
-/// The id of the table a staged location names: `<store address>/<id>`, where the address is this server's own.
+/// The folder and the table id a staged location names: `<store address>/<root>/<id>`, where the address is this server's own and
+/// the root is the table's catalog's.
 #[must_use]
-pub fn id_in_location<'a>(location: &'a str, base: &str) -> Option<&'a str> {
-    let id = location.strip_prefix(base)?.strip_prefix('/')?;
-    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')).then_some(id)
+pub fn folder_in_location(location: &str, base: &str, root: &str) -> Option<(String, String)> {
+    let folder = location.strip_prefix(base)?.strip_prefix('/')?;
+    let id = folder.strip_prefix(root)?.strip_prefix('/')?;
+    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+        .then(|| (folder.to_owned(), id.to_owned()))
 }
 
 /// Checks what a commit assumed about the table still holds.
@@ -747,10 +750,23 @@ mod tests {
 
     #[test]
     fn a_staged_location_must_be_ours() {
-        assert_eq!(id_in_location("s3://b/abc-1", "s3://b"), Some("abc-1"));
-        assert_eq!(id_in_location("s3://other/abc", "s3://b"), None);
-        assert_eq!(id_in_location("s3://b/a/b", "s3://b"), None);
-        assert_eq!(id_in_location("s3://b/", "s3://b"), None);
+        let found = |l, r| folder_in_location(l, "s3://b", r);
+        assert_eq!(
+            found("s3://b/ws/cat/abc-1", "ws/cat"),
+            Some(("ws/cat/abc-1".into(), "abc-1".into()))
+        );
+        assert_eq!(
+            found("s3://b/ws/other/abc", "ws/cat"),
+            None,
+            "another catalog's root"
+        );
+        assert_eq!(found("s3://b/ws/cat/a/b", "ws/cat"), None, "one level only");
+        assert_eq!(found("s3://b/ws/cat/", "ws/cat"), None);
+        assert_eq!(found("s3://b/abc", "ws/cat"), None, "not under the root");
+        assert_eq!(
+            folder_in_location("s3://other/ws/cat/abc", "s3://b", "ws/cat"),
+            None
+        );
     }
 
     #[test]

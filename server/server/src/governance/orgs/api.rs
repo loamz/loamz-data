@@ -27,16 +27,21 @@ async fn me(State(app): State<Shared>, identity: Identity) -> Result<Json<Value>
             continue;
         }
         let mut mine = workspaces::mine(&app, &identity, &m.id).await?;
-        // A person's own space always has somewhere to work.
-        if mine.is_empty() && m.kind == "personal" {
-            workspaces::create(&app, &identity, &m.id, "Personal").await?;
+        // A person's own space, and an organization its admin has just set up, always have somewhere to work.
+        if mine.is_empty() && (m.kind == "personal" || m.admin) {
+            let name = if m.kind == "personal" {
+                "Personal"
+            } else {
+                "Main"
+            };
+            workspaces::create(&app, &identity, &m.id, name).await?;
             mine = workspaces::mine(&app, &identity, &m.id).await?;
         }
         for (w, standing) in mine {
             spaces.push(json!({"id": w.id, "name": w.name, "org_id": m.id, "org_alias": m.alias, "admin": standing.is_admin()}));
         }
     }
-    let orgs: Vec<Value> = memberships.iter().map(|m| json!({"id": m.id, "alias": m.alias, "kind": m.kind, "has_account": m.has_account, "account_admin": m.admin, "can_create_account": m.can_create})).collect();
+    let orgs: Vec<Value> = memberships.iter().map(|m| json!({"id": m.id, "alias": m.alias, "kind": m.kind, "has_account": m.has_account, "account_admin": m.admin})).collect();
     Ok(Json(json!({
         "subject": identity.subject,
         "name": identity.name,

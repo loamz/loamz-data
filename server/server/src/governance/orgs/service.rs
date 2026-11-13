@@ -402,8 +402,6 @@ pub struct Membership {
     /// Whether Data has an account for it yet.
     pub has_account: bool,
     pub admin: bool,
-    /// Whether the caller may create the account (they hold the Keycloak role `account-admin`).
-    pub can_create: bool,
 }
 
 /// The person's own space (made if needed) and every organization named in their token.
@@ -421,11 +419,19 @@ pub async fn memberships(app: &App, identity: &Identity) -> Result<Vec<Membershi
             kind: personal.kind,
             has_account: true,
             admin: is_admin(app, &personal.id, &identity.principals()).await?,
-            can_create: false,
         });
     }
     for r in &identity.orgs {
-        let org = store::get(app.db.pool(), &r.id).await?;
+        let mut org = store::get(app.db.pool(), &r.id).await?;
+        // An organization is set up the first time its admin (the Keycloak role `account-admin`) signs in: nobody asks for it.
+        if org.is_none() && identity.actor.is_none() && identity.has_role(ACCOUNT_ADMIN_ROLE) {
+            org = match create(app, identity, &r.id).await {
+                Ok(o) => Some(o),
+                // Another request set it up first.
+                Err(Error::Conflict(_)) => store::get(app.db.pool(), &r.id).await?,
+                Err(e) => return Err(e),
+            };
+        }
         let admin = if org.is_some() {
             is_admin(app, &r.id, &identity.principals()).await?
         } else {
@@ -437,7 +443,6 @@ pub async fn memberships(app: &App, identity: &Identity) -> Result<Vec<Membershi
             kind: "org".into(),
             has_account: org.is_some(),
             admin,
-            can_create: org.is_none() && identity.has_role(ACCOUNT_ADMIN_ROLE),
         });
     }
     Ok(out)

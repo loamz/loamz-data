@@ -34,13 +34,16 @@ pub struct Volumes {
     root: PathBuf,
 }
 
-/// A volume id is ours (a UUID), but it is checked anyway: it becomes a folder or a key prefix.
+/// A volume's folder is ours (`<workspace id>/<catalog id>/<id>`, each a UUID, or just an id), but it is checked anyway: it becomes
+/// a folder or a key prefix. Plain segments only.
 pub(crate) fn check_volume(volume: &str) -> Result<(), FileError> {
     let ok = !volume.is_empty()
-        && volume.len() <= 64
-        && volume
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-');
+        && volume.len() <= 200
+        && volume.split('/').all(|part| {
+            !part.is_empty()
+                && part.len() <= 64
+                && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        });
     if ok {
         Ok(())
     } else {

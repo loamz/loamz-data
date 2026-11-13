@@ -34,32 +34,15 @@ export function Home({ me, reload }: { me: api.Me | undefined; reload: () => voi
         )}
       </Section>
 
-      <Section title="Organizations" description="Your own space, and the organizations you belong to. An organization needs a Data account before it has workspaces.">
+      <Section title="Organizations" description="Your own space, and the organizations you belong to.">
         <div className="-m-1 divide-y divide-border">
           {me.orgs.map((o) => (
             <div key={o.id} className="flex items-center gap-3 px-3 py-3">
               <Building2 className="shrink-0 text-muted" aria-hidden />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium text-foreground">{o.alias}</span>
-                <span className="block text-xs text-muted">{o.kind === "personal" ? "Your own space" : o.has_account ? "Organization" : "No Data account yet"}</span>
+                <span className="block text-xs text-muted">{o.kind === "personal" ? "Your own space" : o.has_account ? "Organization" : "Not set up yet: an admin of it signs in first"}</span>
               </span>
-              {o.can_create_account && (
-                <Button
-                  variant="primary"
-                  onClick={async () => {
-                    try {
-                      await api.createAccount(o.id);
-                      toast.success(`Created the account for ${o.alias}`);
-                      reload();
-                      go({ screen: "account", org: o.id, tab: "workspaces" });
-                    } catch (e) {
-                      toast.error("Could not create the account", (e as Error).message);
-                    }
-                  }}
-                >
-                  Create account
-                </Button>
-              )}
               {o.account_admin && (
                 <Button variant="secondary" onClick={() => go({ screen: "account", org: o.id, tab: "workspaces" })}>
                   Manage

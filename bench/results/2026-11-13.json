@@ -1,0 +1,85 @@
+{
+  "load_seconds": 4.7,
+  "rows": 3475205,
+  "direct": {
+    "point": {
+      "cold": 0.406,
+      "warm": 0.177,
+      "rows_returned": 1
+    },
+    "filtered_agg": {
+      "cold": 0.029,
+      "warm": 0.007,
+      "rows_returned": 1
+    },
+    "group_by": {
+      "cold": 0.091,
+      "warm": 0.035,
+      "rows_returned": 10
+    },
+    "full_scan": {
+      "cold": 0.106,
+      "warm": 0.045,
+      "rows_returned": 1
+    }
+  },
+  "catalog": {
+    "point": {
+      "cold": 0.315,
+      "warm": 0.188,
+      "rows_returned": 1
+    },
+    "filtered_agg": {
+      "cold": 0.062,
+      "warm": 0.026,
+      "rows_returned": 1
+    },
+    "group_by": {
+      "cold": 0.119,
+      "warm": 0.099,
+      "rows_returned": 10
+    },
+    "join": {
+      "cold": 0.296,
+      "warm": 0.24,
+      "rows_returned": 8
+    },
+    "full_scan": {
+      "cold": 0.184,
+      "warm": 0.132,
+      "rows_returned": 1
+    }
+  },
+  "machine": {
+    "point": {
+      "cold": 2.3,
+      "warm": 2.177,
+      "queued_ms": 290,
+      "run_ms": 1808
+    },
+    "filtered_agg": {
+      "cold": 2.188,
+      "warm": 2.057,
+      "queued_ms": 265,
+      "run_ms": 1726
+    },
+    "group_by": {
+      "cold": 2.307,
+      "warm": 2.307,
+      "queued_ms": 395,
+      "run_ms": 1830
+    },
+    "join": {
+      "cold": 2.326,
+      "warm": 2.326,
+      "queued_ms": 374,
+      "run_ms": 1919
+    },
+    "full_scan": {
+      "cold": 2.323,
+      "warm": 1.997,
+      "queued_ms": 293,
+      "run_ms": 1537
+    }
+  }
+}

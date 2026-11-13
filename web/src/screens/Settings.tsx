@@ -1,4 +1,4 @@
-import { Building2, Bot, KeyRound, Trash2, UserMinus, Users, type LucideIcon } from "lucide-react";
+import { Building2, Bot, Database, KeyRound, Trash2, UserMinus, Users, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Badge, Body, Button, DataTable, Input, ObjectHeader, Page, PageEmpty, Select, SidebarItem, confirmAction, toast, type Column } from "@/design";
 import * as api from "@/api";
@@ -39,6 +39,7 @@ export function Settings({ ws, tab }: { ws: string; tab: SettingsTab; me: api.Me
   const sections: { tab: SettingsTab; label: string; icon: LucideIcon }[] = [
     { tab: "members", label: "Members", icon: Users },
     { tab: "principals", label: "Service principals", icon: Bot },
+    { tab: "storage", label: "Storage", icon: Database },
     { tab: "entitlements", label: "Entitlements", icon: KeyRound },
     ...(here.account_admin ? [{ tab: "workspace" as const, label: "Workspace", icon: Building2 }] : []),
   ];
@@ -58,6 +59,7 @@ export function Settings({ ws, tab }: { ws: string; tab: SettingsTab; me: api.Me
         <div className="min-w-0 max-w-3xl flex-1">
           {now === "members" && <Members ws={ws} />}
           {now === "principals" && <ServicePrincipals ws={ws} />}
+          {now === "storage" && <Storage ws={ws} />}
           {now === "entitlements" && <Entitlements ws={ws} />}
           {now === "workspace" && <Danger ws={ws} workspace={here} />}
         </div>
@@ -76,6 +78,114 @@ function Section({ title, note, children }: { title: string; note: string; child
       </div>
       {children}
     </section>
+  );
+}
+
+function Storage({ ws }: { ws: string }) {
+  const credentials = useLoad(() => api.storageCredentials(ws), ws);
+  const locations = useLoad(() => api.storageLocations(ws), ws);
+  const [cred, setCred] = useState({ name: "", endpoint: "", keyId: "", secret: "", vending: "sts" as "none" | "sts" | "r2", token: "" });
+  const [loc, setLoc] = useState({ name: "", credential: "", bucket: "", prefix: "" });
+  const names = Object.fromEntries((credentials.data ?? []).map((c) => [c.id, c.name]));
+  const fail = (what: string) => (err: unknown) => toast.error(what, (err as Error).message);
+  const credentialColumns: Column<api.StorageCredential>[] = [
+    { key: "name", header: "Name", width: "fill", cell: (c) => c.name },
+    { key: "endpoint", header: "Store", cell: (c) => <span className="font-mono text-xs text-muted">{c.endpoint}</span> },
+    { key: "vending", header: "Access for machines", cell: (c) => c.vending.kind },
+    {
+      key: "remove",
+      header: "",
+      cell: (c) => (
+        <Button variant="ghost" size="sm" onClick={() => api.deleteStorageCredential(ws, c.id).then(credentials.reload).catch(fail("Could not delete it"))}>
+          Delete
+        </Button>
+      ),
+    },
+  ];
+  const locationColumns: Column<api.StorageLocation>[] = [
+    { key: "name", header: "Name", width: "fill", cell: (l) => l.name },
+    { key: "where", header: "Where", cell: (l) => <span className="font-mono text-xs text-muted">{`${l.bucket}/${l.prefix}`}</span> },
+    { key: "credential", header: "Credential", cell: (l) => names[l.credential_id] ?? l.credential_id },
+    {
+      key: "remove",
+      header: "",
+      cell: (l) => (
+        <Button variant="ghost" size="sm" onClick={() => api.deleteStorageLocation(ws, l.id).then(locations.reload).catch(fail("Could not delete it"))}>
+          Delete
+        </Button>
+      ),
+    },
+  ];
+  return (
+    <div className="flex flex-col gap-8">
+      <Section title="Credentials" note="How the server reaches a store. The keys are kept in the vault: give references such as loamz-data/bucket#secret, never the keys.">
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            try {
+              await api.createStorageCredential(ws, {
+                name: cred.name.trim(),
+                endpoint: cred.endpoint.trim(),
+                region: "",
+                key_id_ref: cred.keyId.trim(),
+                secret_ref: cred.secret.trim(),
+                vending: cred.vending === "sts" ? { kind: "sts" } : cred.vending === "r2" ? { kind: "r2", token_ref: cred.token.trim() } : { kind: "none" },
+              });
+              setCred({ ...cred, name: "", keyId: "", secret: "", token: "" });
+              credentials.reload();
+            } catch (err) {
+              fail("Could not add it")(err);
+            }
+          }}
+        >
+          <Input className="w-40" placeholder="Name" aria-label="Credential name" value={cred.name} onChange={(e) => setCred({ ...cred, name: e.target.value })} />
+          <Input className="w-56" placeholder="Endpoint, https://…" aria-label="Endpoint" value={cred.endpoint} onChange={(e) => setCred({ ...cred, endpoint: e.target.value })} />
+          <Input className="w-52" placeholder="Key id reference" aria-label="Key id reference" value={cred.keyId} onChange={(e) => setCred({ ...cred, keyId: e.target.value })} />
+          <Input className="w-52" placeholder="Secret reference" aria-label="Secret reference" value={cred.secret} onChange={(e) => setCred({ ...cred, secret: e.target.value })} />
+          <Select
+            className="w-44"
+            aria-label="Access for machines"
+            value={cred.vending}
+            onValueChange={(v) => setCred({ ...cred, vending: v as "none" | "sts" | "r2" })}
+            options={[
+              { value: "sts", label: "STS (RustFS, S3)" },
+              { value: "r2", label: "Cloudflare R2" },
+              { value: "none", label: "None" },
+            ]}
+          />
+          {cred.vending === "r2" && <Input className="w-52" placeholder="R2 token reference" aria-label="R2 token reference" value={cred.token} onChange={(e) => setCred({ ...cred, token: e.target.value })} />}
+          <Button variant="primary" type="submit" disabled={!cred.name.trim() || !cred.endpoint.trim() || !cred.keyId.trim() || !cred.secret.trim()}>
+            Add
+          </Button>
+        </form>
+        <DataTable columns={credentialColumns} rows={credentials.data ?? []} rowKey={(c) => c.id} count={`${(credentials.data ?? []).length} credentials`} empty="No credentials yet." />
+      </Section>
+      <Section title="Locations" note="The buckets, or folders of them, this workspace may use. Locations never overlap, in any workspace.">
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            try {
+              await api.createStorageLocation(ws, { name: loc.name.trim(), credential_id: loc.credential, bucket: loc.bucket.trim(), prefix: loc.prefix.trim() });
+              setLoc({ ...loc, name: "", prefix: "" });
+              locations.reload();
+            } catch (err) {
+              fail("Could not add it")(err);
+            }
+          }}
+        >
+          <Input className="w-40" placeholder="Name" aria-label="Location name" value={loc.name} onChange={(e) => setLoc({ ...loc, name: e.target.value })} />
+          <Select className="w-44" aria-label="Credential" placeholder="Credential" value={loc.credential} onValueChange={(v) => setLoc({ ...loc, credential: v })} options={(credentials.data ?? []).map((c) => ({ value: c.id, label: c.name }))} />
+          <Input className="w-44" placeholder="Bucket" aria-label="Bucket" value={loc.bucket} onChange={(e) => setLoc({ ...loc, bucket: e.target.value })} />
+          <Input className="w-44" placeholder="Folder (optional)" aria-label="Folder" value={loc.prefix} onChange={(e) => setLoc({ ...loc, prefix: e.target.value })} />
+          <Button variant="primary" type="submit" disabled={!loc.name.trim() || !loc.credential || !loc.bucket.trim()}>
+            Add
+          </Button>
+        </form>
+        <DataTable columns={locationColumns} rows={locations.data ?? []} rowKey={(l) => l.id} count={`${(locations.data ?? []).length} locations`} empty="No locations yet." />
+      </Section>
+    </div>
   );
 }
 

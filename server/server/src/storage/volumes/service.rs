@@ -54,7 +54,7 @@ pub async fn put(app: &App, ask: &Ask<'_>, id: &str, path: &str, body: Body) -> 
     let (entry, target) = holder(app, ask, id, Access::Write).await?;
     let mut upload = app
         .stores
-        .begin_put(&entry.id, path, app.max_upload)
+        .begin_put(&entry.folder, path, app.max_upload)
         .await?;
     let mut stream = body.into_data_stream();
     while let Some(chunk) = stream.next().await {
@@ -79,7 +79,7 @@ pub async fn put(app: &App, ask: &Ask<'_>, id: &str, path: &str, body: Body) -> 
 /// Not allowed, bad path, no such file.
 pub async fn get(app: &App, ask: &Ask<'_>, id: &str, path: &str) -> Result<(Body, u64)> {
     let (entry, target) = holder(app, ask, id, Access::Read).await?;
-    let (file, size) = app.stores.open(&entry.id, path).await?;
+    let (file, size) = app.stores.open(&entry.folder, path).await?;
     audit::record(
         app,
         ask.org,
@@ -96,14 +96,14 @@ pub async fn get(app: &App, ask: &Ask<'_>, id: &str, path: &str) -> Result<(Body
 /// Not allowed.
 pub async fn list(app: &App, ask: &Ask<'_>, id: &str) -> Result<Vec<Entry>> {
     let (entry, _) = holder(app, ask, id, Access::Read).await?;
-    Ok(app.stores.list(&entry.id).await?)
+    Ok(app.stores.list(&entry.folder).await?)
 }
 
 /// # Errors
 /// Not allowed, bad path, no such file.
 pub async fn delete(app: &App, ask: &Ask<'_>, id: &str, path: &str) -> Result<()> {
     let (entry, target) = holder(app, ask, id, Access::Write).await?;
-    app.stores.delete(&entry.id, path).await?;
+    app.stores.delete(&entry.folder, path).await?;
     audit::record(
         app,
         ask.org,
@@ -119,14 +119,14 @@ pub async fn delete(app: &App, ask: &Ask<'_>, id: &str, path: &str) -> Result<()
 ///
 /// # Errors
 /// The disk could not be written.
-pub async fn erase_files(app: &App, volume_id: &str) -> Result<()> {
-    Ok(app.stores.remove_volume(volume_id).await?)
+pub async fn erase_files(app: &App, folder: &str) -> Result<()> {
+    Ok(app.stores.remove_volume(folder).await?)
 }
 
 /// Whether any bytes of the volume or table folder are left (the erase check).
 ///
 /// # Errors
 /// The disk could not be read.
-pub async fn has_files(app: &App, volume_id: &str) -> Result<bool> {
-    Ok(app.stores.exists(volume_id).await?)
+pub async fn has_files(app: &App, folder: &str) -> Result<bool> {
+    Ok(app.stores.exists(folder).await?)
 }

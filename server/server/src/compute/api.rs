@@ -85,16 +85,17 @@ fn restricted_view(r: &Run, c: &WsCtx) -> Value {
     view
 }
 
-/// How long a run waited before it started (`queued`), or how long it ran (once it has ended); `-1` while that is not known yet.
+/// How long a run waited before it started (`queued`), or how long it ran (once it has ended); `-1` while that is not known yet. These
+/// are differences of wall-clock times, and a clock that is stepped back (WSL2 does) must not make one negative.
 fn waited(r: &Run, queued: bool) -> i64 {
     if queued {
         if r.started_ms > 0 {
-            r.started_ms - r.created_ms
+            (r.started_ms - r.created_ms).max(0)
         } else {
             -1
         }
     } else if r.started_ms > 0 && r.finished_ms > 0 {
-        r.finished_ms - r.started_ms
+        (r.finished_ms - r.started_ms).max(0)
     } else {
         -1
     }

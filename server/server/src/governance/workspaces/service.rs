@@ -82,12 +82,7 @@ fn rank(s: Standing) -> u8 {
     }
 }
 
-pub(super) async fn deny(
-    app: &App,
-    identity: &Identity,
-    w: &Workspace,
-    action: &'static str,
-) -> Error {
+pub async fn deny(app: &App, identity: &Identity, w: &Workspace, action: &'static str) -> Error {
     let _ = crate::governance::audit::service::record(
         app,
         &w.org_id,

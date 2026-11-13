@@ -6,6 +6,7 @@ use tokio::sync::Mutex;
 use super::{
     auth::Verifier,
     directory::Directory,
+    secrets::SecretStore,
     settings::{Secrets, Settings},
 };
 
@@ -16,6 +17,8 @@ pub struct App {
     pub verifier: Verifier,
     /// Issues short-lived credentials for some folders of the bucket, for machines that read data themselves.
     pub issuer: Option<Arc<dyn Issuer>>,
+    /// Where the secrets are, for the settings people make while it runs (a storage credential names its secrets). None: no vault.
+    pub vault: Option<Arc<dyn SecretStore>>,
     /// The directory of people and organizations, where the installation's admin creates them. None: it is not connected.
     pub directory: Option<Arc<dyn Directory>>,
     /// Table metadata files, which never change once written: read from the bucket once.
@@ -47,6 +50,7 @@ impl App {
             verifier: Verifier::new(&settings.issuer)
                 .with_agent_clients(settings.agent_clients.clone()),
             issuer: settings.storage.issuer(secrets)?,
+            vault: None,
             directory: settings.directory(secrets)?,
             metadata_cache: std::sync::Mutex::new(super::cache::BoundedCache::new(64 << 20)),
             queued: tokio::sync::Notify::new(),

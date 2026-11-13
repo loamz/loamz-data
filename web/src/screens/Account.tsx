@@ -40,8 +40,8 @@ export function Account({ org, tab, me }: { org: string; tab: AccountTab; me: ap
   if (!info.has_account || !info.account_admin) {
     return (
       <Page title={info.alias} subtitle="Account console">
-        <PageEmpty icon={ShieldAlert} title={info.has_account ? "Only account admins can manage this" : "This organization has no Data account yet"}>
-          {info.has_account ? "Ask an account admin to add you." : info.can_create_account ? "You can create it from Home." : "Someone with the account-admin role in Keycloak creates it."}
+        <PageEmpty icon={ShieldAlert} title={info.has_account ? "Only organization admins can manage this" : "This organization is not set up yet"}>
+          {info.has_account ? "Ask an admin of the organization to add you." : "It is set up the first time its admin signs in."}
         </PageEmpty>
       </Page>
     );

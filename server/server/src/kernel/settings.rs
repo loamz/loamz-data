@@ -310,7 +310,8 @@ fn var(name: &str) -> Option<String> {
 }
 
 /// HTTP is allowed only for an exact local development host, never a look-alike hostname.
-fn valid_issuer(value: &str) -> bool {
+#[must_use]
+pub fn valid_issuer(value: &str) -> bool {
     let Ok(url) = reqwest::Url::parse(value) else {
         return false;
     };

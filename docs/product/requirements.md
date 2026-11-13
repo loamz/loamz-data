@@ -10,7 +10,7 @@ Status: **Built** is in the code today; **Planned** names its proposal and task 
 |---|---|---|
 | O1 | People sign in once (OpenID Connect, Keycloak). An organization is a Keycloak organization. | Built |
 | O2 | The organization decides who can use which workspace: owners and admins assign people. | Built |
-| O3 | A new installation has a default admin who creates organizations and adds people. | Built (0002 task 2) |
+| O3 | A new installation has a default admin who creates organizations and adds people. An organization is set up the first time its admin signs in, with a workspace to start in: nobody asks for it. | Built (0002 task 2) |
 
 ### Workspaces and principals
 | id | requirement | status |
@@ -60,7 +60,7 @@ Status: **Built** is in the code today; **Planned** names its proposal and task 
 | id | requirement | status |
 |---|---|---|
 | S1 | Bytes live in an S3-compatible object store. A run gets short-lived, read-only credentials for its tables' folders only. | Built (R2) |
-| S2 | Credentials, locations and one root per catalog, set per workspace; managed and external objects; paths never overlap. | Planned (0002 task 5) |
+| S2 | Credentials, locations and one root per catalog, set per workspace; managed and external objects; paths never overlap. | Credentials and locations built, overlaps refused; a root per catalog in the workspace's prefix built (default store only); roots on a location, managed and external objects planned (0002 task 5) |
 | S3 | Any store with STS (RustFS, S3); R2 through its own API. | Built on RustFS (0002 task 1); S3 untested |
 | S4 | Default storage on RustFS: nothing to set up. | Built for development (0002 task 3); per-workspace prefixes planned (task 5) |
 | S5 | Every secret lives in OpenBao; the catalog keeps references only. | Built for the server's own secrets (0002 task 6); production OpenBao (HA, audit) planned |

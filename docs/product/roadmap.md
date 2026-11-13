@@ -67,7 +67,7 @@ a SQL connection for BI tools, job schedules and alerts, abuse protection, safe 
 | Jobs on machines, each run in gVisor | compute | ✅ | | | | | |
 | Serverless SQL | compute | ✅ | | | | | |
 | Active-run cap per organization | compute | ✅ | | | | | |
-| Benchmark of the query path | compute | | | 📅 | | | |
+| Benchmark of the query path (`bench/run.py`) | compute | ✅ | | | | | |
 | Warm engine (Rust, DuckDB, all cores), on machines and serverless | compute | | | 📅 | | | |
 | Arrow results, streamed | compute | | | 📅 | | | |
 | Ranged reads instead of downloading tables | compute | | | 📅 | | | |
@@ -77,7 +77,8 @@ a SQL connection for BI tools, job schedules and alerts, abuse protection, safe 
 | Schedules, triggers and failure alerts for jobs | compute | | | | | ❓ | |
 | **Storage** | | | | | | | |
 | S3-compatible store; short-lived credentials scoped to one folder (R2) | storage | ✅ | | | | | |
-| Credentials, locations, one root per catalog; paths never overlap | storage | | 📅 | | | | |
+| Credentials and locations per workspace; paths never overlap | storage | ✅ | |
+| One root per catalog; managed and external objects; storage grants | storage | | 📅 | | | | |
 | Credentials through STS (RustFS; S3 untested) | storage | ✅ | | | | | |
 | Default storage on RustFS, nothing to set up (development) | storage | ✅ | | | | | |
 | Defined behavior when access is revoked | storage | | | | | 📅 | |

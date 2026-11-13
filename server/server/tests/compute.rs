@@ -147,10 +147,15 @@ async fn iceberg_tables_are_governed(s: Server) {
     );
     // Every commit leaves the version hint at the current metadata file, so any Iceberg reader can find it without us.
     let current = pointer(&s, l.orders.clone()).await;
+    let folder: String = sqlx::query_scalar("SELECT folder FROM securables WHERE id = $1")
+        .bind(&l.orders)
+        .fetch_one(s.app.db.pool())
+        .await
+        .unwrap();
     let (mut hint, _) = s
         .app
         .stores
-        .open(&l.orders, "metadata/version-hint.text")
+        .open(&folder, "metadata/version-hint.text")
         .await
         .unwrap();
     let mut said = Vec::new();

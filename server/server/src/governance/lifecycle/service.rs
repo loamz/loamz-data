@@ -117,7 +117,7 @@ async fn remove_subtree(app: &App, org: &str, id: &str) -> Result<()> {
     let entries = catalogs::subtree(app, org, id).await?;
     for entry in entries.iter().rev() {
         if entry.kind.holds_files() {
-            volumes::erase_files(app, &entry.id).await?;
+            volumes::erase_files(app, &entry.folder).await?;
         }
         let mut uow = Uow::begin(app).await?;
         iam::forget_securable(&mut uow, org, &entry.id).await?;
@@ -127,7 +127,7 @@ async fn remove_subtree(app: &App, org: &str, id: &str) -> Result<()> {
     // The check: nothing of it may remain.
     for entry in &entries {
         if catalogs::exists(app, org, &entry.id).await?
-            || (entry.kind.holds_files() && volumes::has_files(app, &entry.id).await?)
+            || (entry.kind.holds_files() && volumes::has_files(app, &entry.folder).await?)
         {
             return Err(Error::Internal(format!(
                 "{} is not gone after the drop",

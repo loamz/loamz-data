@@ -267,7 +267,11 @@ async fn fetch_table(storage: &Value, id: &str, folder: &Path) -> Result<(), Str
     let metadata = at["metadata"]
         .as_str()
         .ok_or_else(|| format!("the lease does not say where {id} is"))?;
-    let prefix = Key::from(id);
+    // The table's folder in the bucket: `<workspace>/<catalog>/<id>`.
+    let remote = at["folder"]
+        .as_str()
+        .ok_or_else(|| format!("the lease does not say which folder {id} is in"))?;
+    let prefix = Key::from(remote);
     let objects = table_objects(&s3, &prefix, id).await?;
     tokio::fs::create_dir_all(folder)
         .await
@@ -277,7 +281,7 @@ async fn fetch_table(storage: &Value, id: &str, folder: &Path) -> Result<(), Str
         let rel = o
             .location
             .as_ref()
-            .strip_prefix(&format!("{id}/"))
+            .strip_prefix(&format!("{remote}/"))
             .ok_or("the bucket listed something outside the table")?;
         let to = safe_join(folder, rel)?;
         if let Some(parent) = to.parent() {

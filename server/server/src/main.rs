@@ -43,7 +43,9 @@ async fn run(command: &str) -> Result<(), String> {
     }
     let vault = settings.vault()?;
     let secrets = settings.resolve(vault.as_deref()).await?;
-    let app = shared(App::new(&settings, &secrets, db)?);
+    let mut app = App::new(&settings, &secrets, db)?;
+    app.vault = vault;
+    let app = shared(app);
     app.verifier
         .refresh()
         .await

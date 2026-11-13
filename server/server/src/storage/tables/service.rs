@@ -14,7 +14,7 @@ use crate::{
     governance::{
         audit::{model::Who, service as audit, service::Uow},
         catalogs::{
-            model::{Draft, Kind, Securable},
+            model::{Draft, Kind, Securable, join_folder},
             service as catalogs,
         },
         iam::service as iam,
@@ -300,10 +300,10 @@ pub async fn load(
         &target,
     )
     .await?;
-    let metadata = read_metadata(app, &entry.id, &entry.metadata).await?;
+    let metadata = read_metadata(app, &entry.folder, &entry.metadata).await?;
     let credentials = if app.issuer.is_some() {
         Some((
-            vend(app, &[&entry.id], may_write, CLIENT_TTL).await?,
+            vend(app, &[&entry.folder], may_write, CLIENT_TTL).await?,
             may_write,
         ))
     } else {
@@ -319,7 +319,7 @@ pub async fn load(
     )
     .await?;
     Ok(Loaded {
-        metadata_location: format!("{}/{}", app.stores.uri(&entry.id)?, entry.metadata),
+        metadata_location: format!("{}/{}", app.stores.uri(&entry.folder)?, entry.metadata),
         id: entry.id,
         metadata,
         credentials,
@@ -380,7 +380,9 @@ pub async fn create_under(
 
 async fn create_in(app: &App, ask: &Ask<'_>, parent: Securable, new: NewTable) -> Result<Loaded> {
     let id = new_id();
-    let location = app.stores.uri(&id)?;
+    // The table's folder is under its catalog's root, in the workspace's own prefix.
+    let folder = join_folder(&parent.folder, &id);
+    let location = app.stores.uri(&folder)?;
     let meta = model::new_metadata(
         &location,
         &new_id(),
@@ -392,7 +394,7 @@ async fn create_in(app: &App, ask: &Ask<'_>, parent: Securable, new: NewTable) -
     )
     .map_err(Error::Invalid)?;
     if new.stage {
-        let credentials = vend_for_client(app, &id, true).await?;
+        let credentials = vend_for_client(app, &folder, true).await?;
         return Ok(Loaded {
             metadata_location: String::new(),
             id,
@@ -401,7 +403,7 @@ async fn create_in(app: &App, ask: &Ask<'_>, parent: Securable, new: NewTable) -
         });
     }
     let rel = model::next_metadata_path("", &new_id());
-    write_metadata(app, &id, &rel, &meta).await?;
+    write_metadata(app, &folder, &rel, &meta).await?;
     let made = catalogs::create(
         app,
         ask.identity,
@@ -421,11 +423,11 @@ async fn create_in(app: &App, ask: &Ask<'_>, parent: Securable, new: NewTable) -
     .await;
     if let Err(e) = made {
         // Nothing points at the file; take it away so a refused name leaves nothing behind.
-        let _ = app.stores.remove_volume(&id).await;
+        let _ = app.stores.remove_volume(&folder).await;
         return Err(e);
     }
-    publish_hint(app, &id, &rel).await;
-    let credentials = vend_for_client(app, &id, true).await?;
+    publish_hint(app, &folder, &rel).await;
+    let credentials = vend_for_client(app, &folder, true).await?;
     Ok(Loaded {
         metadata_location: format!("{location}/{rel}"),
         id,
@@ -461,15 +463,15 @@ pub async fn commit(
         &target,
     )
     .await?;
-    let current = read_metadata(app, &entry.id, &entry.metadata).await?;
+    let current = read_metadata(app, &entry.folder, &entry.metadata).await?;
     model::check_requirements(&current, requirements).map_err(Error::Conflict)?;
     let next = model::apply(&current, updates, now_ms()).map_err(Error::Invalid)?;
     let rel = model::next_metadata_path(&entry.metadata, &new_id());
-    write_metadata(app, &entry.id, &rel, &next).await?;
+    write_metadata(app, &entry.folder, &rel, &next).await?;
     let mut uow = Uow::begin(app).await?;
     if !catalogs::advance(&mut uow, ask.org, &entry.id, &entry.metadata, &rel).await? {
         drop(uow);
-        let _ = app.stores.delete(&entry.id, &rel).await;
+        let _ = app.stores.delete(&entry.folder, &rel).await;
         return Err(Error::Conflict(
             "the table changed while this was committed".into(),
         ));
@@ -483,8 +485,8 @@ pub async fn commit(
     )
     .await?;
     uow.commit().await?;
-    publish_hint(app, &entry.id, &rel).await;
-    Ok((format!("{}/{rel}", app.stores.uri(&entry.id)?), next))
+    publish_hint(app, &entry.folder, &rel).await;
+    Ok((format!("{}/{rel}", app.stores.uri(&entry.folder)?), next))
 }
 
 /// The second step of making a table: it must not exist yet, and the updates are everything that makes it. Needs `CREATE TABLE`.
@@ -505,14 +507,13 @@ async fn commit_new(
     let base = app.stores.uri("x")?;
     let base = base.strip_suffix("/x").unwrap_or(&base);
     let location = meta["location"].as_str().unwrap_or_default();
-    let id = model::id_in_location(location, base)
-        .ok_or_else(|| Error::Invalid("the table's location is not one this server gave".into()))?
-        .to_owned();
+    let (folder, id) = model::folder_in_location(location, base, &parent.folder)
+        .ok_or_else(|| Error::Invalid("the table's location is not one this server gave".into()))?;
     if catalogs::exists(app, ask.org, &id).await? {
         return Err(Error::Conflict("that location is already a table".into()));
     }
     let rel = model::next_metadata_path("", &new_id());
-    write_metadata(app, &id, &rel, &meta).await?;
+    write_metadata(app, &folder, &rel, &meta).await?;
     let made = catalogs::create(
         app,
         ask.identity,
@@ -531,10 +532,10 @@ async fn commit_new(
     )
     .await;
     if let Err(e) = made {
-        let _ = app.stores.delete(&id, &rel).await;
+        let _ = app.stores.delete(&folder, &rel).await;
         return Err(e);
     }
-    publish_hint(app, &id, &rel).await;
+    publish_hint(app, &folder, &rel).await;
     Ok((format!("{location}/{rel}"), meta))
 }
 
@@ -547,7 +548,7 @@ pub async fn describe(app: &App, ask: &Ask<'_>, id: &str) -> Result<Value> {
     if entry.kind != Kind::Table {
         return Err(nope());
     }
-    let meta = read_metadata(app, &entry.id, &entry.metadata).await?;
+    let meta = read_metadata(app, &entry.folder, &entry.metadata).await?;
     let snapshots: Vec<Value> = meta["snapshots"]
         .as_array()
         .into_iter()
@@ -564,7 +565,7 @@ pub async fn describe(app: &App, ask: &Ask<'_>, id: &str) -> Result<Value> {
         .collect();
     Ok(json!({
         "format": "iceberg",
-        "location": app.stores.uri(&entry.id)?,
+        "location": app.stores.uri(&entry.folder)?,
         "stats": model::table_stats(&meta),
         "columns": model::columns(&meta),
         "snapshots": snapshots,
@@ -577,12 +578,12 @@ pub async fn describe(app: &App, ask: &Ask<'_>, id: &str) -> Result<Value> {
 ///
 /// # Errors
 /// The table is gone.
-pub async fn locate(app: &App, org: &str, id: &str) -> Result<(String, String)> {
+pub async fn locate(app: &App, org: &str, id: &str) -> Result<(String, String, String)> {
     let (entry, _) = catalogs::target(app, org, id).await?;
     if entry.kind != Kind::Table {
         return Err(nope());
     }
-    Ok((app.stores.uri(&entry.id)?, entry.metadata))
+    Ok((app.stores.uri(&entry.folder)?, entry.metadata, entry.folder))
 }
 
 /// Per-column counts and ranges of a table, from what its files recorded about themselves: no data is read and no compute is
@@ -604,7 +605,7 @@ pub async fn column_stats(app: &App, ask: &Ask<'_>, id: &str) -> Result<Value> {
         &target,
     )
     .await?;
-    let meta = read_metadata(app, &entry.id, &entry.metadata).await?;
+    let meta = read_metadata(app, &entry.folder, &entry.metadata).await?;
     let current = &meta["current-snapshot-id"];
     let list = meta["snapshots"]
         .as_array()
@@ -612,7 +613,7 @@ pub async fn column_stats(app: &App, ask: &Ask<'_>, id: &str) -> Result<Value> {
         .flatten()
         .find(|s| &s["snapshot-id"] == current)
         .and_then(|s| s["manifest-list"].as_str());
-    let base = format!("{}/", app.stores.uri(&entry.id)?);
+    let base = format!("{}/", app.stores.uri(&entry.folder)?);
     let rel = |path: &str| {
         path.strip_prefix(&base)
             .map(str::to_owned)
@@ -620,7 +621,7 @@ pub async fn column_stats(app: &App, ask: &Ask<'_>, id: &str) -> Result<Value> {
     };
     let mut files = Vec::new();
     if let Some(list) = list {
-        let paths = manifests::manifest_paths(&read_bytes(app, &entry.id, &rel(list)?).await?)
+        let paths = manifests::manifest_paths(&read_bytes(app, &entry.folder, &rel(list)?).await?)
             .map_err(Error::Internal)?;
         if paths.len() > MAX_MANIFESTS {
             return Err(Error::Invalid(
@@ -628,7 +629,7 @@ pub async fn column_stats(app: &App, ask: &Ask<'_>, id: &str) -> Result<Value> {
             ));
         }
         let reads = paths.iter().map(|path| async {
-            let bytes = read_bytes(app, &entry.id, &rel(path)?).await?;
+            let bytes = read_bytes(app, &entry.folder, &rel(path)?).await?;
             manifests::data_files(&bytes).map_err(Error::Internal)
         });
         for found in futures_util::future::join_all(reads).await {

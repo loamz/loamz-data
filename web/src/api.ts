@@ -21,7 +21,6 @@ export interface OrgInfo {
   kind: "org" | "personal";
   has_account: boolean;
   account_admin: boolean;
-  can_create_account: boolean;
 }
 export interface WorkspaceInfo {
   id: string;
@@ -138,7 +137,6 @@ const none = (p: Promise<Response>) => p.then(() => undefined);
 export const me = () => json<Me>(send("GET", "/api/v1/me"));
 
 // Account console (an organization)
-export const createAccount = (org: string) => none(send("POST", `/api/v1/orgs/${enc(org)}/account`, {}));
 export const createOrganization = (alias: string, admin_email: string, admin_name: string) =>
   json<{ id: string; alias: string; admin: Invited }>(send("POST", "/api/v1/orgs", { alias, admin_email, admin_name }));
 export const addPerson = (org: string, email: string, name: string) => json<Invited>(send("POST", `/api/v1/orgs/${enc(org)}/people`, { email, name }));
@@ -167,6 +165,30 @@ export const servicePrincipals = async (ws: string) => (await json<{ items: Serv
 export const createServicePrincipal = (ws: string, name: string) => json<ServicePrincipal & { token: string }>(send("POST", `${W(ws)}/service-principals`, { name }));
 export const renewServicePrincipalToken = (ws: string, id: string) => json<{ token: string }>(send("POST", `${W(ws)}/service-principals/${enc(id)}/token`, {}));
 export const deleteServicePrincipal = (ws: string, id: string) => none(send("DELETE", `${W(ws)}/service-principals/${enc(id)}`));
+export interface StorageCredential {
+  id: string;
+  name: string;
+  endpoint: string;
+  region: string;
+  /** References into the vault, never secrets. */
+  key_id_ref: string;
+  secret_ref: string;
+  vending: { kind: "none" | "sts" | "r2"; role_arn?: string; token_ref?: string };
+}
+export interface StorageLocation {
+  id: string;
+  name: string;
+  credential_id: string;
+  bucket: string;
+  prefix: string;
+}
+const S = (ws: string) => `/api/v1/workspaces/${enc(ws)}/storage`;
+export const storageCredentials = async (ws: string) => (await json<{ items: StorageCredential[] }>(send("GET", `${S(ws)}/credentials`))).items;
+export const createStorageCredential = (ws: string, body: Omit<StorageCredential, "id">) => json<StorageCredential>(send("POST", `${S(ws)}/credentials`, body));
+export const deleteStorageCredential = (ws: string, id: string) => none(send("DELETE", `${S(ws)}/credentials/${enc(id)}`));
+export const storageLocations = async (ws: string) => (await json<{ items: StorageLocation[] }>(send("GET", `${S(ws)}/locations`))).items;
+export const createStorageLocation = (ws: string, body: Omit<StorageLocation, "id">) => json<StorageLocation>(send("POST", `${S(ws)}/locations`, body));
+export const deleteStorageLocation = (ws: string, id: string) => none(send("DELETE", `${S(ws)}/locations/${enc(id)}`));
 export const workspace = (ws: string) => json<Workspace>(send("GET", W(ws)));
 export const renameWorkspace = (ws: string, name: string) => json<Workspace>(send("PUT", W(ws), { name }));
 export const deleteWorkspace = (ws: string) => none(send("DELETE", W(ws)));

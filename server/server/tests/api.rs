@@ -98,31 +98,44 @@ async fn identity(s: Server) {
         "asking again does not make another"
     );
 
-    // A member of an organization without an account is told they may make one, if they hold the role.
-    let me = s.get("/api/v1/me", &ana()).await.json();
-    let acme = me["orgs"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|o| o["alias"] == "acme")
-        .unwrap()
-        .clone();
-    assert_eq!(
-        (
-            acme["has_account"].clone(),
-            acme["can_create_account"].clone()
-        ),
-        (json!(false), json!(true))
-    );
-    let me = s.get("/api/v1/me", &bob()).await.json();
-    assert_eq!(
+    // An organization is set up the first time its admin (the role `account-admin`) signs in, with a workspace to start in. Nobody
+    // asks for it, and nobody else sets it up.
+    let org_of = |me: &Value| {
         me["orgs"]
             .as_array()
             .unwrap()
             .iter()
             .find(|o| o["alias"] == "acme")
-            .unwrap()["can_create_account"],
-        false
+            .unwrap()
+            .clone()
+    };
+    let me = s.get("/api/v1/me", &bob()).await.json();
+    assert_eq!(
+        org_of(&me)["has_account"],
+        false,
+        "a member who is not the admin does not set it up"
+    );
+    let me = s.get("/api/v1/me", &ana()).await.json();
+    assert_eq!(org_of(&me)["has_account"], true);
+    assert_eq!(org_of(&me)["account_admin"], true);
+    assert!(
+        me["workspaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w["org_alias"] == "acme" && w["name"] == "Main"),
+        "and it starts with a workspace"
+    );
+    let again = s.get("/api/v1/me", &ana()).await.json();
+    assert_eq!(
+        again["workspaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|w| w["org_alias"] == "acme")
+            .count(),
+        1,
+        "once"
     );
 
     let unknown = s.get("/api/v1/nothing", &ana()).await;
@@ -952,6 +965,37 @@ async fn a_catalog_belongs_to_one_workspace(s: Server) {
 }
 both!(a_catalog_belongs_to_one_workspace);
 
+async fn bytes_live_under_the_workspaces_prefix(s: Server) {
+    let main = s.acme().await;
+    let other = s.workspace(&ana(), ACME, "Other").await;
+    let (c, schema, v) = tree(&s, &main).await;
+    s.upload(&main, &v, "a.txt", &ana(), b"x").await;
+    let folder = |id: String| {
+        let s = &s;
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT folder FROM securables WHERE id = $1")
+                .bind(id)
+                .fetch_one(s.app.db.pool())
+                .await
+                .unwrap()
+        }
+    };
+    // A catalog's root is in its workspace's prefix; a schema shares it; a volume has a folder of its own under it.
+    assert_eq!(folder(c.clone()).await, format!("{main}/{c}"));
+    assert_eq!(folder(schema).await, format!("{main}/{c}"));
+    assert_eq!(folder(v.clone()).await, format!("{main}/{c}/{v}"));
+    assert!(
+        s.store_dir(&v).join("a.txt").exists()
+            && s.store_dir(&v).ends_with(format!("{main}/{c}/{v}")),
+        "the bytes are in that folder"
+    );
+    // Another workspace's catalog is under its own prefix.
+    let (c2, _, v2) = tree(&s, &other).await;
+    assert_eq!(folder(v2.clone()).await, format!("{other}/{c2}/{v2}"));
+    assert_ne!(s.store_dir(&v), s.store_dir(&v2));
+}
+both!(bytes_live_under_the_workspaces_prefix);
+
 async fn service_principals_work_in_their_workspace(s: Server) {
     let main = s.acme().await;
     let other = s.workspace(&ana(), ACME, "Other").await;
@@ -1045,6 +1089,218 @@ async fn service_principals_work_in_their_workspace(s: Server) {
     assert!(items(&s.get(&path, &ana()).await).is_empty());
 }
 both!(service_principals_work_in_their_workspace);
+
+async fn storage_is_set_per_workspace(s: Server) {
+    let main = s.acme().await;
+    let other = s.workspace(&ana(), ACME, "Other").await;
+    s.assign(&main, &[&bob()]).await;
+    let base = format!("/api/v1/workspaces/{main}/storage");
+    let credential = |name: &str, key: &str| {
+        json!({"name": name, "endpoint": "http://127.0.0.1:9000", "key_id_ref": key, "secret_ref": "loamz-data/bucket#secret",
+               "vending": {"kind": "sts"}})
+    };
+
+    // A workspace's admins set storage; a member cannot even look.
+    assert_eq!(
+        s.get(&format!("{base}/credentials"), &bob()).await.status,
+        403
+    );
+    assert_eq!(
+        s.post(
+            &format!("{base}/credentials"),
+            &bob(),
+            credential("rustfs", "loamz-data/bucket#key_id")
+        )
+        .await
+        .status,
+        403
+    );
+
+    // The vault must have the secrets; the endpoint must be https or local; names are plain.
+    let missing = s
+        .post(
+            &format!("{base}/credentials"),
+            &ana(),
+            credential("rustfs", "loamz-data/nope#key_id"),
+        )
+        .await;
+    assert_eq!(missing.status, 400);
+    assert!(
+        missing.text().contains("loamz-data/nope#key_id"),
+        "{}",
+        missing.text()
+    );
+    let mut remote = credential("rustfs", "loamz-data/bucket#key_id");
+    remote["endpoint"] = json!("http://example.test");
+    assert_eq!(
+        s.post(&format!("{base}/credentials"), &ana(), remote)
+            .await
+            .status,
+        400
+    );
+    assert_eq!(
+        s.post(
+            &format!("{base}/credentials"),
+            &ana(),
+            credential("bad/name", "loamz-data/bucket#key_id")
+        )
+        .await
+        .status,
+        400
+    );
+
+    let made = s
+        .post(
+            &format!("{base}/credentials"),
+            &ana(),
+            credential("rustfs", "loamz-data/bucket#key_id"),
+        )
+        .await;
+    assert_eq!(made.status, 201, "{}", made.text());
+    let cred = made.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        made.json()["secret_ref"],
+        "loamz-data/bucket#secret",
+        "only references are ever shown"
+    );
+    assert_eq!(
+        s.post(
+            &format!("{base}/credentials"),
+            &ana(),
+            credential("rustfs", "loamz-data/bucket#key_id")
+        )
+        .await
+        .status,
+        409
+    );
+
+    // Locations: a bucket or a prefix; none may overlap another, in any workspace of the installation.
+    let location = |name: &str, credential: &str, prefix: &str| json!({"name": name, "credential_id": credential, "bucket": "loamz-data", "prefix": prefix});
+    let team_a = s
+        .post(
+            &format!("{base}/locations"),
+            &ana(),
+            location("team-a", &cred, "/team-a/"),
+        )
+        .await;
+    assert_eq!(team_a.status, 201, "{}", team_a.text());
+    assert_eq!(team_a.json()["prefix"], "team-a");
+    for (name, prefix) in [("inside", "team-a/raw"), ("whole", ""), ("same", "team-a")] {
+        let r = s
+            .post(
+                &format!("{base}/locations"),
+                &ana(),
+                location(name, &cred, prefix),
+            )
+            .await;
+        assert_eq!(r.status, 409, "{prefix:?}: {}", r.text());
+    }
+    assert_eq!(
+        s.post(
+            &format!("{base}/locations"),
+            &ana(),
+            location("team-ab", &cred, "team-ab")
+        )
+        .await
+        .status,
+        201,
+        "a folder name is not a text prefix"
+    );
+    assert_eq!(
+        s.post(
+            &format!("{base}/locations"),
+            &ana(),
+            location("up", &cred, "../x")
+        )
+        .await
+        .status,
+        400
+    );
+    assert_eq!(
+        s.post(
+            &format!("{base}/locations"),
+            &ana(),
+            location("lost", "no-such", "x")
+        )
+        .await
+        .status,
+        404
+    );
+
+    // Another workspace using the same store and bucket cannot take the same path.
+    let other_base = format!("/api/v1/workspaces/{other}/storage");
+    let theirs = s
+        .post(
+            &format!("{other_base}/credentials"),
+            &ana(),
+            credential("rustfs", "loamz-data/bucket#key_id"),
+        )
+        .await
+        .json()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        s.post(
+            &format!("{other_base}/locations"),
+            &ana(),
+            location("t", &theirs, "team-a/x")
+        )
+        .await
+        .status,
+        409
+    );
+    assert_eq!(
+        s.post(
+            &format!("{other_base}/locations"),
+            &ana(),
+            location("t", &theirs, "team-b")
+        )
+        .await
+        .status,
+        201
+    );
+    assert_eq!(
+        s.get(&format!("{base}/credentials"), &ana()).await.json()["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "each workspace has its own"
+    );
+
+    // A credential a location uses stays until the location goes.
+    assert_eq!(
+        s.delete(&format!("{base}/credentials/{cred}"), &ana())
+            .await
+            .status,
+        409
+    );
+    for l in items(&s.get(&format!("{base}/locations"), &ana()).await) {
+        assert_eq!(
+            s.delete(
+                &format!("{base}/locations/{}", l["id"].as_str().unwrap()),
+                &ana()
+            )
+            .await
+            .status,
+            204
+        );
+    }
+    assert_eq!(
+        s.delete(&format!("{base}/credentials/{cred}"), &ana())
+            .await
+            .status,
+        204
+    );
+    assert_eq!(
+        s.delete(&format!("{base}/credentials/{cred}"), &ana())
+            .await
+            .status,
+        404
+    );
+}
+both!(storage_is_set_per_workspace);
 
 async fn organizations_are_separate(s: Server) {
     let ws = s.acme().await;

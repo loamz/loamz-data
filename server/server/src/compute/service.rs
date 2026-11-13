@@ -929,18 +929,23 @@ fn table_ids(run: &Run, spec: &Value) -> Vec<String> {
 /// What a machine needs to read some tables itself: credentials limited to those tables' folders and to reading, good for the
 /// run's time and a little more, and where each table's current metadata is.
 async fn storage_for(app: &App, org: &str, ids: &[String], timeout_s: i64) -> Result<Value> {
-    let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
     let ttl = Duration::from_secs(u64::try_from(timeout_s).unwrap_or(120) + 300);
+    let mut located = serde_json::Map::new();
+    let mut folders = Vec::with_capacity(ids.len());
+    for id in ids {
+        let (uri, rel, folder) = tables::locate(app, org, id).await?;
+        located.insert(
+            id.clone(),
+            json!({"uri": uri, "metadata": rel, "folder": folder}),
+        );
+        folders.push(folder);
+    }
+    let refs: Vec<&str> = folders.iter().map(String::as_str).collect();
     let creds = tables::vend(app, &refs, false, ttl).await?;
     let (endpoint, bucket) = app
         .stores
         .bucket_place()
         .ok_or_else(|| Error::Unavailable("this server's storage is not a bucket".into()))?;
-    let mut located = serde_json::Map::new();
-    for id in ids {
-        let (uri, rel) = tables::locate(app, org, id).await?;
-        located.insert(id.clone(), json!({"uri": uri, "metadata": rel}));
-    }
     Ok(json!({
         "endpoint": endpoint, "bucket": bucket, "key_id": creds.key_id, "secret": creds.secret,
         "session_token": creds.session_token, "tables": located,

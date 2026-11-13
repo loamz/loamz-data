@@ -81,7 +81,7 @@ After each task, rerun the benchmark and put the numbers in the commit message.
 
 | # | Task | Done when |
 |---|---|---|
-| 1 | `bench/run.py`: NYC week, then a year; point, filtered aggregate, group-by, join, full scan, rewrite; cold, warm, repeated; machine, Modal and plain `iceberg_scan`. Records planning time, time to first row, total, bytes and requests, CPU, memory, cost | a baseline table exists |
+| 1 | `bench/run.py`: NYC week, then a year; point, filtered aggregate, group-by, join, full scan, rewrite; cold, warm, repeated; machine, Modal and plain `iceberg_scan`. Records planning time, time to first row, total, bytes and requests, CPU, memory, cost | a baseline table exists (done 13 Nov: `bench/run.py` on 11.2 million real NYC taxi trips, results in `bench/README.md`; Modal, a year of data and the bytes, CPU, memory and cost columns still to add; the one odd cell was a stepped clock, fixed) |
 | 2 | Rust worker with embedded DuckDB, warm, all cores; Modal runs it | no Python on the query path, same results |
 | 3 | Arrow results streamed to the SQL editor and clients | first rows before the query ends |
 | 4 | `data_files` at commit; pruning at submit | selective queries read fewer files, same results |

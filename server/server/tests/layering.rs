@@ -86,11 +86,12 @@ fn only_a_features_own_service_reads_its_store() {
 
 #[test]
 fn services_form_one_line_with_no_loop() {
-    // audit < orgs < workspaces < iam < catalogs < volumes < tables < compute < queries < lifecycle: a service may use only those before it.
+    // audit < orgs < workspaces < locations < iam < catalogs < volumes < tables < compute < queries < lifecycle: a service may use only those before it.
     let order = [
         "audit",
         "orgs",
         "workspaces",
+        "locations",
         "iam",
         "catalogs",
         "volumes",

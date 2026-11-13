@@ -23,6 +23,7 @@ use loamz_data_server::{
         directory::{Directory, NewPerson, Person},
         error::Result as KernelResult,
         new_id,
+        secrets::{SecretRef, SecretStore},
         settings::{Secrets, Settings, Storage},
         state::{App, Shared},
     },
@@ -199,6 +200,19 @@ impl Reply {
     }
 }
 
+/// A vault that holds a few secrets, so a test can name them without a real `OpenBao`.
+pub struct FakeVault;
+
+#[async_trait]
+impl SecretStore for FakeVault {
+    async fn get(&self, r: &SecretRef) -> Result<String, String> {
+        match r.path.as_str() {
+            "loamz-data/bucket" | "loamz-data/other" => Ok("a-secret".into()),
+            _ => Err(format!("OpenBao has no secret {}", r.path)),
+        }
+    }
+}
+
 /// A directory of people kept in memory, so a test can see what was asked of it.
 #[derive(Default)]
 pub struct FakeDirectory {
@@ -305,6 +319,7 @@ async fn build(db: Db, max_upload: u64, max_active_runs: i64, directory: bool) -
     db.migrate(&MIGRATIONS).await.unwrap();
     let fake = Arc::new(FakeDirectory::default());
     let mut app = App::new(&settings, &Secrets::default(), db).unwrap();
+    app.vault = Some(Arc::new(FakeVault));
     if directory {
         app.directory = Some(fake.clone());
     }
@@ -517,8 +532,25 @@ impl Server {
         n
     }
 
+    /// The folder of a table or volume in the test store: `<workspace>/<catalog>/<id>`, or just `<id>` for an old one. A folder that
+    /// is gone is a path that does not exist.
     pub fn store_dir(&self, id: &str) -> PathBuf {
-        self.dir.join(id)
+        fn find(dir: &std::path::Path, id: &str, depth: usize) -> Option<PathBuf> {
+            for entry in std::fs::read_dir(dir).ok()?.flatten() {
+                let path = entry.path();
+                if path.file_name().is_some_and(|n| n == id) {
+                    return Some(path);
+                }
+                if depth > 0
+                    && path.is_dir()
+                    && let Some(found) = find(&path, id, depth - 1)
+                {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        find(&self.dir, id, 2).unwrap_or_else(|| self.dir.join(id))
     }
 }
 

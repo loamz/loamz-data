@@ -389,6 +389,122 @@ paths:
           $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/storage/credentials:
+    get:
+      summary: How the server reaches stores for this workspace (references into the vault, never secrets). Workspace admins.
+      parameters:
+      - *id002
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+    post:
+      summary: Add a storage credential. The vault must hold the secrets it names. Workspace admins.
+      parameters:
+      - *id002
+      responses:
+        '201':
+          description: Created
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewStorageCredential'
+  /api/v1/workspaces/{ws}/storage/credentials/{id}:
+    delete:
+      summary: Remove a credential no location uses.
+      parameters:
+      - *id002
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Done
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/storage/locations:
+    get:
+      summary: The buckets and prefixes this workspace may use. Workspace admins.
+      parameters:
+      - *id002
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+    post:
+      summary: Approve a bucket or a prefix of one. It may overlap no other location of the installation. Workspace admins.
+      parameters:
+      - *id002
+      responses:
+        '201':
+          description: Created
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewStorageLocation'
+  /api/v1/workspaces/{ws}/storage/locations/{id}:
+    delete:
+      summary: Remove a location.
+      parameters:
+      - *id002
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Done
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
   /api/v1/workspaces/{ws}/entitlements:
     get:
       summary: What assigned principals are entitled to.
@@ -1622,6 +1738,55 @@ components:
           type: string
         name:
           type: string
+    NewStorageCredential:
+      type: object
+      required:
+      - name
+      - endpoint
+      - key_id_ref
+      - secret_ref
+      - vending
+      properties:
+        name:
+          type: string
+        endpoint:
+          type: string
+          description: The store's S3 address, https (or http on this computer).
+        region:
+          type: string
+        key_id_ref:
+          type: string
+          description: A reference into the vault, like loamz-data/bucket#key_id.
+        secret_ref:
+          type: string
+        vending:
+          type: object
+          required:
+          - kind
+          properties:
+            kind:
+              type: string
+              enum: [none, sts, r2]
+            role_arn:
+              type: string
+            token_ref:
+              type: string
+    NewStorageLocation:
+      type: object
+      required:
+      - name
+      - credential_id
+      - bucket
+      properties:
+        name:
+          type: string
+        credential_id:
+          type: string
+        bucket:
+          type: string
+        prefix:
+          type: string
+          description: A folder in the bucket, with no leading or trailing slash; empty is the whole bucket.
     Name:
       type: object
       required:
