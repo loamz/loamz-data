@@ -218,3 +218,12 @@ the three concrete authorization gaps found on re-read. Their regressions are
 create/delete race remains an unaddressed integrity risk across server
 instances; local SQLite concurrency and the Postgres test suite are still
 needed before treating the review as complete.
+
+### Validation status
+
+- `sdk/.venv/bin/python -m pytest -q sdk/tests/test_import.py`: 2 passed.
+- `rustfmt --check` on the changed Rust files and `git diff --check`: passed.
+- Rust tests, `nice -n 19 make check`, and the Postgres suite were not run.
+  The requested `pgrep -c cc1plus` gate stayed at 3 because the remaining
+  `cc1plus` entries were zombies; I did not run Cargo while that count was
+  nonzero.
