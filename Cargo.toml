@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
 members = ["server/lake", "server/runner", "server/server"]
+# The SQL worker embeds DuckDB, compiled from C++ source (ten minutes or more, a lot of CPU and disk). It is its own workspace, so
+# `cargo check --workspace` (an editor does this on every save) never builds it. Build it on purpose: `make worker`.
+exclude = ["server/worker"]
 
 [workspace.package]
 edition = "2024"
