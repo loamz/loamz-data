@@ -36,6 +36,7 @@
   - **Serverless**: fast SQL for apps and dashboards, paid only while it runs.
   - **Sandboxes**: AI agents work with your data safely, with only the access they were given.
 - **Workspace**: a project with its own people, compute and catalogs, in one interactive console.
+- **Python SDK and CLI**: inspect catalogs, run queries, and attach Iceberg tables to DuckDB with `loamz` (`pip install loamz`).
 
 ## Getting started
 

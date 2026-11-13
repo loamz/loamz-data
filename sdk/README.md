@@ -1,0 +1,66 @@
+# Loamz Data Python SDK and CLI
+
+Python client library and command-line interface for Loamz Data.
+
+## Installation
+
+```bash
+pip install loamz
+# Optional extras:
+pip install "loamz[arrow,pandas,duckdb]"
+```
+
+## CLI Usage
+
+```bash
+# Authenticate (set LOAMZ_TOKEN or pass --token)
+export LOAMZ_TOKEN="$(python deploy/dev/token.py ana)"
+
+# Show current identity and workspaces
+loamz whoami
+
+# List catalogs, schemas, or tables
+loamz ls
+loamz ls nyc
+loamz ls nyc.main
+
+# Run a query
+loamz sql "SELECT count(*) FROM nyc.main.trips"
+loamz sql "SELECT * FROM nyc.main.zones LIMIT 5" --json
+```
+
+## Python SDK
+
+```python
+from loamz import Client
+
+# Connect with environment token (LOAMZ_TOKEN)
+client = Client("http://127.0.0.1:8020")
+
+# Check identity
+me = client.me()
+print(f"Logged in as {me.name} ({me.email})")
+
+# Select a workspace
+ws = client.workspace("Main")
+
+# Inspect securables
+catalogs = ws.catalogs()
+tables = ws.tables("nyc", "main")
+
+# Run a SQL statement
+rows = ws.sql("SELECT * FROM nyc.main.zones LIMIT 10")
+print(rows.columns)
+for row in rows:
+    print(row)
+
+# Export to Arrow or Pandas
+df = rows.to_pandas()
+table = rows.to_arrow()
+
+# Direct DuckDB Iceberg integration
+handle = ws.table("nyc.main.trips")
+con = handle.duckdb()
+res = con.execute("SELECT count(*) FROM lz.main.trips").fetchall()
+print(res)
+```
