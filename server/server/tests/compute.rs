@@ -485,13 +485,14 @@ async fn a_job_writes_only_to_its_declared_output(s: Server) {
     );
     assert_eq!(lease["run"]["spec"]["inputs"][0]["name"], "orders");
     let jt = lease["token"].as_str().unwrap().to_owned();
+    let run_id = lease["run"]["id"].as_str().unwrap();
     let put = |id: &str, bytes: &'static str| {
         let (s, jt, path) = (
             &s,
             jt.clone(),
             format!(
-                "/api/v1/workspaces/{}/volumes/{id}/files/runs/x/out.txt",
-                l.ws
+                "/api/v1/workspaces/{}/volumes/{id}/files/runs/{run_id}/out.txt",
+                l.ws,
             ),
         );
         async move { s.send("PUT", &path, Some(&jt), Body::from(bytes)).await }
@@ -507,7 +508,7 @@ async fn a_job_writes_only_to_its_declared_output(s: Server) {
         "any other volume is not there for it"
     );
     assert_eq!(
-        s.download(&l.ws, &l.out, "runs/x/out.txt", &ana())
+        s.download(&l.ws, &l.out, &format!("runs/{run_id}/out.txt"), &ana())
             .await
             .bytes,
         b"result"
@@ -554,24 +555,25 @@ async fn a_token_is_for_one_workspace(s: Server) {
     let l = lab(&s).await;
     let elsewhere = s.workspace(&ana(), ACME, "Elsewhere").await;
     let (secret, _) = attach(&s).await;
-    s.post(
-        &format!("/api/v1/workspaces/{}/runs", l.ws),
-        &ana(),
-        json!({"script": "1", "inputs": [l.orders], "output": l.out}),
-    )
-    .await;
-    let jt = agent(&s, "POST", "/api/v1/agent/lease", &secret, None)
+    let queued = s
+        .post(
+            &format!("/api/v1/workspaces/{}/runs", l.ws),
+            &ana(),
+            json!({"script": "1", "inputs": [l.orders], "output": l.out}),
+        )
+        .await;
+    assert_eq!(queued.status, 202, "{}", queued.text());
+    let leased = agent(&s, "POST", "/api/v1/agent/lease", &secret, None)
         .await
-        .json()["token"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+        .json();
+    let jt = leased["token"].as_str().unwrap().to_owned();
+    let run_id = leased["run"]["id"].as_str().unwrap().to_owned();
     let put = |ws: String| {
-        let (s, jt, out) = (&s, jt.clone(), l.out.clone());
+        let (s, jt, out, run_id) = (&s, jt.clone(), l.out.clone(), run_id.clone());
         async move {
             s.send(
                 "PUT",
-                &format!("/api/v1/workspaces/{ws}/volumes/{out}/files/x"),
+                &format!("/api/v1/workspaces/{ws}/volumes/{out}/files/runs/{run_id}/x"),
                 Some(&jt),
                 Body::from("x"),
             )
@@ -596,18 +598,17 @@ async fn a_runs_token_dies_with_the_run(s: Server) {
         )
         .await;
     let id = r.json()["id"].as_str().unwrap().to_owned();
-    let jt = agent(&s, "POST", "/api/v1/agent/lease", &secret, None)
+    let leased = agent(&s, "POST", "/api/v1/agent/lease", &secret, None)
         .await
-        .json()["token"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+        .json();
+    let jt = leased["token"].as_str().unwrap().to_owned();
     let put = || {
         let (s, jt, out, ws) = (&s, jt.clone(), l.out.clone(), l.ws.clone());
+        let id = id.clone();
         async move {
             s.send(
                 "PUT",
-                &format!("/api/v1/workspaces/{ws}/volumes/{out}/files/x"),
+                &format!("/api/v1/workspaces/{ws}/volumes/{out}/files/runs/{id}/x"),
                 Some(&jt),
                 Body::from("x"),
             )
@@ -1117,8 +1118,7 @@ async fn a_catalog_can_name_the_compute_that_may_read_it(s: Server) {
 
     // Now only the second may read it: asking for the first is refused, and with no choice made it goes to the second.
     let refused = ask(Some(&first)).await;
-    assert_eq!(refused.status, 400, "{}", refused.text());
-    assert!(refused.text().contains("does not allow"));
+    assert_eq!(refused.status, 404, "{}", refused.text());
     let placed = ask(None).await;
     assert_eq!(placed.status, 202, "{}", placed.text());
     assert_eq!(placed.json()["target_id"], json!(second));

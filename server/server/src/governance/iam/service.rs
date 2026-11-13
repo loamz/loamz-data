@@ -94,10 +94,7 @@ pub async fn require(
     )
     .await?;
     // A running job knows only what it declared: anything else is not there for it, whatever the person behind it may see.
-    let known = identity
-        .scope
-        .as_ref()
-        .is_none_or(|s| s.reads.iter().chain(&s.writes).any(|id| id == target.id()));
+    let known = within_scope(identity, need, target);
     if known && visible(sides, &grants, target) {
         Err(Error::Denied(Denied {
             action: need.as_str(),

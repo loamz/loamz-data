@@ -21,6 +21,13 @@ use crate::{
     },
 };
 
+fn file_error(error: loamz_lake::files::FileError) -> Error {
+    match error {
+        loamz_lake::files::FileError::BadPath(_) => Error::NotFound("not found".into()),
+        other => other.into(),
+    }
+}
+
 /// Who is asking, where from, and as what.
 pub struct Ask<'a> {
     pub identity: &'a Identity,
@@ -48,14 +55,44 @@ async fn holder(app: &App, ask: &Ask<'_>, id: &str, access: Access) -> Result<(S
     Ok((entry, target))
 }
 
+async fn run_output_path(
+    app: &App,
+    ask: &Ask<'_>,
+    target: &Target,
+    volume: &str,
+    path: &str,
+    action: &str,
+) -> Result<()> {
+    let Some(scope) = &ask.identity.scope else {
+        return Ok(());
+    };
+    if scope.writes.iter().any(|id| id == volume)
+        && !path.starts_with(&format!("runs/{}/", scope.run))
+    {
+        audit::record(
+            app,
+            ask.org,
+            &Who::of(ask.identity),
+            action,
+            &format!("{}/runs/{}", target.label, scope.run),
+            "denied",
+        )
+        .await?;
+        return Err(Error::NotFound("not found".into()));
+    }
+    Ok(())
+}
+
 /// # Errors
-/// Not allowed, bad path, too large.
+/// Not allowed, a hidden path, or too large.
 pub async fn put(app: &App, ask: &Ask<'_>, id: &str, path: &str, body: Body) -> Result<u64> {
     let (entry, target) = holder(app, ask, id, Access::Write).await?;
+    run_output_path(app, ask, &target, id, path, "file.write").await?;
     let mut upload = app
         .stores
         .begin_put(&entry.folder, path, app.max_upload)
-        .await?;
+        .await
+        .map_err(file_error)?;
     let mut stream = body.into_data_stream();
     while let Some(chunk) = stream.next().await {
         let chunk =
@@ -76,10 +113,14 @@ pub async fn put(app: &App, ask: &Ask<'_>, id: &str, path: &str, body: Body) -> 
 }
 
 /// # Errors
-/// Not allowed, bad path, no such file.
+/// Not allowed, a hidden path, or no such file.
 pub async fn get(app: &App, ask: &Ask<'_>, id: &str, path: &str) -> Result<(Body, u64)> {
     let (entry, target) = holder(app, ask, id, Access::Read).await?;
-    let (file, size) = app.stores.open(&entry.folder, path).await?;
+    let (file, size) = app
+        .stores
+        .open(&entry.folder, path)
+        .await
+        .map_err(file_error)?;
     audit::record(
         app,
         ask.org,
@@ -100,10 +141,14 @@ pub async fn list(app: &App, ask: &Ask<'_>, id: &str) -> Result<Vec<Entry>> {
 }
 
 /// # Errors
-/// Not allowed, bad path, no such file.
+/// Not allowed, a hidden path, or no such file.
 pub async fn delete(app: &App, ask: &Ask<'_>, id: &str, path: &str) -> Result<()> {
     let (entry, target) = holder(app, ask, id, Access::Write).await?;
-    app.stores.delete(&entry.folder, path).await?;
+    run_output_path(app, ask, &target, id, path, "file.delete").await?;
+    app.stores
+        .delete(&entry.folder, path)
+        .await
+        .map_err(file_error)?;
     audit::record(
         app,
         ask.org,

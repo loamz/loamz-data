@@ -1248,7 +1248,7 @@ async fn storage_is_set_per_workspace(s: Server) {
         )
         .await
         .status,
-        409
+        404
     );
     assert_eq!(
         s.post(

@@ -537,6 +537,9 @@ async fn pick(
             .iter()
             .find(|t| t.id == id)
             .ok_or_else(|| Error::NotFound("no such compute".into()))?;
+        if !allowed(t) {
+            return Err(Error::NotFound("no such compute".into()));
+        }
         if !up(t) {
             return Err(Error::Conflict(if t.serverless() {
                 format!("{} is stopped. Start it first.", t.name)
@@ -547,12 +550,6 @@ async fn pick(
         if own_only && t.serverless() {
             return Err(Error::Invalid(format!(
                 "{} is run by a provider, which only takes statements over data classified normal",
-                t.name
-            )));
-        }
-        if !allowed(t) {
-            return Err(Error::Invalid(format!(
-                "a catalog this reads does not allow {} to read it",
                 t.name
             )));
         }

@@ -101,3 +101,30 @@ audited too.
   `CREATE MANAGED STORAGE` (0002 tasks 4, 5).
 - **Policies**: row filters and column masks, applied when a statement is planned.
 - ~~Catalogs owned by one workspace~~ — built (0002 task 4): `securables.workspace_id`, migration `0005`; a workspace that owns catalogs cannot be deleted.
+
+## 6. Isolation attacks
+
+The router-level attacks run on SQLite and Postgres in `server/server/tests/adversarial.rs`. Hidden cross-boundary resources return 404;
+run tokens that are expired or finished return 401. File-scope refusals are audited by `iam::require`; a resource that is not found in
+the caller's scope and a conflicting location do not enter that permission gate.
+
+| attack | test | result |
+|---|---|---|
+| Read or drop another organization's securable | `foreign_catalog_and_run_ids_are_hidden` | 404; no drop is queued |
+| Grant on another organization's securable id | `foreign_catalog_and_run_ids_are_hidden` | 404; no grant is written |
+| Read or cancel another organization's run | `foreign_catalog_and_run_ids_are_hidden` | 404; run stays queued |
+| Delete another organization's compute target | `foreign_compute_and_storage_ids_are_hidden` | 404; target remains |
+| Delete a foreign credential that is in use | `foreign_compute_and_storage_ids_are_hidden` | 404; credential and location remain |
+| Use a foreign credential to create a location | `foreign_compute_and_storage_ids_are_hidden` | 404; no location is created |
+| Delete another organization's location | `foreign_compute_and_storage_ids_are_hidden` | 404; location remains |
+| Rotate or delete another organization's service principal | `foreign_service_principal_ids_are_hidden` | 404; its token still works |
+| Open another workspace with an `lsp_…` token | `service_principal_tokens_are_confined_to_one_workspace` | 404 in another workspace, including another organization |
+| Read an undeclared volume with a run token | `run_tokens_only_read_inputs_and_write_the_output` | 404; refusal is audited |
+| Write or delete an input volume with a run token | `run_tokens_only_read_inputs_and_write_the_output` | 404; bytes remain; refusals are audited |
+| Write or delete outside the current run's output folder | `run_tokens_only_read_inputs_and_write_the_output` | 404; another run's files remain; refusal is audited |
+| Read the output or use a run token on a non-file route | `run_tokens_only_read_inputs_and_write_the_output` | 404 for output; 401 on a non-file route |
+| Reuse an expired or finished run token | `expired_and_finished_run_tokens_are_rejected` | 401; no file is created |
+| Escape a volume with `..` or encoded slashes | `volume_paths_cannot_escape_through_dot_segments_or_encoded_slashes` | 404; outside bytes remain unchanged |
+| Name a compute target excluded by catalog policy | `a_catalog_policy_hides_a_named_disallowed_target` | 404; no run is queued |
+| Change policy after queueing but before lease | `a_queued_run_is_rechecked_against_the_catalog_policy` | no token is issued; run fails closed |
+| Overlap another workspace's storage prefix | `overlapping_locations_are_hidden_and_not_created` | 404; no overlapping location is created; a sibling prefix works |

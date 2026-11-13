@@ -138,7 +138,10 @@ pub async fn delete_credential(
     id: &str,
 ) -> Result<()> {
     let org = manage(app, identity, workspace, "delete a storage credential").await?;
-    if store::locations_using(app.db.pool(), id).await? > 0 {
+    let credential = store::get_credential(app.db.pool(), workspace, id)
+        .await?
+        .ok_or_else(|| Error::NotFound("not found".into()))?;
+    if store::locations_using(app.db.pool(), &credential.id).await? > 0 {
         return Err(Error::Conflict(
             "a location still uses this credential: delete it first".into(),
         ));
@@ -206,10 +209,12 @@ pub async fn create_location(
         return Err(Error::Conflict(format!("{} already exists here", l.name)));
     }
     let taken = store::prefixes_in_bucket(&mut *uow.tx, &credential.endpoint, &l.bucket).await?;
-    if taken.iter().any(|t| overlaps(t, &l.prefix)) {
-        return Err(Error::Conflict(
-            "this overlaps another location: locations never share a path".into(),
-        ));
+    if let Some((owner, _)) = taken.iter().find(|(_, prefix)| overlaps(prefix, &l.prefix)) {
+        return Err(if owner == workspace {
+            Error::Conflict("this overlaps another location: locations never share a path".into())
+        } else {
+            Error::NotFound("not found".into())
+        });
     }
     store::insert_location(&mut *uow.tx, &l).await?;
     uow.audit(

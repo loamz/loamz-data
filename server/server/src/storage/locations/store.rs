@@ -194,9 +194,9 @@ pub async fn prefixes_in_bucket<'e, E: Executor<'e, Database = Any>>(
     e: E,
     endpoint: &str,
     bucket: &str,
-) -> Result<Vec<String>> {
+) -> Result<Vec<(String, String)>> {
     let rows = sqlx::query(
-        "SELECT l.prefix FROM storage_locations l JOIN storage_credentials c ON c.id = l.credential_id \
+        "SELECT l.workspace_id, l.prefix FROM storage_locations l JOIN storage_credentials c ON c.id = l.credential_id \
          WHERE c.endpoint = $1 AND l.bucket = $2",
     )
     .bind(endpoint)
@@ -204,7 +204,7 @@ pub async fn prefixes_in_bucket<'e, E: Executor<'e, Database = Any>>(
     .fetch_all(e)
     .await?;
     rows.iter()
-        .map(|r| r.try_get("prefix").map_err(Into::into))
+        .map(|r| Ok((r.try_get("workspace_id")?, r.try_get("prefix")?)))
         .collect()
 }
 
