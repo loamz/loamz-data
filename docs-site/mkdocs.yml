@@ -1,0 +1,60 @@
+site_name: Loamz Data Documentation
+site_url: https://data.loamz.com/docs
+site_description: A governed data platform for analytics and AI built on open table formats.
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Welcome: index.md
+  - Getting Started:
+      - First Steps: start/first-steps.md
+  - Console:
+      - Data Catalog: console/catalog.md
+      - SQL Editor: console/sql.md
+      - Compute & Runners: console/compute.md
+      - Workspace Settings: console/settings.md
+  - Connect:
+      - DuckDB: connect/duckdb.md
+      - Python SDK & CLI: connect/python.md
+  - Access & Governance:
+      - Team Members: access/people.md
+      - Service Principals: access/service-principals.md
+      - Permissions & Governance: access/permissions.md
+  - API Reference:
+      - Overview: api/index.md
+      - Workspaces: api/workspaces.md
+      - Organizations: api/orgs.md
+      - Current User: api/me.md
+      - Authentication: api/auth.md
+      - Agents: api/agent.md
+      - Health: api/healthz.md
+      - Readiness: api/readyz.md
