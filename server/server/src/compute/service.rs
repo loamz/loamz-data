@@ -641,7 +641,9 @@ async fn queue(app: &App, ctx: &Ctx<'_>, run: &Run, action: &str) -> Result<()> 
     )
     .await?;
     uow.commit().await?;
+    // One wake for the serverless dispatcher, and one for every agent waiting for work.
     app.queued.notify_one();
+    app.queued.notify_waiters();
     Ok(())
 }
 
@@ -1011,8 +1013,19 @@ pub async fn wait(app: &App, ctx: &Ctx<'_>, run: Run, wait: Duration) -> Result<
     let deadline = tokio::time::Instant::now() + wait;
     let mut run = run;
     while !is_terminal(&run.state) && tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        // Ask to be woken before looking, so an end between the look and the wait is not missed.
+        let ended = app.finished.notified();
+        tokio::pin!(ended);
+        ended.as_mut().enable();
         run = get(app, ctx, &run.id).await?;
+        if is_terminal(&run.state) {
+            break;
+        }
+        // Woken the moment any run ends; the short sleep is the safety net for an end nobody announced (a sweep).
+        tokio::select! {
+            () = &mut ended => {}
+            () = tokio::time::sleep(Duration::from_millis(150)) => {}
+        }
     }
     Ok(run)
 }
@@ -1049,6 +1062,7 @@ pub async fn cancel(app: &App, ctx: &Ctx<'_>, id: &str) -> Result<Run> {
     )
     .await?;
     uow.commit().await?;
+    app.finished.notify_waiters();
     get(app, ctx, id).await
 }
 
@@ -1506,7 +1520,9 @@ pub async fn complete(app: &App, target: &Target, id: &str, report: Report) -> R
         &report.state,
     )
     .await?;
-    uow.commit().await
+    uow.commit().await?;
+    app.finished.notify_waiters();
+    Ok(())
 }
 
 /// The person a job's token stands for, narrowed to what it declared, and the workspace it is for.

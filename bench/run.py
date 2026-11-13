@@ -180,10 +180,10 @@ print(json.dumps({{"times": times, "rows": len(rows)}}))
             _, r = call("POST", f"{S}/sql/statements", ana, {"sql": sql(name, "bench.main.trips", "bench.main.zones"), "wait_s": 120})
             if r["state"] != "succeeded":
                 sys.exit(f"{name} on the machine: {r['state']} {r.get('error')}")
-            runs.append({"total": round(time.perf_counter() - t, 3), "queued_ms": r.get("queued_ms"), "run_ms": r.get("run_ms")})
+            runs.append({"total": round(time.perf_counter() - t, 3), "queued_ms": r.get("queued_ms"), "run_ms": r.get("run_ms"), "worker": (r.get("result") or {}).get("stats")})
         best = min(runs, key=lambda x: x["total"])
-        results["machine"][name] = {"cold": runs[0]["total"], "warm": best["total"], "queued_ms": best["queued_ms"], "run_ms": best["run_ms"]}
-        print(f"  machine  {name:13} first {runs[0]['total']:6.2f}s  best {best['total']:6.2f}s  (queued {best['queued_ms']} ms, ran {best['run_ms']} ms)", flush=True)
+        results["machine"][name] = {"cold": runs[0]["total"], "warm": best["total"], "queued_ms": best["queued_ms"], "run_ms": best["run_ms"], "worker": best["worker"]}
+        print(f"  machine  {name:13} first {runs[0]['total']:6.2f}s  best {best['total']:6.2f}s  (queued {best['queued_ms']} ms, ran {best['run_ms']} ms, worker {best['worker']})", flush=True)
     call("DELETE", f"{S}/securables/{cat}", ana)
     time.sleep(4)
 finally:

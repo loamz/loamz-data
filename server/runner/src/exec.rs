@@ -5,6 +5,143 @@ use std::{process::Stdio, time::Duration};
 
 use tokio::{io::AsyncReadExt, process::Command};
 
+/// A cancellation signal for one leased run.
+pub type StopSignal = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+
+/// Both executors preserve the same lease and report boundary.
+pub trait Executor {
+    fn execute(
+        &self,
+        lease: &crate::work::Lease,
+        stop: StopSignal,
+    ) -> impl std::future::Future<Output = crate::work::Report> + Send;
+}
+
+/// Runs jobs in their existing one-shot gVisor sandbox.
+pub struct SandboxExecutor {
+    pub machine: crate::work::Machine,
+    pub data_url: String,
+}
+
+impl Executor for SandboxExecutor {
+    async fn execute(&self, lease: &crate::work::Lease, stop: StopSignal) -> crate::work::Report {
+        crate::work::execute(lease, &self.machine, &self.data_url, stop).await
+    }
+}
+
+/// Sends each statement to a persistent sandbox process; a protocol failure removes that process.
+pub struct WarmExecutor<F> {
+    pub pool: crate::pool::Pool,
+    pub start: F,
+}
+
+impl<F, Fut> Executor for WarmExecutor<F>
+where
+    F: Fn(crate::pool::WorkerKey, crate::work::Limits) -> Fut + Send + Sync,
+    Fut: std::future::Future<Output = std::io::Result<crate::pool::Worker>> + Send,
+{
+    async fn execute(&self, lease: &crate::work::Lease, stop: StopSignal) -> crate::work::Report {
+        if lease.run.kind != "sql" {
+            return crate::work::Report::failed("the warm worker only runs SQL");
+        }
+        let key = crate::pool::WorkerKey {
+            org_id: lease.run.org_id.clone(),
+            target_id: lease.run.target_id.clone(),
+        };
+        let Ok(mut worker) = self
+            .pool
+            .acquire(
+                key.clone(),
+                Some((lease.limits.memory_mb, lease.limits.cpu_millis)),
+                || (self.start)(key.clone(), lease.limits),
+            )
+            .await
+        else {
+            return crate::work::Report::failed("could not start the SQL sandbox");
+        };
+        let began = std::time::Instant::now();
+        if let Some(broker) = &worker.broker {
+            if broker
+                .authorize(lease.storage.as_ref(), &lease.run.spec)
+                .await
+                .is_err()
+            {
+                drop(worker);
+                self.pool.invalidate(&key).await;
+                return crate::work::Report::failed(
+                    "could not prepare the SQL sandbox's storage access",
+                );
+            }
+        } else if lease.run.spec["tables"]
+            .as_array()
+            .is_none_or(|tables| !tables.is_empty())
+        {
+            drop(worker);
+            self.pool.invalidate(&key).await;
+            return crate::work::Report::failed("the SQL sandbox has no storage broker");
+        }
+        let request = serde_json::json!({
+            "spec": lease.run.spec,
+            "storage": lease.storage,
+            "limits": {"memory_mb": lease.limits.memory_mb, "cpu_millis": lease.limits.cpu_millis},
+        });
+        let work = async {
+            use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+            let mut line = serde_json::to_vec(&request).map_err(|_| ())?;
+            line.push(b'\n');
+            let input = worker.child.stdin.as_mut().ok_or(())?;
+            input.write_all(&line).await.map_err(|_| ())?;
+            input.flush().await.map_err(|_| ())?;
+            let output = worker.child.stdout.as_mut().ok_or(())?;
+            let mut reader = BufReader::new(output.take(4_194_305));
+            let mut response = Vec::new();
+            reader
+                .read_until(b'\n', &mut response)
+                .await
+                .map_err(|_| ())?;
+            if response.len() > 4_194_304 || !response.ends_with(b"\n") {
+                return Err(());
+            }
+            serde_json::from_slice::<crate::work::Report>(&response).map_err(|_| ())
+        };
+        let authorized = began.elapsed();
+        let outcome = tokio::select! {
+            result = tokio::time::timeout(Duration::from_secs(lease.limits.timeout_s), work) => result.map_err(|_| "the SQL run timed out"),
+            () = stop => Err("the SQL run was cancelled"),
+        };
+        tracing::info!(
+            run = lease.run.id,
+            authorize_ms = authorized.as_millis() as u64,
+            worker_ms = (began.elapsed() - authorized).as_millis() as u64,
+            "warm statement"
+        );
+        if let Some(broker) = &worker.broker {
+            broker.clear().await;
+        }
+        match outcome {
+            Ok(Ok(report)) => {
+                worker.completed();
+                report
+            }
+            outcome => {
+                drop(worker);
+                self.pool.invalidate(&key).await;
+                let mut report = crate::work::Report::failed(match outcome {
+                    Err(reason) => reason,
+                    Ok(Err(())) => "the SQL sandbox failed",
+                    Ok(Ok(_)) => unreachable!(),
+                });
+                if report.error == "the SQL run was cancelled" {
+                    report.state = "cancelled".into();
+                } else if report.error == "the SQL run timed out" {
+                    report.state = "timed_out".into();
+                }
+                report
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Outcome {
     /// `None` if it was killed.
@@ -127,6 +264,20 @@ impl Gvisor {
         clean.args(["delete", "--force"]).arg(id);
         (run, clean)
     }
+
+    /// Worker sandboxes have no network, but may open their one mounted broker socket.
+    #[must_use]
+    pub fn worker_commands(&self, bundle: &std::path::Path, id: &str) -> (Command, Command) {
+        let mut run = self.base();
+        run.arg("--host-uds=open")
+            .arg("run")
+            .arg("--bundle")
+            .arg(bundle)
+            .arg(id);
+        let mut clean = self.base();
+        clean.args(["delete", "--force"]).arg(id);
+        (run, clean)
+    }
 }
 
 /// Makes the workspace somewhere the sandbox's user can write its output, and nothing else can: owned by that user, and closed to
@@ -163,6 +314,81 @@ pub fn is_root() -> bool {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn warm_executor_reuses_a_worker_for_a_target() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let starts = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&starts);
+        let executor = WarmExecutor {
+            pool: crate::pool::Pool::new(10, Duration::from_mins(1)),
+            start: move |_key: crate::pool::WorkerKey, limits: crate::work::Limits| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    let mut command = Command::new("sh");
+                    command.args(["-c", r#"while IFS= read -r line; do printf '%s\n' '{"state":"succeeded","exit_code":0,"stdout":"","stderr":"","result":"{}","error":""}'; done"#])
+                        .stdin(Stdio::piped()).stdout(Stdio::piped()).kill_on_drop(true);
+                    Ok(crate::pool::Worker::new(command.spawn()?, None)
+                        .with_limits(limits.memory_mb, limits.cpu_millis))
+                }
+            },
+        };
+        let lease: crate::work::Lease = serde_json::from_str(r#"{"run":{"id":"r","kind":"sql","org_id":"o","target_id":"t","workspace_id":"w","spec":{"sql":"select 1","tables":[]}},"token":"","limits":{"memory_mb":512,"cpu_millis":1000,"timeout_s":3}}"#).unwrap();
+        for _ in 0..2 {
+            let report = executor
+                .execute(&lease, Box::pin(std::future::pending()))
+                .await;
+            assert_eq!(report.state, "succeeded");
+        }
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+        executor
+            .pool
+            .invalidate(&crate::pool::WorkerKey {
+                org_id: "o".into(),
+                target_id: "t".into(),
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires LOAMZ_TEST_WORKER_BIN with a built worker"]
+    async fn warm_executor_runs_real_duckdb_requests() {
+        let binary = std::env::var("LOAMZ_TEST_WORKER_BIN").unwrap();
+        let executor = WarmExecutor {
+            pool: crate::pool::Pool::new(10, Duration::from_mins(1)),
+            start: move |_key: crate::pool::WorkerKey, limits: crate::work::Limits| {
+                let binary = binary.clone();
+                async move {
+                    let mut command = Command::new(binary);
+                    command
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::piped())
+                        .kill_on_drop(true);
+                    Ok(crate::pool::Worker::new(command.spawn()?, None)
+                        .with_limits(limits.memory_mb, limits.cpu_millis))
+                }
+            },
+        };
+        let lease: crate::work::Lease = serde_json::from_str(r#"{"run":{"id":"r","kind":"sql","org_id":"o","target_id":"t","workspace_id":"w","spec":{"sql":"select 42 as answer","limit":2,"tables":[]}},"token":"","limits":{"memory_mb":512,"cpu_millis":1000,"timeout_s":30}}"#).unwrap();
+        for _ in 0..2 {
+            let report = executor
+                .execute(&lease, Box::pin(std::future::pending()))
+                .await;
+            assert_eq!(report.state, "succeeded", "{}", report.error);
+            let answer: serde_json::Value = serde_json::from_str(&report.result).unwrap();
+            assert_eq!(answer["rows"], serde_json::json!([[42]]));
+        }
+        executor
+            .pool
+            .invalidate(&crate::pool::WorkerKey {
+                org_id: "o".into(),
+                target_id: "t".into(),
+            })
+            .await;
+    }
 
     #[tokio::test]
     async fn a_finished_program_returns_its_code_and_output() {
