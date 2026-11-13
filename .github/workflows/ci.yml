@@ -167,6 +167,7 @@ jobs:
       - name: Build server and runner release binaries
         run: |
           cargo build --release --locked -p loamz-data-server -p loamz-runner
+          make worker
       - name: Install web dependencies and Chromium
         working-directory: web
         run: |
@@ -244,6 +245,7 @@ jobs:
       - name: Build server and runner release binaries
         run: |
           cargo build --release --locked -p loamz-data-server -p loamz-runner
+          make worker
       - name: Seed sample data
         run: |
           python3 -m venv ~/.cache/loamz/modal-venv
