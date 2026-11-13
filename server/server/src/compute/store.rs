@@ -5,13 +5,14 @@ use sqlx::{Any, Executor, Row};
 use super::model::{Run, RunFilter, Target};
 use crate::kernel::error::Result;
 
-const TARGET: &str = "id, org_id, name, kind, endpoint, max_memory_mb, max_cpu_millis, created_by, created_ms, last_seen_ms";
+const TARGET: &str = "id, org_id, workspace_id, name, kind, endpoint, max_memory_mb, max_cpu_millis, created_by, created_ms, last_seen_ms";
 const RUN: &str = "id, org_id, workspace_id, kind, requested_by, on_behalf_of, target_id, state, title, spec, result, stdout, stderr, exit_code, error, cancel, lease_until, created_ms, started_ms, finished_ms";
 
 fn target(r: &sqlx::any::AnyRow) -> std::result::Result<Target, sqlx::Error> {
     Ok(Target {
         id: r.try_get("id")?,
         org_id: r.try_get("org_id")?,
+        workspace_id: r.try_get("workspace_id")?,
         name: r.try_get("name")?,
         kind: r.try_get("kind")?,
         endpoint: r.try_get("endpoint")?,
@@ -56,10 +57,11 @@ pub async fn insert_target<'e, E: Executor<'e, Database = Any>>(
     secret_hash: &str,
 ) -> Result<()> {
     sqlx::query(&format!(
-        "INSERT INTO compute_targets ({TARGET}, secret_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+        "INSERT INTO compute_targets ({TARGET}, secret_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
     ))
     .bind(&t.id)
     .bind(&t.org_id)
+    .bind(&t.workspace_id)
     .bind(&t.name)
     .bind(&t.kind)
     .bind(&t.endpoint)
@@ -76,12 +78,12 @@ pub async fn insert_target<'e, E: Executor<'e, Database = Any>>(
 
 pub async fn targets_in<'e, E: Executor<'e, Database = Any>>(
     e: E,
-    org: &str,
+    workspace: &str,
 ) -> Result<Vec<Target>> {
     let rows = sqlx::query(&format!(
-        "SELECT {TARGET} FROM compute_targets WHERE org_id = $1 ORDER BY name"
+        "SELECT {TARGET} FROM compute_targets WHERE workspace_id = $1 ORDER BY name"
     ))
-    .bind(org)
+    .bind(workspace)
     .fetch_all(e)
     .await?;
     rows.iter()
@@ -92,13 +94,13 @@ pub async fn targets_in<'e, E: Executor<'e, Database = Any>>(
 
 pub async fn target_by_id<'e, E: Executor<'e, Database = Any>>(
     e: E,
-    org: &str,
+    workspace: &str,
     id: &str,
 ) -> Result<Option<Target>> {
     let r = sqlx::query(&format!(
-        "SELECT {TARGET} FROM compute_targets WHERE org_id = $1 AND id = $2"
+        "SELECT {TARGET} FROM compute_targets WHERE workspace_id = $1 AND id = $2"
     ))
-    .bind(org)
+    .bind(workspace)
     .bind(id)
     .fetch_optional(e)
     .await?;
@@ -120,12 +122,12 @@ pub async fn target_by_secret<'e, E: Executor<'e, Database = Any>>(
 
 pub async fn name_taken<'e, E: Executor<'e, Database = Any>>(
     e: E,
-    org: &str,
+    workspace: &str,
     name: &str,
 ) -> Result<bool> {
     Ok(
-        sqlx::query("SELECT id FROM compute_targets WHERE org_id = $1 AND name = $2")
-            .bind(org)
+        sqlx::query("SELECT id FROM compute_targets WHERE workspace_id = $1 AND name = $2")
+            .bind(workspace)
             .bind(name)
             .fetch_optional(e)
             .await?
@@ -507,15 +509,15 @@ pub async fn serverless_targets<'e, E: Executor<'e, Database = Any>>(e: E) -> Re
         .map_err(Into::into)
 }
 
-/// When each target of an organization last finished a run (0 for none), by target id.
+/// When each target of a workspace last finished a run (0 for none), by target id.
 pub async fn last_used<'e, E: Executor<'e, Database = Any>>(
     e: E,
-    org: &str,
+    workspace: &str,
 ) -> Result<std::collections::HashMap<String, i64>> {
     let rows = sqlx::query(
-        "SELECT target_id, MAX(finished_ms) AS at FROM runs WHERE org_id = $1 AND finished_ms > 0 GROUP BY target_id",
+        "SELECT target_id, MAX(finished_ms) AS at FROM runs WHERE workspace_id = $1 AND finished_ms > 0 GROUP BY target_id",
     )
-    .bind(org)
+    .bind(workspace)
     .fetch_all(e)
     .await?;
     rows.iter()
@@ -529,15 +531,15 @@ pub async fn last_used<'e, E: Executor<'e, Database = Any>>(
         .map_err(Into::into)
 }
 
-/// For each target of an organization with a statement or job not yet finished: when the oldest of them was asked for.
+/// For each target of a workspace with a statement or job not yet finished: when the oldest of them was asked for.
 pub async fn unfinished_since<'e, E: Executor<'e, Database = Any>>(
     e: E,
-    org: &str,
+    workspace: &str,
 ) -> Result<std::collections::HashMap<String, i64>> {
     let rows = sqlx::query(
-        "SELECT target_id, MIN(created_ms) AS at FROM runs WHERE org_id = $1 AND state IN ('queued','running') GROUP BY target_id",
+        "SELECT target_id, MIN(created_ms) AS at FROM runs WHERE workspace_id = $1 AND state IN ('queued','running') GROUP BY target_id",
     )
-    .bind(org)
+    .bind(workspace)
     .fetch_all(e)
     .await?;
     rows.iter()
@@ -549,4 +551,19 @@ pub async fn unfinished_since<'e, E: Executor<'e, Database = Any>>(
         })
         .collect::<std::result::Result<_, sqlx::Error>>()
         .map_err(Into::into)
+}
+
+/// How many compute targets the workspace has.
+pub async fn count_targets<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    workspace: &str,
+) -> Result<i64> {
+    Ok(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM compute_targets WHERE workspace_id = $1",
+        )
+        .bind(workspace)
+        .fetch_one(e)
+        .await?,
+    )
 }

@@ -16,8 +16,8 @@ const CPU = [
 const icon = { serverless: Zap, machine: Server } as const;
 
 /** Create compute: pick a kind (a serverless SQL warehouse, or a machine of your own), name it, and it is there. */
-export function CreateCompute({ org, open, onOpenChange, onCreated }: { org: string; open: boolean; onOpenChange: (o: boolean) => void; onCreated: () => void }) {
-  const kinds = useLoad(() => (open ? api.providers(org) : Promise.resolve([] as api.Provider[])), `${org}/${open}`);
+export function CreateCompute({ ws, open, onOpenChange, onCreated }: { ws: string; open: boolean; onOpenChange: (o: boolean) => void; onCreated: () => void }) {
+  const kinds = useLoad(() => (open ? api.providers(ws) : Promise.resolve([] as api.Provider[])), `${ws}/${open}`);
   const [kind, setKind] = useState<api.Provider["id"]>("serverless");
   const [name, setName] = useState("");
   const [memory, setMemory] = useState("2048");
@@ -56,7 +56,7 @@ export function CreateCompute({ org, open, onOpenChange, onCreated }: { org: str
             if (!chosen?.available || !name.trim()) return;
             setBusy(true);
             try {
-              const made = await api.attachCompute(org, {
+              const made = await api.attachCompute(ws, {
                 name: name.trim(),
                 kind: kind === "serverless" ? "serverless" : "agent",
                 max_memory_mb: kind === "serverless" ? chosen.max_memory_mb : Number(memory),

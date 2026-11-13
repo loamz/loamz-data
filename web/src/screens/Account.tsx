@@ -17,7 +17,6 @@ import { go, type AccountTab } from "@/route";
 
 const tabs: { id: AccountTab; label: string; icon: typeof Layers }[] = [
   { id: "workspaces", label: "Workspaces", icon: Layers },
-  { id: "compute", label: "Compute", icon: Cpu },
   { id: "people", label: "People", icon: UserPlus },
   { id: "admins", label: "Account admins", icon: UsersRound },
   { id: "activity", label: "Activity", icon: ScrollText },
@@ -61,7 +60,6 @@ export function Account({ org, tab, me }: { org: string; tab: AccountTab; me: ap
       </aside>
       <section className="min-h-0 min-w-0 flex-1">
         {tab === "workspaces" && <Workspaces org={org} />}
-        {tab === "compute" && <ComputeTab org={org} />}
         {tab === "people" && <People org={org} />}
         {tab === "admins" && <Admins org={org} />}
         {tab === "activity" && <Activity org={org} ws={me?.workspaces.find((w) => w.org_id === org)?.id} />}
@@ -335,98 +333,3 @@ function Erase({ org }: { org: string }) {
 
 
 /** Compute an organization has attached. A machine connects out to this server and asks for work, so nothing is opened on it. */
-function ComputeTab({ org }: { org: string }) {
-  const list = useLoad(() => api.attachedCompute(org), org);
-  const [adding, setAdding] = useState(false);
-  const [shown, setShown] = useState<api.Compute | null>(null);
-  const items = list.data ?? [];
-
-  // Anyone watching the list sees a machine come online as soon as its agent connects.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = setInterval(() => {
-      setNow(Date.now());
-      list.reload();
-    }, 10_000);
-    return () => clearInterval(t);
-  }, [list.reload]);
-  const waiting = items.some((c) => !c.online && c.kind === "agent");
-  useEffect(() => {
-    if (!waiting) return;
-    const t = setInterval(list.reload, 5000);
-    return () => clearInterval(t);
-  }, [waiting, list.reload]);
-
-  return (
-    <Page
-      title="Compute"
-      subtitle="The machines your workspaces run statements and jobs on. Each connects out to this server, so nothing is opened on it."
-      actions={
-        <Button variant="primary" onClick={() => setAdding(true)}>
-          <Plus /> Attach compute
-        </Button>
-      }
-    >
-      {items.length === 0 && !list.loading ? (
-        <PageEmpty icon={Cpu} title="No compute attached" action={<Button variant="primary" onClick={() => setAdding(true)}><Plus /> Attach compute</Button>}>
-          Attach a machine, then start the agent on it with the secret you are shown. Until then nothing can run.
-        </PageEmpty>
-      ) : (
-        <div className="divide-y divide-border rounded-xl border border-border bg-background/40">
-          {items.map((c) => (
-            <div key={c.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-              <Cpu className="shrink-0 text-muted" aria-hidden />
-              <span className="min-w-0 flex-1 basis-48">
-                <span className="block truncate text-sm font-medium text-foreground">{c.name}</span>
-                <span className="block text-xs text-muted">Up to {c.max_memory_mb.toLocaleString()} MB and {c.max_cpu_millis / 1000} CPU per run{c.kind === "serverless" ? " · started by hand, stops a minute after its last statement" : c.last_seen_ms ? ` · last heard ${when(c.last_seen_ms)}` : " · its agent has not connected yet"}</span>
-              </span>
-              <Badge tone="neutral">{c.kind === "serverless" ? "serverless" : "machine"}</Badge>
-              <Badge tone={computeState(c, now) === "running" ? "success" : computeState(c, now) === "starting" ? "accent" : "neutral"}>{stateLabel[computeState(c, now)]}</Badge>
-              <PowerButton org={org} compute={c} state={computeState(c, now)} onChanged={list.reload} />
-              {c.kind === "agent" && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={async () => {
-                  if (!(await confirmAction({ title: `Give ${c.name} a new secret?`, description: "The agent using the old one is turned away until it is given the new one.", confirmLabel: "New secret" }))) return;
-                  try {
-                    setShown(await api.newComputeSecret(org, c.id));
-                    list.reload();
-                  } catch (e) {
-                    toast.error("Could not make a new secret", (e as Error).message);
-                  }
-                }}
-              >
-                <KeyRound /> New secret
-              </Button>
-              )}
-              <Button
-                variant="danger"
-                size="icon-sm"
-                aria-label={`Remove ${c.name}`}
-                onClick={async () => {
-                  if (!(await confirmAction({ title: `Remove ${c.name}?`, description: "What is waiting or running on it fails.", confirmLabel: "Remove", danger: true }))) return;
-                  try {
-                    await api.detachCompute(org, c.id);
-                    list.reload();
-                  } catch (e) {
-                    toast.error("Could not remove it", (e as Error).message);
-                  }
-                }}
-              >
-                <Trash2 />
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <CreateCompute org={org} open={adding} onOpenChange={setAdding} onCreated={list.reload} />
-      <Dialog open={shown !== null} onOpenChange={(o) => !o && setShown(null)}>
-        <DialogContent title={`Start the agent on ${shown?.name ?? ""}`} description="This secret is shown once. Keep it in a file only the agent's user can read." className="max-w-xl">
-          {shown?.secret && <AgentCommand secret={shown.secret} />}
-        </DialogContent>
-      </Dialog>
-    </Page>
-  );
-}

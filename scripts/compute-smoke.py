@@ -86,7 +86,7 @@ try:
     orders = next(i["id"] for i in call("GET", f"{S}/securables?parent_id={sch}", ana)[1]["items"] if i["name"] == "orders")
     step("an Iceberg table of 5 rows was made and filled through the catalog, as any DuckDB client would (its files are in the RustFS bucket)")
 
-    _, t = call("POST", f"/api/v1/orgs/{org}/compute/targets", ana, {"name": "this-machine", "max_memory_mb": 2048, "max_cpu_millis": 1000})
+    _, t = call("POST", f"{S}/compute/targets", ana, {"name": "this-machine", "max_memory_mb": 2048, "max_cpu_millis": 1000})
     secret = f"{work}/agent.secret"
     open(secret, "w").write(t["secret"]); os.chmod(secret, 0o600)
     remote, key = os.environ.get("REMOTE"), os.path.expanduser(os.environ.get("KEY", "~/.ssh/id_ed25519"))

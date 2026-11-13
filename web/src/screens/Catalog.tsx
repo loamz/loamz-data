@@ -5,6 +5,7 @@ import * as api from "@/api";
 import { go } from "@/route";
 import { openInEditor } from "@/sqlTabs";
 import { AccessList } from "@/components/AccessList";
+import { CatalogCompute } from "@/components/CatalogCompute";
 import { FilesTab } from "@/components/FilesTab";
 import { SampleData, TableHistory, TableOverview } from "@/components/TableTab";
 import { NewDialog } from "@/components/NewDialog";
@@ -302,6 +303,7 @@ function Detail({ ws, item, children, load, onOpen, onNew, onDropped, onChanged 
           {!isContainer && !isTable && <TabsTrigger value="details">Details</TabsTrigger>}
           {isTable && <TabsTrigger value="details">Details</TabsTrigger>}
           <TabsTrigger value="access">Permissions</TabsTrigger>
+          {item.kind === "catalog" && <TabsTrigger value="compute">Compute</TabsTrigger>}
           {isTable && <TabsTrigger value="history">History</TabsTrigger>}
         </TabsList>
         {isVolume && (
@@ -334,6 +336,11 @@ function Detail({ ws, item, children, load, onOpen, onNew, onDropped, onChanged 
         <TabsContent value="access">
           <AccessList ws={ws} id={item.id} />
         </TabsContent>
+        {item.kind === "catalog" && (
+          <TabsContent value="compute">
+            <CatalogCompute ws={ws} id={item.id} />
+          </TabsContent>
+        )}
         {isTable && (
           <TabsContent value="history">
             <TableHistory ws={ws} id={item.id} />

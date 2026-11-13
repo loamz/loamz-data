@@ -118,11 +118,19 @@ CREATE TABLE tasks (
 );
 CREATE INDEX tasks_due ON tasks (state, lease_until);
 
--- Compute an organization has attached. A target is one compute agent (a machine running `loamz-runner agent`) that connects out to
+-- Which compute may read a catalog. A catalog with none listed can be read from any compute of its workspace.
+CREATE TABLE catalog_compute (
+    catalog_id TEXT NOT NULL,
+    target_id  TEXT NOT NULL,
+    PRIMARY KEY (catalog_id, target_id)
+);
+
+-- Compute a workspace has attached. A target is one compute agent (a machine running `loamz-runner agent`) that connects out to
 -- this server and asks for work; it never accepts connections. Its secret is shown once and kept only as a hash.
 CREATE TABLE compute_targets (
     id               TEXT PRIMARY KEY,
     org_id           TEXT NOT NULL,
+    workspace_id     TEXT NOT NULL,
     name             TEXT NOT NULL,
     secret_hash      TEXT NOT NULL,
     -- 'agent' (a machine that connects out) or 'serverless' (a provider endpoint the server calls, started on demand)
@@ -133,7 +141,7 @@ CREATE TABLE compute_targets (
     created_by       TEXT NOT NULL,
     created_ms       BIGINT NOT NULL,
     last_seen_ms     BIGINT NOT NULL,
-    UNIQUE (org_id, name)
+    UNIQUE (workspace_id, name)
 );
 CREATE UNIQUE INDEX compute_targets_secret ON compute_targets (secret_hash);
 

@@ -1,7 +1,8 @@
-import { Cpu, MoreHorizontal, Plus, Server, TerminalSquare, Trash2, Zap } from "lucide-react";
+import { Cpu, KeyRound, MoreHorizontal, Plus, Server, TerminalSquare, Trash2, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Body, Button, DataTable, Menu, MenuContent, MenuItem, MenuTrigger, ObjectHeader, confirmAction, toast, type Column } from "@/design";
+import { Body, Button, DataTable, Dialog, DialogContent, Menu, MenuContent, MenuItem, MenuTrigger, ObjectHeader, confirmAction, toast, type Column } from "@/design";
 import * as api from "@/api";
+import { AgentCommand } from "@/components/AgentCommand";
 import { CreateCompute } from "@/components/CreateCompute";
 import { StateDot } from "@/components/StateDot";
 import { PowerButton } from "@/components/PowerButton";
@@ -17,6 +18,7 @@ import { useLoad } from "@/hooks";
 export function Compute({ ws, me }: { ws: string; me: api.Me | undefined }) {
   const info = me?.workspaces.find((w) => w.id === ws);
   const [making, setMaking] = useState(false);
+  const [shown, setShown] = useState<api.Compute | null>(null);
   const [filter, setFilter] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const targets = useLoad(() => api.computeTargets(ws), ws);
@@ -51,7 +53,7 @@ export function Compute({ ws, me }: { ws: string; me: api.Me | undefined }) {
       header: "",
       cell: (c) => (
         <span className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-          {info?.admin && c.kind === "serverless" && <PowerButton org={info.org_id} compute={c} state={computeState(c, now)} onChanged={reload} />}
+          {info?.admin && c.kind === "serverless" && <PowerButton ws={ws} compute={c} state={computeState(c, now)} onChanged={reload} />}
           <Button variant="secondary" size="sm" onClick={() => go({ screen: "sql", ws })}>
             <TerminalSquare /> Query
           </Button>
@@ -63,12 +65,27 @@ export function Compute({ ws, me }: { ws: string; me: api.Me | undefined }) {
                 </Button>
               </MenuTrigger>
               <MenuContent align="end">
+                {c.kind === "agent" && (
+                  <MenuItem
+                    onSelect={async () => {
+                      if (!(await confirmAction({ title: `Give ${c.name} a new secret?`, description: "The agent using the old one is turned away until it is given the new one.", confirmLabel: "New secret" }))) return;
+                      try {
+                        setShown(await api.newComputeSecret(ws, c.id));
+                        reload();
+                      } catch (e) {
+                        toast.error("Could not make a new secret", (e as Error).message);
+                      }
+                    }}
+                  >
+                    <KeyRound /> New secret…
+                  </MenuItem>
+                )}
                 <MenuItem
                   className="text-danger"
                   onSelect={async () => {
                     if (!(await confirmAction({ title: `Delete ${c.name}?`, description: "What is waiting or running on it fails.", confirmLabel: "Delete", danger: true }))) return;
                     try {
-                      await api.detachCompute(info.org_id, c.id);
+                      await api.detachCompute(ws, c.id);
                       reload();
                     } catch (e) {
                       toast.error("Could not delete it", (e as Error).message);
@@ -107,7 +124,12 @@ export function Compute({ ws, me }: { ws: string; me: api.Me | undefined }) {
         count={`${matching.length} compute ${matching.length === 1 ? "resource" : "resources"}`}
         empty={targets.error?.message ?? (filter ? "No matching compute." : "No compute yet. A serverless one runs SQL when you start it; a machine you attach also runs Python jobs in a gVisor sandbox.")}
       />
-      {info && <CreateCompute org={info.org_id} open={making} onOpenChange={setMaking} onCreated={reload} />}
+      {info && <CreateCompute ws={ws} open={making} onOpenChange={setMaking} onCreated={reload} />}
+      <Dialog open={shown !== null} onOpenChange={(o) => !o && setShown(null)}>
+        <DialogContent title={`Start the agent on ${shown?.name ?? ""}`} description="This secret is shown once. Keep it in a file only the agent's user can read." className="max-w-xl">
+          {shown?.secret && <AgentCommand secret={shown.secret} />}
+        </DialogContent>
+      </Dialog>
     </Body>
   );
 }

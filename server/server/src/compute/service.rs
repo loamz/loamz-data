@@ -39,7 +39,7 @@ use crate::{
     },
 };
 
-// ---- targets (the account's) -------------------------------------------------------------------------------------
+// ---- targets (the workspace's) -------------------------------------------------------------------------------------
 
 /// A target as it is first made: the secret is shown once, and only its hash is kept.
 pub struct Enrolled {
@@ -47,17 +47,31 @@ pub struct Enrolled {
     pub secret: String,
 }
 
+/// The workspace's admins manage its compute; a service principal never does. Returns the workspace's organization.
+async fn manage(
+    app: &App,
+    identity: &Identity,
+    workspace: &str,
+    action: &'static str,
+) -> Result<String> {
+    let (w, standing) = workspaces::open(app, identity, workspace).await?;
+    if !standing.is_admin() || identity.confined_to.is_some() {
+        return Err(workspaces::deny(app, identity, &w, action).await);
+    }
+    Ok(w.org_id)
+}
+
 /// # Errors
-/// Not an account admin, or a bad or taken name.
+/// Not an admin of the workspace, or a bad or taken name.
 pub async fn add_target(
     app: &App,
     identity: &Identity,
-    org: &str,
+    workspace: &str,
     name: &str,
     max_memory_mb: i64,
     max_cpu_millis: i64,
 ) -> Result<Enrolled> {
-    orgs::require_admin(app, identity, org).await?;
+    let org = &manage(app, identity, workspace, "attach compute").await?;
     if !valid_target_name(name) {
         return Err(Error::Invalid(
             "a name is words, digits, spaces and dashes, up to 64 characters".into(),
@@ -70,7 +84,8 @@ pub async fn add_target(
     }
     let target = Target {
         id: new_id(),
-        org_id: org.to_owned(),
+        org_id: org.clone(),
+        workspace_id: workspace.to_owned(),
         name: name.to_owned(),
         kind: AGENT.into(),
         endpoint: String::new(),
@@ -82,7 +97,7 @@ pub async fn add_target(
     };
     let secret = crate::kernel::new_secret("agt_");
     let mut uow = Uow::begin(app).await?;
-    if store::name_taken(&mut *uow.tx, org, name).await? {
+    if store::name_taken(&mut *uow.tx, workspace, name).await? {
         return Err(Error::Conflict(format!(
             "there is already compute called {name}"
         )));
@@ -104,17 +119,17 @@ pub async fn add_target(
 /// never reaches back, and it is given only short-lived addresses for the files of one run.
 ///
 /// # Errors
-/// Not an account admin, a bad name or address, or the server has no token for serverless compute.
+/// Not an admin of the workspace, a bad name or address, or the server has no token for serverless compute.
 pub async fn add_serverless(
     app: &App,
     identity: &Identity,
-    org: &str,
+    workspace: &str,
     name: &str,
     endpoint: Option<&str>,
     max_memory_mb: i64,
     max_cpu_millis: i64,
 ) -> Result<Target> {
-    orgs::require_admin(app, identity, org).await?;
+    let org = &manage(app, identity, workspace, "attach compute").await?;
     if app.serverless_token.is_none() {
         return Err(Error::Invalid(
             "this server has no serverless token configured (LOAMZ_DATA_SERVERLESS_TOKEN_FILE)"
@@ -144,7 +159,8 @@ pub async fn add_serverless(
     }
     let target = Target {
         id: new_id(),
-        org_id: org.to_owned(),
+        org_id: org.clone(),
+        workspace_id: workspace.to_owned(),
         name: name.to_owned(),
         kind: SERVERLESS.into(),
         endpoint: url.to_string(),
@@ -155,7 +171,7 @@ pub async fn add_serverless(
         last_seen_ms: 0,
     };
     let mut uow = Uow::begin(app).await?;
-    if store::name_taken(&mut *uow.tx, org, name).await? {
+    if store::name_taken(&mut *uow.tx, workspace, name).await? {
         return Err(Error::Conflict(format!(
             "there is already compute called {name}"
         )));
@@ -179,7 +195,7 @@ pub async fn add_serverless(
     Ok(target)
 }
 
-/// A kind of compute this server can create for an organization.
+/// A kind of compute this server can create for a workspace.
 pub struct Provider {
     pub id: &'static str,
     pub name: &'static str,
@@ -222,17 +238,20 @@ pub fn providers(app: &App) -> Vec<Provider> {
 /// The database could not be read.
 pub async fn unfinished_since(
     app: &App,
-    org: &str,
+    workspace: &str,
 ) -> Result<std::collections::HashMap<String, i64>> {
-    store::unfinished_since(app.db.pool(), org).await
+    store::unfinished_since(app.db.pool(), workspace).await
 }
 
-/// When each of an organization's compute last finished some work, by target id.
+/// When each of a workspace's compute last finished some work, by target id.
 ///
 /// # Errors
 /// The database could not be read.
-pub async fn last_used(app: &App, org: &str) -> Result<std::collections::HashMap<String, i64>> {
-    store::last_used(app.db.pool(), org).await
+pub async fn last_used(
+    app: &App,
+    workspace: &str,
+) -> Result<std::collections::HashMap<String, i64>> {
+    store::last_used(app.db.pool(), workspace).await
 }
 
 /// Every serverless target (for the provider worker).
@@ -247,9 +266,14 @@ pub async fn serverless_targets(app: &App) -> Result<Vec<Target>> {
 ///
 /// # Errors
 /// Not an account admin, or no such target.
-pub async fn new_secret(app: &App, identity: &Identity, org: &str, id: &str) -> Result<Enrolled> {
-    orgs::require_admin(app, identity, org).await?;
-    let target = store::target_by_id(app.db.pool(), org, id)
+pub async fn new_secret(
+    app: &App,
+    identity: &Identity,
+    workspace: &str,
+    id: &str,
+) -> Result<Enrolled> {
+    let org = &manage(app, identity, workspace, "renew compute's secret").await?;
+    let target = store::target_by_id(app.db.pool(), workspace, id)
         .await?
         .ok_or_else(|| Error::NotFound("no such compute".into()))?;
     let secret = crate::kernel::new_secret("agt_");
@@ -277,9 +301,15 @@ pub async fn new_secret(app: &App, identity: &Identity, org: &str, id: &str) -> 
 ///
 /// # Errors
 /// Not an account admin, no such compute, it is a machine, or the endpoint could not be reached.
-pub async fn power(app: &App, identity: &Identity, org: &str, id: &str, start: bool) -> Result<()> {
-    orgs::require_admin(app, identity, org).await?;
-    let target = store::target_by_id(app.db.pool(), org, id)
+pub async fn power(
+    app: &App,
+    identity: &Identity,
+    workspace: &str,
+    id: &str,
+    start: bool,
+) -> Result<()> {
+    let org = &manage(app, identity, workspace, "start or stop compute").await?;
+    let target = store::target_by_id(app.db.pool(), workspace, id)
         .await?
         .ok_or_else(|| Error::NotFound("no such compute".into()))?;
     if !target.serverless() {
@@ -314,9 +344,14 @@ pub async fn power(app: &App, identity: &Identity, org: &str, id: &str, start: b
 ///
 /// # Errors
 /// Not an account admin, or no such target.
-pub async fn remove_target(app: &App, identity: &Identity, org: &str, id: &str) -> Result<()> {
-    orgs::require_admin(app, identity, org).await?;
-    store::target_by_id(app.db.pool(), org, id)
+pub async fn remove_target(
+    app: &App,
+    identity: &Identity,
+    workspace: &str,
+    id: &str,
+) -> Result<()> {
+    let org = &manage(app, identity, workspace, "remove compute").await?;
+    store::target_by_id(app.db.pool(), workspace, id)
         .await?
         .ok_or_else(|| Error::NotFound("no such compute".into()))?;
     let open = store::open_on_target(app.db.pool(), id).await?;
@@ -335,6 +370,7 @@ pub async fn remove_target(app: &App, identity: &Identity, org: &str, id: &str) 
         store::tokens_delete_for_run(&mut *uow.tx, run).await?;
     }
     store::delete_target(&mut *uow.tx, id).await?;
+    catalogs::forget_compute(&mut uow, id).await?;
     uow.audit(
         org,
         &Who::of(identity),
@@ -346,13 +382,21 @@ pub async fn remove_target(app: &App, identity: &Identity, org: &str, id: &str) 
     uow.commit().await
 }
 
-/// The organization's targets, with whether each is answering. Anyone who belongs to the organization may look.
+/// The workspace's targets, with whether each is answering. Anyone who is in the workspace may look.
 ///
 /// # Errors
-/// Not part of the organization.
-pub async fn targets(app: &App, identity: &Identity, org: &str) -> Result<Vec<Target>> {
-    orgs::get(app, identity, org).await?;
-    store::targets_in(app.db.pool(), org).await
+/// Not in the workspace.
+pub async fn targets(app: &App, identity: &Identity, workspace: &str) -> Result<Vec<Target>> {
+    workspaces::open(app, identity, workspace).await?;
+    store::targets_in(app.db.pool(), workspace).await
+}
+
+/// How many compute targets a workspace has. A workspace that has any cannot be deleted.
+///
+/// # Errors
+/// The database could not be read.
+pub async fn count_in_workspace(app: &App, workspace: &str) -> Result<i64> {
+    store::count_targets(app.db.pool(), workspace).await
 }
 
 // ---- asking for work (a person's) -------------------------------------------------------------------------------
@@ -462,18 +506,21 @@ async fn entitled(app: &App, ctx: &Ctx<'_>, what: &str) -> Result<()> {
 /// Picks the compute to run on: the one asked for, or the first that is answering and big enough.
 async fn pick(
     app: &App,
-    org: &str,
+    workspace: &str,
     asked: Option<&str>,
     memory: Option<i64>,
     cpu: Option<i64>,
     own_only: bool,
+    policies: &[Vec<String>],
 ) -> Result<Target> {
     let now = now_ms();
-    let mut all = store::targets_in(app.db.pool(), org).await?;
-    let used = store::last_used(app.db.pool(), org).await?;
+    let mut all = store::targets_in(app.db.pool(), workspace).await?;
+    let used = store::last_used(app.db.pool(), workspace).await?;
     let up = |t: &Target| t.running(used.get(&t.id).copied().unwrap_or(0), now);
     // The organization's own machines come first; a provider's is used when asked for or when nothing else answers.
     all.sort_by_key(Target::serverless);
+    // Each catalog the work reads may name the compute allowed to read it (none named: any); every one must allow the compute.
+    let allowed = |t: &Target| policies.iter().all(|p| p.is_empty() || p.contains(&t.id));
     let big_enough = |t: &Target| {
         memory.is_none_or(|m| m <= t.max_memory_mb) && cpu.is_none_or(|c| c <= t.max_cpu_millis)
     };
@@ -503,6 +550,12 @@ async fn pick(
                 t.name
             )));
         }
+        if !allowed(t) {
+            return Err(Error::Invalid(format!(
+                "a catalog this reads does not allow {} to read it",
+                t.name
+            )));
+        }
         return if big_enough(t) {
             Ok(t.clone())
         } else {
@@ -511,13 +564,16 @@ async fn pick(
     }
     let online: Vec<&Target> = all
         .iter()
-        .filter(|t| up(t) && !(own_only && t.serverless()))
+        .filter(|t| up(t) && !(own_only && t.serverless()) && allowed(t))
         .collect();
     if online.is_empty() {
-        return Err(Error::Conflict(
-            "no compute is running. Start a SQL warehouse, or attach a machine in the account console and start its agent"
-                .into(),
-        ));
+        let any_up = all.iter().any(|t| up(t) && !(own_only && t.serverless()));
+        return Err(Error::Conflict(if any_up {
+            "no running compute is allowed to read every catalog this reads".into()
+        } else {
+            "no compute is running. Start a SQL warehouse, or attach a machine in this workspace's Compute and start its agent"
+                .into()
+        }));
     }
     online
         .iter()
@@ -639,13 +695,19 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
         tables.push(json!({"id": id, "name": name}));
     }
     let limit = req.limit.unwrap_or(DEFAULT_ROWS).clamp(1, MAX_ROWS);
+    let mut policies = Vec::new();
+    for t in &tables {
+        let id = t["id"].as_str().unwrap_or_default();
+        policies.push(catalogs::compute_policy_of(app, &ctx.workspace.org_id, id).await?);
+    }
     let target = pick(
         app,
-        &ctx.workspace.org_id,
+        &ctx.workspace.id,
         req.target.as_deref(),
         None,
         None,
         private,
+        &policies,
     )
     .await?;
     let limits = limits_for(&target, None, None, None, 120).map_err(Error::Invalid)?;
@@ -722,14 +784,19 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
             "personal inputs require a personal output volume".into(),
         ));
     }
+    let mut policies = Vec::new();
+    for id in &req.inputs {
+        policies.push(catalogs::compute_policy_of(app, org, id).await?);
+    }
     let target = pick(
         app,
-        org,
+        &ctx.workspace.id,
         req.target.as_deref(),
         req.memory_mb,
         req.cpu_millis,
         // A job runs code, and only SQL goes to a provider.
         true,
+        &policies,
     )
     .await?;
     let limits = limits_for(&target, req.memory_mb, req.cpu_millis, req.timeout_s, 600)
@@ -1013,6 +1080,11 @@ async fn authorize_lease(app: &App, target: &Target, run: &Run, spec: &Value) ->
             _ => return Err(invalid()),
         };
         iam::require(app, &identity, &run.org_id, &sides, need, &securable).await?;
+        // The catalog's own say over which compute may read it holds when the work is handed out, not only when it was asked for.
+        let policy = catalogs::compute_policy_of(app, &run.org_id, &entry.id).await?;
+        if !policy.is_empty() && !policy.contains(&target.id) {
+            return Err(Error::Unauthorized);
+        }
         if entry.classification == "sealed"
             || (target.serverless() && entry.classification != "normal")
         {
@@ -1306,4 +1378,48 @@ pub async fn work_forever(app: crate::kernel::state::Shared) {
         }
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
+}
+
+/// Which compute may read a catalog, by id (empty: any compute of the workspace).
+///
+/// # Errors
+/// Not allowed to see the catalog, or not a catalog.
+pub async fn catalog_policy(app: &App, ctx: &Ctx<'_>, catalog: &str) -> Result<Vec<String>> {
+    catalogs::compute_policy(
+        app,
+        ctx.identity,
+        &ctx.workspace.id,
+        &ctx.workspace.org_id,
+        ctx.sides,
+        catalog,
+    )
+    .await
+}
+
+/// Says which of the workspace's compute may read a catalog (none named: any). Needs `MANAGE` on the catalog.
+///
+/// # Errors
+/// Not allowed, not a catalog, or a name is not this workspace's compute.
+pub async fn set_catalog_policy(
+    app: &App,
+    ctx: &Ctx<'_>,
+    catalog: &str,
+    targets: &[String],
+) -> Result<()> {
+    let mine = store::targets_in(app.db.pool(), &ctx.workspace.id).await?;
+    if let Some(bad) = targets.iter().find(|t| !mine.iter().any(|m| &m.id == *t)) {
+        return Err(Error::Invalid(format!(
+            "{bad} is not compute of this workspace"
+        )));
+    }
+    catalogs::set_compute_policy(
+        app,
+        ctx.identity,
+        &ctx.workspace.id,
+        &ctx.workspace.org_id,
+        ctx.sides,
+        catalog,
+        targets,
+    )
+    .await
 }

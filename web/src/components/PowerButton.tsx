@@ -6,7 +6,7 @@ import type { ComputeState } from "@/computeState";
 
 /** Start or stop serverless compute now. Nothing starts it for you: a stopped warehouse refuses work until someone starts it. It stops by itself a minute after its last
  *  statement, so Stop is for saving that minute. A machine has no button: it is run on the machine. */
-export function PowerButton({ org, compute, state, onChanged }: { org: string; compute: api.Compute; state: ComputeState; onChanged: () => void }) {
+export function PowerButton({ ws, compute, state, onChanged }: { ws: string; compute: api.Compute; state: ComputeState; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   if (compute.kind !== "serverless") return null;
   const starting = state !== "running";
@@ -19,7 +19,7 @@ export function PowerButton({ org, compute, state, onChanged }: { org: string; c
       onClick={async () => {
         setBusy(true);
         try {
-          await (starting ? api.startCompute(org, compute.id) : api.stopCompute(org, compute.id));
+          await (starting ? api.startCompute(ws, compute.id) : api.stopCompute(ws, compute.id));
           toast.success(starting ? `${compute.name} is running` : `${compute.name} is stopping`);
           onChanged();
         } catch (e) {

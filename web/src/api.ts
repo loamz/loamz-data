@@ -189,6 +189,8 @@ export const deleteStorageCredential = (ws: string, id: string) => none(send("DE
 export const storageLocations = async (ws: string) => (await json<{ items: StorageLocation[] }>(send("GET", `${S(ws)}/locations`))).items;
 export const createStorageLocation = (ws: string, body: Omit<StorageLocation, "id">) => json<StorageLocation>(send("POST", `${S(ws)}/locations`, body));
 export const deleteStorageLocation = (ws: string, id: string) => none(send("DELETE", `${S(ws)}/locations/${enc(id)}`));
+export const catalogCompute = async (ws: string, catalog: string) => (await json<{ compute: string[] }>(send("GET", `${W(ws)}/catalogs/${enc(catalog)}/compute`))).compute;
+export const setCatalogCompute = (ws: string, catalog: string, compute: string[]) => none(send("PUT", `${W(ws)}/catalogs/${enc(catalog)}/compute`, { compute }));
 export const workspace = (ws: string) => json<Workspace>(send("GET", W(ws)));
 export const renameWorkspace = (ws: string, name: string) => json<Workspace>(send("PUT", W(ws), { name }));
 export const deleteWorkspace = (ws: string) => none(send("DELETE", W(ws)));
@@ -319,7 +321,6 @@ export const run = (ws: string, id: string) => json<Run>(send("GET", `${W(ws)}/r
 export const cancelRun = (ws: string, id: string) => json<Run>(send("POST", `${W(ws)}/runs/${enc(id)}/cancel`, {}));
 
 // Compute, in the account console
-export const attachedCompute = async (org: string) => (await json<{ items: Compute[] }>(send("GET", `/api/v1/orgs/${enc(org)}/compute/targets`))).items;
 export interface Provider {
   id: "serverless" | "machine";
   name: string;
@@ -329,12 +330,12 @@ export interface Provider {
   max_cpu_millis: number;
   idle_stop_s: number;
 }
-export const providers = async (org: string) => (await json<{ items: Provider[] }>(send("GET", `/api/v1/orgs/${enc(org)}/compute/providers`))).items;
-export const attachCompute = (org: string, b: { name: string; kind?: "agent" | "serverless"; endpoint?: string; max_memory_mb: number; max_cpu_millis: number }) => json<Compute>(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets`, b));
-export const newComputeSecret = (org: string, id: string) => json<Compute>(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}/secret`, {}));
-export const startCompute = (org: string, id: string) => none(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}/start`, {}));
-export const stopCompute = (org: string, id: string) => none(send("POST", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}/stop`, {}));
-export const detachCompute = (org: string, id: string) => none(send("DELETE", `/api/v1/orgs/${enc(org)}/compute/targets/${enc(id)}`));
+export const providers = async (ws: string) => (await json<{ items: Provider[] }>(send("GET", `${W(ws)}/compute/providers`))).items;
+export const attachCompute = (ws: string, b: { name: string; kind?: "agent" | "serverless"; endpoint?: string; max_memory_mb: number; max_cpu_millis: number }) => json<Compute>(send("POST", `${W(ws)}/compute/targets`, b));
+export const newComputeSecret = (ws: string, id: string) => json<Compute>(send("POST", `${W(ws)}/compute/targets/${enc(id)}/secret`, {}));
+export const startCompute = (ws: string, id: string) => none(send("POST", `${W(ws)}/compute/targets/${enc(id)}/start`, {}));
+export const stopCompute = (ws: string, id: string) => none(send("POST", `${W(ws)}/compute/targets/${enc(id)}/stop`, {}));
+export const detachCompute = (ws: string, id: string) => none(send("DELETE", `${W(ws)}/compute/targets/${enc(id)}`));
 
 // Saved queries
 export interface SavedQuery {

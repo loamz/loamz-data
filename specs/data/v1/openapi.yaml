@@ -888,9 +888,9 @@ paths:
           $ref: '#/components/responses/Problem'
         '503':
           $ref: '#/components/responses/Problem'
-  /api/v1/orgs/{org}/compute/targets/{id}/start:
+  /api/v1/workspaces/{ws}/compute/targets/{id}/start:
     post:
-      summary: Start serverless compute now (it also starts when a statement arrives). Account admins. A machine is started on the machine itself.
+      summary: Start serverless compute now (it also starts when a statement arrives). Workspace admins. A machine is started on the machine itself.
       parameters:
       - name: org
         in: path
@@ -915,9 +915,9 @@ paths:
           $ref: '#/components/responses/Problem'
         '503':
           $ref: '#/components/responses/Problem'
-  /api/v1/orgs/{org}/compute/targets/{id}/stop:
+  /api/v1/workspaces/{ws}/compute/targets/{id}/stop:
     post:
-      summary: Stop serverless compute now (it also stops a minute after its last statement). Account admins.
+      summary: Stop serverless compute now (it also stops a minute after its last statement). Workspace admins.
       parameters:
       - name: org
         in: path
@@ -942,19 +942,53 @@ paths:
           $ref: '#/components/responses/Problem'
         '503':
           $ref: '#/components/responses/Problem'
-  /api/v1/orgs/{org}/compute/providers:
+  /api/v1/workspaces/{ws}/catalogs/{catalog}/compute:
     get:
-      summary: The kinds of compute this server can create for an organization.
+      summary: Which of the workspace's compute may read this catalog. An empty list means any of it.
       parameters:
-      - name: org
+      - *id002
+      - name: catalog
         in: path
         required: true
         schema:
           type: string
       responses:
         '200':
-          description: OK
+          description: The compute ids
         '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+    put:
+      summary: "Say which of the workspace's compute may read this catalog (an empty list means any). Needs MANAGE on the catalog."
+      parameters:
+      - *id002
+      - name: catalog
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - compute
+              properties:
+                compute:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '204':
+          description: Set
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
           $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
@@ -1255,7 +1289,7 @@ paths:
           $ref: '#/components/responses/Problem'
   /api/v1/workspaces/{ws}/compute/targets:
     get:
-      summary: The compute attached to the workspace's organization, and whether each is answering.
+      summary: The compute attached to this workspace, and whether each is answering.
       parameters:
       - &id007
         name: ws
@@ -1270,6 +1304,30 @@ paths:
         '401':
           $ref: '#/components/responses/Problem'
         '404':
+          $ref: '#/components/responses/Problem'
+    post:
+      summary: Attach compute to this workspace. Workspace admins.
+      description: The answer carries the agent's secret, once. Only a hash of it is kept.
+      parameters:
+      - *id002
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Target'
+      responses:
+        '201':
+          description: Attached, with its secret
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
           $ref: '#/components/responses/Problem'
   /api/v1/workspaces/{ws}/sql/statements:
     post:
@@ -1514,55 +1572,11 @@ paths:
           $ref: '#/components/responses/Problem'
         '409':
           $ref: '#/components/responses/Problem'
-  /api/v1/orgs/{org}/compute/targets:
-    get:
-      summary: The attached compute. Account admins.
-      parameters:
-      - &id009
-        name: org
-        in: path
-        required: true
-        schema:
-          type: string
-        description: An organization id.
-      responses:
-        '200':
-          description: The targets
-        '401':
-          $ref: '#/components/responses/Problem'
-        '403':
-          $ref: '#/components/responses/Problem'
-        '404':
-          $ref: '#/components/responses/Problem'
-    post:
-      summary: Attach compute. Account admins.
-      description: The answer carries the agent's secret, once. Only a hash of it is kept.
-      parameters:
-      - *id009
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Target'
-      responses:
-        '201':
-          description: Attached, with its secret
-        '400':
-          $ref: '#/components/responses/Problem'
-        '401':
-          $ref: '#/components/responses/Problem'
-        '403':
-          $ref: '#/components/responses/Problem'
-        '404':
-          $ref: '#/components/responses/Problem'
-        '409':
-          $ref: '#/components/responses/Problem'
-  /api/v1/orgs/{org}/compute/targets/{id}:
+  /api/v1/workspaces/{ws}/compute/targets/{id}:
     delete:
-      summary: Remove compute. What was waiting or running on it fails. Account admins.
+      summary: Remove compute. What was waiting or running on it fails. Workspace admins.
       parameters:
-      - *id009
+      - *id002
       - *id008
       responses:
         '204':
@@ -1573,11 +1587,11 @@ paths:
           $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
-  /api/v1/orgs/{org}/compute/targets/{id}/secret:
+  /api/v1/workspaces/{ws}/compute/targets/{id}/secret:
     post:
-      summary: Give the compute a new secret; the agent using the old one is turned away. Account admins.
+      summary: Give the compute a new secret; the agent using the old one is turned away. Workspace admins.
       parameters:
-      - *id009
+      - *id002
       - *id008
       responses:
         '200':

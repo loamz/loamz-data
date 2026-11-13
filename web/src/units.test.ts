@@ -66,7 +66,7 @@ describe("routes", () => {
     expect(parseRoute("/settings/nonsense", "workspace", WS)).toEqual({ screen: "settings", ws: WS, tab: "members" });
     expect(parseRoute("/sql", "workspace", WS)).toEqual({ screen: "sql", ws: WS });
     expect(parseRoute("/compute", "workspace", WS)).toEqual({ screen: "compute", ws: WS });
-    expect(parseRoute("/account/acme/compute", "account")).toEqual({ screen: "account", org: "acme", tab: "compute" });
+    expect(parseRoute("/account/acme/compute", "account")).toEqual({ screen: "account", org: "acme", tab: "workspaces" }); // compute is the workspace's now
     expect(parseRoute("/account/acme", "workspace", WS)).toEqual({ screen: "workspace", ws: WS }); // a workspace site has no account console
   });
   it("writes the address it reads", () => {
@@ -80,7 +80,7 @@ describe("routes", () => {
       [{ screen: "settings", ws: WS, tab: "entitlements" }, "workspace"],
       [{ screen: "sql", ws: WS }, "workspace"],
       [{ screen: "compute", ws: WS }, "workspace"],
-      [{ screen: "account", org: "acme", tab: "compute" }, "account"],
+      [{ screen: "account", org: "acme", tab: "people" }, "account"],
     ] as const) {
       expect(parseRoute(hrefOf(r), kind, WS)).toEqual(r);
     }

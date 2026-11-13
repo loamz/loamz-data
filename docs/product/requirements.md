@@ -27,7 +27,7 @@ Status: **Built** is in the code today; **Planned** names its proposal and task 
 | G2 | A caller who cannot see a thing gets 404, never 403. Every refusal is audited. | Built |
 | G3 | Every change and its audit entry are one transaction; each organization has a tamper-evident hash chain. | Built |
 | G4 | An app gets only what both it and its principal can do. | Built |
-| G5 | Grants on compute and on storage (who can use which compute, `READ FILES`, `CREATE EXTERNAL LOCATION`). | Planned (0002 tasks 4, 5) |
+| G5 | A catalog says which of its workspace's compute may read it (built, 0002 task 4). Grants on storage (`READ FILES`, `CREATE EXTERNAL LOCATION`) wait for roots on a location and external objects, which would enforce them (0002 task 5). | Compute policy built; storage grants planned |
 | G6 | Policies: row filters and column masks, applied when a query is planned. | Planned |
 | G7 | Personal data: tags on columns (such as PII) that drive masks, retention, and erasing one person's data across a table's snapshots. | Under consideration |
 
@@ -48,7 +48,7 @@ Status: **Built** is in the code today; **Planned** names its proposal and task 
 ### Compute
 | id | requirement | status |
 |---|---|---|
-| C1 | Jobs run on machines that connect out; each run is in a gVisor sandbox. | Built |
+| C1 | Jobs run on machines that connect out; each run is in a gVisor sandbox. A workspace's admins attach its compute; compute belongs to one workspace. | Built |
 | C2 | Serverless SQL on a provider endpoint; an admin starts it, it stops when idle. | Built |
 | C3 | Sandboxes for agents: one per conversation thread, with its own workspace folder; data only through the query path. | Planned |
 | C4 | Active runs are capped per organization; several servers respect one cap. | Built |

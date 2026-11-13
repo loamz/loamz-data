@@ -193,7 +193,7 @@ pub async fn rename(app: &App, identity: &Identity, id: &str, name: &str) -> Res
 
 /// Removes a workspace and its assignments. The organization's catalogs are not touched: they belong to the account.
 ///
-/// `catalogs` is how many catalogs the workspace owns: it cannot be deleted while it owns any.
+/// `catalogs` is how many catalogs and compute targets the workspace owns: it cannot be deleted while it owns any.
 ///
 /// # Errors
 /// Not an account admin, or the workspace still owns catalogs.
@@ -204,7 +204,7 @@ pub async fn delete(app: &App, identity: &Identity, id: &str, catalogs: i64) -> 
     }
     if catalogs > 0 {
         return Err(Error::Conflict(
-            "this workspace still owns catalogs: drop them first".into(),
+            "this workspace still owns catalogs or compute: remove them first".into(),
         ));
     }
     let mut uow = Uow::begin(app).await?;

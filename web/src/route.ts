@@ -1,7 +1,7 @@
 // The address is the screen. Real paths, so a link can be shared and the server can serve the page at any of them. There are
 // two sites (see site.ts), each with its own paths:
 //   account site    /                        Home
-//                   /account/<org>[/<tab>]   the account console of an organization (tabs: workspaces, compute, people, admins, activity, erase)
+//                   /account/<org>[/<tab>]   the account console of an organization (tabs: workspaces, people, admins, activity, erase)
 //   workspace site  /                        the workspace's overview: what you can do in it
 //                   /catalog[/<id>]          its Catalog Explorer
 //                   /sql                     the SQL editor
@@ -15,7 +15,7 @@
 import type { MouseEvent } from "react";
 
 export type SettingsTab = "members" | "principals" | "storage" | "entitlements" | "workspace";
-export type AccountTab = "workspaces" | "compute" | "people" | "admins" | "activity" | "erase";
+export type AccountTab = "workspaces" | "people" | "admins" | "activity" | "erase";
 
 export type Route =
   | { screen: "home" }
@@ -31,7 +31,7 @@ export type Route =
   | { screen: "account"; org: string; tab: AccountTab };
 
 const SETTINGS_TABS: SettingsTab[] = ["members", "principals", "storage", "entitlements", "workspace"];
-const TABS: AccountTab[] = ["workspaces", "compute", "people", "admins", "activity", "erase"];
+const TABS: AccountTab[] = ["workspaces", "people", "admins", "activity", "erase"];
 const WS = /^[0-9a-f-]{8,64}$/;
 
 export function parseRoute(path: string, kind: "account" | "workspace", ws = ""): Route {

@@ -15,7 +15,7 @@ use super::{
     service::{self, Ctx, JobRequest, Report, SqlRequest},
 };
 use crate::{
-    governance::context::{OrgCtx, WsCtx},
+    governance::context::WsCtx,
     kernel::{
         error::{Error, Result},
         http::{Routes, json as body_json},
@@ -120,12 +120,12 @@ fn target_view(t: &Target, now: i64, last_run_ms: i64, unfinished_since: i64) ->
 async fn listed(
     app: &Shared,
     identity: &crate::kernel::auth::Identity,
-    org: &str,
+    workspace: &str,
 ) -> Result<Vec<Value>> {
     let now = now_ms();
-    let used = service::last_used(app, org).await?;
-    let waiting = service::unfinished_since(app, org).await?;
-    Ok(service::targets(app, identity, org)
+    let used = service::last_used(app, workspace).await?;
+    let waiting = service::unfinished_since(app, workspace).await?;
+    Ok(service::targets(app, identity, workspace)
         .await?
         .iter()
         .map(|t| {
@@ -143,10 +143,6 @@ fn provider_view(p: &service::Provider) -> Value {
     json!({"id": p.id, "name": p.name, "description": p.description, "available": p.available, "max_memory_mb": p.max_memory_mb, "max_cpu_millis": p.max_cpu_millis, "idle_stop_s": p.idle_stop_s})
 }
 
-async fn org_providers(State(app): State<Shared>, _c: OrgCtx) -> Json<Value> {
-    Json(json!({"items": service::providers(&app).iter().map(provider_view).collect::<Vec<_>>()}))
-}
-
 async fn providers(State(app): State<Shared>, _c: WsCtx) -> Json<Value> {
     Json(json!({"items": service::providers(&app).iter().map(provider_view).collect::<Vec<_>>()}))
 }
@@ -155,8 +151,30 @@ async fn providers(State(app): State<Shared>, _c: WsCtx) -> Json<Value> {
 
 async fn list_targets(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
     Ok(Json(
-        json!({"items": listed(&app, &c.identity, c.org()).await?}),
+        json!({"items": listed(&app, &c.identity, &c.workspace.id).await?}),
     ))
+}
+
+/// Which compute may read a catalog (an empty list: any compute of the workspace).
+async fn catalog_policy(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
+    let ids = service::catalog_policy(&app, &ctx(&c), &param(&c.params, "catalog")?).await?;
+    Ok(Json(json!({"compute": ids})))
+}
+
+#[derive(Deserialize)]
+struct CatalogPolicy {
+    compute: Vec<String>,
+}
+
+async fn set_catalog_policy(
+    State(app): State<Shared>,
+    c: WsCtx,
+    body: Bytes,
+) -> Result<StatusCode> {
+    let req: CatalogPolicy = body_json(&body)?;
+    service::set_catalog_policy(&app, &ctx(&c), &param(&c.params, "catalog")?, &req.compute)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]
@@ -269,14 +287,7 @@ async fn cancel_run(State(app): State<Shared>, c: WsCtx) -> Result<(StatusCode, 
     Ok((StatusCode::ACCEPTED, Json(run_view(&run, false))))
 }
 
-// ---- the account's -----------------------------------------------------------------------------------------------
-
-async fn account_targets(State(app): State<Shared>, c: OrgCtx) -> Result<Json<Value>> {
-    crate::governance::orgs::service::require_admin(&app, &c.identity, &c.org).await?;
-    Ok(Json(
-        json!({"items": listed(&app, &c.identity, &c.org).await?}),
-    ))
-}
+// ---- the workspace admins' ---------------------------------------------------------------------------------------
 
 #[derive(Deserialize)]
 struct NewTarget {
@@ -292,7 +303,7 @@ struct NewTarget {
 /// The secret is in this answer and nowhere else, ever again.
 async fn attach(
     State(app): State<Shared>,
-    c: OrgCtx,
+    c: WsCtx,
     body: Bytes,
 ) -> Result<(StatusCode, Json<Value>)> {
     let req: NewTarget = body_json(&body)?;
@@ -300,7 +311,7 @@ async fn attach(
         let t = service::add_serverless(
             &app,
             &c.identity,
-            &c.org,
+            &c.workspace.id,
             &req.name,
             req.endpoint.as_deref(),
             req.max_memory_mb.unwrap_or(2048),
@@ -312,7 +323,7 @@ async fn attach(
     let e = service::add_target(
         &app,
         &c.identity,
-        &c.org,
+        &c.workspace.id,
         &req.name,
         req.max_memory_mb.unwrap_or(2048),
         req.max_cpu_millis.unwrap_or(1000),
@@ -323,25 +334,40 @@ async fn attach(
     Ok((StatusCode::CREATED, Json(v)))
 }
 
-async fn rotate(State(app): State<Shared>, c: OrgCtx) -> Result<Json<Value>> {
-    let e = service::new_secret(&app, &c.identity, &c.org, &param(&c.params, "id")?).await?;
+async fn rotate(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
+    let e =
+        service::new_secret(&app, &c.identity, &c.workspace.id, &param(&c.params, "id")?).await?;
     let mut v = target_view(&e.target, now_ms(), 0, 0);
     v["secret"] = json!(e.secret);
     Ok(Json(v))
 }
 
-async fn start(State(app): State<Shared>, c: OrgCtx) -> Result<StatusCode> {
-    service::power(&app, &c.identity, &c.org, &param(&c.params, "id")?, true).await?;
+async fn start(State(app): State<Shared>, c: WsCtx) -> Result<StatusCode> {
+    service::power(
+        &app,
+        &c.identity,
+        &c.workspace.id,
+        &param(&c.params, "id")?,
+        true,
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn stop(State(app): State<Shared>, c: OrgCtx) -> Result<StatusCode> {
-    service::power(&app, &c.identity, &c.org, &param(&c.params, "id")?, false).await?;
+async fn stop(State(app): State<Shared>, c: WsCtx) -> Result<StatusCode> {
+    service::power(
+        &app,
+        &c.identity,
+        &c.workspace.id,
+        &param(&c.params, "id")?,
+        false,
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn detach(State(app): State<Shared>, c: OrgCtx) -> Result<StatusCode> {
-    service::remove_target(&app, &c.identity, &c.org, &param(&c.params, "id")?).await?;
+async fn detach(State(app): State<Shared>, c: WsCtx) -> Result<StatusCode> {
+    service::remove_target(&app, &c.identity, &c.workspace.id, &param(&c.params, "id")?).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -426,18 +452,27 @@ pub fn routes() -> Routes {
     Routes::new()
         .get("/api/v1/workspaces/{ws}/compute/targets", list_targets)
         .get("/api/v1/workspaces/{ws}/compute/providers", providers)
+        .get(
+            "/api/v1/workspaces/{ws}/catalogs/{catalog}/compute",
+            catalog_policy,
+        )
+        .put(
+            "/api/v1/workspaces/{ws}/catalogs/{catalog}/compute",
+            set_catalog_policy,
+        )
         .post("/api/v1/workspaces/{ws}/sql/statements", statement)
         .post("/api/v1/workspaces/{ws}/runs", submit_job)
         .get("/api/v1/workspaces/{ws}/runs", list_runs)
         .get("/api/v1/workspaces/{ws}/runs/{id}", get_run)
         .post("/api/v1/workspaces/{ws}/runs/{id}/cancel", cancel_run)
-        .get("/api/v1/orgs/{org}/compute/providers", org_providers)
-        .get("/api/v1/orgs/{org}/compute/targets", account_targets)
-        .post("/api/v1/orgs/{org}/compute/targets", attach)
-        .post("/api/v1/orgs/{org}/compute/targets/{id}/secret", rotate)
-        .post("/api/v1/orgs/{org}/compute/targets/{id}/start", start)
-        .post("/api/v1/orgs/{org}/compute/targets/{id}/stop", stop)
-        .delete("/api/v1/orgs/{org}/compute/targets/{id}", detach)
+        .post("/api/v1/workspaces/{ws}/compute/targets", attach)
+        .post(
+            "/api/v1/workspaces/{ws}/compute/targets/{id}/secret",
+            rotate,
+        )
+        .post("/api/v1/workspaces/{ws}/compute/targets/{id}/start", start)
+        .post("/api/v1/workspaces/{ws}/compute/targets/{id}/stop", stop)
+        .delete("/api/v1/workspaces/{ws}/compute/targets/{id}", detach)
         .post("/api/v1/agent/lease", lease)
         .post("/api/v1/agent/runs/{id}/heartbeat", heartbeat)
         .post("/api/v1/agent/runs/{id}/complete", complete)

@@ -207,3 +207,57 @@ pub async fn advance<'e, E: Executor<'e, Database = Any>>(
     .await?;
     Ok(r.rows_affected() == 1)
 }
+
+/// The compute ids a catalog says may read it (none: any compute of its workspace).
+pub async fn compute_allowed<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    catalog: &str,
+) -> Result<Vec<String>> {
+    let rows = sqlx::query(
+        "SELECT target_id FROM catalog_compute WHERE catalog_id = $1 ORDER BY target_id",
+    )
+    .bind(catalog)
+    .fetch_all(e)
+    .await?;
+    rows.iter()
+        .map(|r| r.try_get("target_id").map_err(Into::into))
+        .collect()
+}
+
+/// Replaces the list of compute that may read the catalog.
+pub async fn set_compute_allowed(
+    c: &mut sqlx::AnyConnection,
+    catalog: &str,
+    targets: &[String],
+) -> Result<()> {
+    sqlx::query("DELETE FROM catalog_compute WHERE catalog_id = $1")
+        .bind(catalog)
+        .execute(&mut *c)
+        .await?;
+    for t in targets {
+        sqlx::query("INSERT INTO catalog_compute (catalog_id, target_id) VALUES ($1,$2)")
+            .bind(catalog)
+            .bind(t)
+            .execute(&mut *c)
+            .await?;
+    }
+    Ok(())
+}
+
+/// A compute target is gone: no catalog names it any more.
+pub async fn forget_compute(c: &mut sqlx::AnyConnection, target: &str) -> Result<()> {
+    sqlx::query("DELETE FROM catalog_compute WHERE target_id = $1")
+        .bind(target)
+        .execute(&mut *c)
+        .await?;
+    Ok(())
+}
+
+/// A catalog is gone: so is its list.
+pub async fn forget_catalog_compute(c: &mut sqlx::AnyConnection, catalog: &str) -> Result<()> {
+    sqlx::query("DELETE FROM catalog_compute WHERE catalog_id = $1")
+        .bind(catalog)
+        .execute(&mut *c)
+        .await?;
+    Ok(())
+}

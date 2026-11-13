@@ -54,11 +54,28 @@ async fn lab(s: &Server) -> Lab {
     }
 }
 
-/// Attaches compute, and has it heard from, as an agent that has just asked for work would be. Returns its secret and id.
+/// The id of acme's workspace Main.
+async fn main_ws(s: &Server) -> String {
+    let r = s
+        .get(&format!("/api/v1/orgs/{ACME}/workspaces"), &ana())
+        .await;
+    r.json()["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["name"] == "Main")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// Attaches compute to Main, and has it heard from, as an agent that has just asked for work would be. Returns its secret and id.
 async fn attach(s: &Server) -> (String, String) {
+    let ws = main_ws(s).await;
     let r = s
         .post(
-            &format!("/api/v1/orgs/{ACME}/compute/targets"),
+            &format!("/api/v1/workspaces/{ws}/compute/targets"),
             &ana(),
             json!({"name": "oracle", "max_memory_mb": 2048, "max_cpu_millis": 1000}),
         )
@@ -891,7 +908,10 @@ async fn work_that_cannot_finish_is_failed_and_says_why(s: Server) {
     let doomed = ask().await;
     let rotated = s
         .post(
-            &format!("/api/v1/orgs/{ACME}/compute/targets/{id}/secret"),
+            &format!(
+                "/api/v1/workspaces/{}/compute/targets/{id}/secret",
+                main_ws(&s).await
+            ),
             &ana(),
             json!({}),
         )
@@ -908,15 +928,28 @@ async fn work_that_cannot_finish_is_failed_and_says_why(s: Server) {
     );
     compute::authenticate_agent(&s.app, &rotated).await.unwrap();
     assert_eq!(
-        s.delete(&format!("/api/v1/orgs/{ACME}/compute/targets/{id}"), &bob())
-            .await
-            .status,
-        403
+        s.delete(
+            &format!(
+                "/api/v1/workspaces/{}/compute/targets/{id}",
+                main_ws(&s).await
+            ),
+            &bob()
+        )
+        .await
+        .status,
+        404,
+        "someone outside the workspace cannot tell it has compute"
     );
     assert_eq!(
-        s.delete(&format!("/api/v1/orgs/{ACME}/compute/targets/{id}"), &ana())
-            .await
-            .status,
+        s.delete(
+            &format!(
+                "/api/v1/workspaces/{}/compute/targets/{id}",
+                main_ws(&s).await
+            ),
+            &ana()
+        )
+        .await
+        .status,
         204
     );
     assert!(
@@ -928,9 +961,15 @@ async fn work_that_cannot_finish_is_failed_and_says_why(s: Server) {
 }
 both!(work_that_cannot_finish_is_failed_and_says_why);
 
-async fn compute_is_attached_by_the_account(s: Server) {
+async fn compute_is_attached_by_a_workspaces_admins(s: Server) {
     let l = lab(&s).await;
-    let url = format!("/api/v1/orgs/{ACME}/compute/targets");
+    let url = format!("/api/v1/workspaces/{}/compute/targets", l.ws);
+    // A workspace member who is not its admin cannot attach compute; someone outside the workspace cannot even tell it exists.
+    assert_eq!(
+        s.post(&url, &bob(), json!({"name": "mine"})).await.status,
+        404
+    );
+    s.assign(&l.ws, &[&bob()]).await;
     assert_eq!(
         s.post(&url, &bob(), json!({"name": "mine"})).await.status,
         403
@@ -964,7 +1003,6 @@ async fn compute_is_attached_by_the_account(s: Server) {
             .unwrap();
     assert!(!stored.starts_with("agt_") && stored.len() == 64);
     // A workspace member can see what compute there is, and whether it answers; not attach it.
-    s.assign(&l.ws, &[&bob()]).await;
     let seen = items(
         &s.get(
             &format!("/api/v1/workspaces/{}/compute/targets", l.ws),
@@ -974,7 +1012,131 @@ async fn compute_is_attached_by_the_account(s: Server) {
     );
     assert_eq!((seen.len(), seen[0]["online"].clone()), (1, json!(false)));
 }
-both!(compute_is_attached_by_the_account);
+both!(compute_is_attached_by_a_workspaces_admins);
+
+/// Compute belongs to one workspace: another workspace of the same organization cannot see it, name it, or run on it.
+async fn compute_belongs_to_its_workspace(s: Server) {
+    let _ = lab(&s).await;
+    let (_, id) = attach(&s).await;
+    let other = s.workspace(&ana(), ACME, "Other").await;
+    let mine = format!("/api/v1/workspaces/{other}/compute/targets");
+    assert!(
+        items(&s.get(&mine, &ana()).await).is_empty(),
+        "it is not listed there"
+    );
+    let asked = s
+        .post(
+            &format!("/api/v1/workspaces/{other}/sql/statements"),
+            &ana(),
+            json!({"sql": "SELECT 1", "target": id}),
+        )
+        .await;
+    assert_eq!(asked.status, 404, "{}", asked.text());
+    assert_eq!(
+        s.post(
+            &format!("/api/v1/workspaces/{other}/compute/targets/{id}/secret"),
+            &ana(),
+            json!({})
+        )
+        .await
+        .status,
+        404,
+        "nor can it be managed from there"
+    );
+    // A workspace that still has compute cannot be deleted.
+    let main = main_ws(&s).await;
+    assert_eq!(
+        s.delete(&format!("/api/v1/workspaces/{main}"), &ana())
+            .await
+            .status,
+        409
+    );
+}
+both!(compute_belongs_to_its_workspace);
+
+/// A catalog can say which of its workspace's compute may read it. Without a list, any may.
+async fn a_catalog_can_name_the_compute_that_may_read_it(s: Server) {
+    let l = lab(&s).await;
+    let (_, first) = attach(&s).await;
+    let made = s
+        .post(
+            &format!("/api/v1/workspaces/{}/compute/targets", l.ws),
+            &ana(),
+            json!({"name": "second", "max_memory_mb": 2048, "max_cpu_millis": 1000}),
+        )
+        .await;
+    let (second, second_secret) = (
+        made.json()["id"].as_str().unwrap().to_owned(),
+        made.json()["secret"].as_str().unwrap().to_owned(),
+    );
+    compute::authenticate_agent(&s.app, &second_secret)
+        .await
+        .unwrap();
+    let catalog: String = sqlx::query_scalar("SELECT parent_id FROM securables WHERE id = $1")
+        .bind(&l.schema)
+        .fetch_one(s.app.db.pool())
+        .await
+        .unwrap();
+    let policy = format!("/api/v1/workspaces/{}/catalogs/{catalog}/compute", l.ws);
+    let statement = format!("/api/v1/workspaces/{}/sql/statements", l.ws);
+    let ask = |target: Option<&str>| {
+        let (s, statement) = (&s, statement.clone());
+        let body = json!({"sql": "SELECT * FROM sales.raw.orders", "wait_s": 0, "target": target});
+        async move { s.post(&statement, &ana(), body).await }
+    };
+
+    // No list: any of the workspace's compute may read it, so a named one is accepted.
+    assert_eq!(s.get(&policy, &ana()).await.json()["compute"], json!([]));
+    assert_eq!(ask(Some(&first)).await.status, 202);
+
+    // Only people who manage the catalog may say; the compute must be the workspace's own.
+    s.assign(&l.ws, &[&bob()]).await;
+    assert_eq!(
+        s.put(&policy, &bob(), json!({"compute": [second]}))
+            .await
+            .status,
+        404,
+        "bob cannot see the catalog"
+    );
+    assert_eq!(
+        s.put(&policy, &ana(), json!({"compute": ["not-ours"]}))
+            .await
+            .status,
+        400
+    );
+    assert_eq!(
+        s.put(&policy, &ana(), json!({"compute": [second]}))
+            .await
+            .status,
+        204
+    );
+    assert_eq!(
+        s.get(&policy, &ana()).await.json()["compute"],
+        json!([second])
+    );
+
+    // Now only the second may read it: asking for the first is refused, and with no choice made it goes to the second.
+    let refused = ask(Some(&first)).await;
+    assert_eq!(refused.status, 400, "{}", refused.text());
+    assert!(refused.text().contains("does not allow"));
+    let placed = ask(None).await;
+    assert_eq!(placed.status, 202, "{}", placed.text());
+    assert_eq!(placed.json()["target_id"], json!(second));
+
+    // Taking the second away takes it off the list: the catalog is readable from any compute again.
+    assert_eq!(
+        s.delete(
+            &format!("/api/v1/workspaces/{}/compute/targets/{second}", l.ws),
+            &ana()
+        )
+        .await
+        .status,
+        204
+    );
+    assert_eq!(s.get(&policy, &ana()).await.json()["compute"], json!([]));
+    assert_eq!(ask(None).await.status, 202);
+}
+both!(a_catalog_can_name_the_compute_that_may_read_it);
 
 /// An agent acting for an admin is not an admin: running SQL needs the entitlement on both sides, the person's and the agent's.
 async fn an_agent_needs_the_sql_entitlement_too(s: Server) {
@@ -1430,7 +1592,7 @@ async fn admission_is_bounded_across_server_instances(s: Server) {
     let rival_ws = a.workspace(&rita, common::RIVAL, "Rival").await;
     let target = a
         .post(
-            &format!("/api/v1/orgs/{}/compute/targets", common::RIVAL),
+            &format!("/api/v1/workspaces/{rival_ws}/compute/targets"),
             &rita,
             json!({"name": "rival", "max_memory_mb": 2048, "max_cpu_millis": 1000}),
         )
@@ -1491,7 +1653,7 @@ async fn the_kinds_of_compute_that_can_be_created_say_whether_they_are_available
     // Without a token, creating serverless compute says what is missing.
     let made = s
         .post(
-            &format!("/api/v1/orgs/{ACME}/compute/targets"),
+            &format!("/api/v1/workspaces/{}/compute/targets", main_ws(&s).await),
             &ana(),
             json!({"name": "warehouse", "kind": "serverless"}),
         )
@@ -1504,22 +1666,23 @@ both!(the_kinds_of_compute_that_can_be_created_say_whether_they_are_available);
 async fn serverless_compute_is_started_and_stopped_by_admins_and_a_machine_is_not(s: Server) {
     let l = lab(&s).await;
     let (_, machine) = attach(&s).await;
-    let power = |org: &str, id: &str, what: &str, who: Who| {
+    let ws = main_ws(&s).await;
+    let power = |ws: &str, id: &str, what: &str, who: Who| {
         let (s, path) = (
             &s,
-            format!("/api/v1/orgs/{org}/compute/targets/{id}/{what}"),
+            format!("/api/v1/workspaces/{ws}/compute/targets/{id}/{what}"),
         );
         async move { s.post(&path, &who, json!({})).await }
     };
     // A machine is started and stopped on the machine itself.
     for what in ["start", "stop"] {
-        let r = power(ACME, &machine, what, ana()).await;
+        let r = power(&ws, &machine, what, ana()).await;
         assert_eq!(r.status, 400, "{what}: {}", r.text());
         assert!(r.text().contains("on the machine itself"));
     }
-    assert_eq!(power(ACME, "nope", "start", ana()).await.status, 404);
+    assert_eq!(power(&ws, "nope", "start", ana()).await.status, 404);
     // Not for people who are not admins of the account.
     s.assign(&l.ws, &[&bob()]).await;
-    assert_eq!(power(ACME, &machine, "stop", bob()).await.status, 403);
+    assert_eq!(power(&ws, &machine, "stop", bob()).await.status, 403);
 }
 both!(serverless_compute_is_started_and_stopped_by_admins_and_a_machine_is_not);

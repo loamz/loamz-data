@@ -77,8 +77,9 @@ async fn rename(State(app): State<Shared>, c: WsCtx, body: Bytes) -> Result<Json
 }
 
 async fn delete(State(app): State<Shared>, c: WsCtx) -> Result<StatusCode> {
-    // The workspace owns its catalogs; one that still has any cannot go (they would have nowhere to be).
-    let catalogs = catalogs::count_in_workspace(&app, c.org(), &c.workspace.id).await?;
+    // The workspace owns its catalogs and its compute; one that still has any cannot go (they would have nowhere to be).
+    let catalogs = catalogs::count_in_workspace(&app, c.org(), &c.workspace.id).await?
+        + crate::compute::service::count_in_workspace(&app, &c.workspace.id).await?;
     service::delete(&app, &c.identity, &c.workspace.id, catalogs).await?;
     Ok(StatusCode::NO_CONTENT)
 }

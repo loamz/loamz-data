@@ -408,7 +408,83 @@ pub async fn mark_dropping(uow: &mut Uow<'_>, org: &str, id: &str) -> Result<()>
 /// # Errors
 /// The database could not be written.
 pub async fn remove_row(uow: &mut Uow<'_>, org: &str, id: &str) -> Result<()> {
+    store::forget_catalog_compute(&mut uow.tx, id).await?;
     store::delete(&mut *uow.tx, org, id).await
+}
+
+/// The compute a catalog says may read it, by id; empty means any compute of its workspace. Given the id of anything in the catalog.
+///
+/// # Errors
+/// The database could not be read.
+pub async fn compute_policy_of(app: &App, org: &str, id: &str) -> Result<Vec<String>> {
+    let mut at = store::get(app.db.pool(), org, id)
+        .await?
+        .ok_or_else(|| Error::NotFound("not found".into()))?;
+    while !at.parent_id.is_empty() {
+        at = store::get(app.db.pool(), org, &at.parent_id)
+            .await?
+            .ok_or_else(|| Error::Internal("a parent is missing".into()))?;
+    }
+    store::compute_allowed(app.db.pool(), &at.id).await
+}
+
+/// The compute that may read a catalog. Whoever may see the catalog may ask.
+///
+/// # Errors
+/// Not there for this caller, or not a catalog.
+pub async fn compute_policy(
+    app: &App,
+    identity: &Identity,
+    workspace: &str,
+    org: &str,
+    sides: &[Side],
+    catalog: &str,
+) -> Result<Vec<String>> {
+    let entry = get(app, identity, workspace, org, sides, catalog).await?;
+    if entry.kind != Kind::Catalog {
+        return Err(Error::Invalid("only a catalog has a compute policy".into()));
+    }
+    store::compute_allowed(app.db.pool(), catalog).await
+}
+
+/// Says which compute may read the catalog (empty: any compute of its workspace). Needs `MANAGE` on the catalog. The caller has
+/// checked the compute is the workspace's.
+///
+/// # Errors
+/// Not there for this caller, not a catalog, or not allowed.
+pub async fn set_compute_policy(
+    app: &App,
+    identity: &Identity,
+    workspace: &str,
+    org: &str,
+    sides: &[Side],
+    catalog: &str,
+    targets: &[String],
+) -> Result<()> {
+    let (entry, target) = target_in(app, workspace, org, catalog).await?;
+    if entry.kind != Kind::Catalog {
+        return Err(Error::Invalid("only a catalog has a compute policy".into()));
+    }
+    iam::require(app, identity, org, sides, Privilege::Manage, &target).await?;
+    let mut uow = Uow::begin(app).await?;
+    store::set_compute_allowed(&mut uow.tx, catalog, targets).await?;
+    uow.audit(
+        org,
+        &Who::of(identity),
+        "catalog.compute.set",
+        &format!("catalog {catalog}"),
+        "ok",
+    )
+    .await?;
+    uow.commit().await
+}
+
+/// A compute target is gone: no catalog names it any more.
+///
+/// # Errors
+/// The database could not be written.
+pub async fn forget_compute(uow: &mut Uow<'_>, target: &str) -> Result<()> {
+    store::forget_compute(&mut uow.tx, target).await
 }
 
 /// Whether the row is still there, in any state (the drop check).

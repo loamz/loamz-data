@@ -23,6 +23,8 @@ pub const SERVERLESS: &str = "serverless";
 pub struct Target {
     pub id: String,
     pub org_id: String,
+    /// The workspace it belongs to: its runs are that workspace's only.
+    pub workspace_id: String,
     pub name: String,
     /// `agent` or `serverless`.
     pub kind: String,
@@ -231,6 +233,7 @@ mod tests {
         Target {
             id: "t".into(),
             org_id: "o".into(),
+            workspace_id: "w".into(),
             name: "oracle".into(),
             kind: AGENT.into(),
             endpoint: String::new(),

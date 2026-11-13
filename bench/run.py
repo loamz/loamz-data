@@ -158,7 +158,7 @@ print(json.dumps({{"times": times, "rows": len(rows)}}))
             print(f"  {way:8} {name:13} cold {r['times'][0]:6.2f}s  warm {min(r['times'][1:]):6.2f}s", flush=True)
 
     # machine: a compute agent connects out; every statement is a new sandbox, so cold is all there is
-    _, t = call("POST", f"/api/v1/orgs/{org}/compute/targets", ana, {"name": "bench-machine", "max_memory_mb": 4096, "max_cpu_millis": 4000})
+    _, t = call("POST", f"{S}/compute/targets", ana, {"name": "bench-machine", "max_memory_mb": 4096, "max_cpu_millis": 4000})
     open(work + "/agent.secret", "w").write(t["secret"]); os.chmod(work + "/agent.secret", 0o600)
     cache = os.path.expanduser("~/.cache/loamz")
     procs.append(subprocess.Popen([os.path.join(ROOT, "target/release/loamz-runner"), "agent"], stdout=open(f"{work}/agent.log", "w"), stderr=subprocess.STDOUT,
