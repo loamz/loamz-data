@@ -873,10 +873,9 @@ async fn privileges(s: Server) {
             .await,
     );
     assert!(
-        trail.iter().any(|e| e["outcome"] == "denied"
-            && e["actor"]
-                .as_str()
-                .is_some_and(|s| s.starts_with("erased:"))),
+        trail
+            .iter()
+            .any(|e| e["outcome"] == "denied" && e["actor"] == "bob"),
         "the reader's refused write is recorded"
     );
 }
@@ -1456,14 +1455,11 @@ async fn an_agent_acting_for_a_person(s: Server) {
         &s.get(&format!("/api/v1/orgs/{ACME}/audit?limit=500"), &ana())
             .await,
     );
-    assert!(trail.iter().any(|e| {
-        e["actor"]
-            .as_str()
-            .is_some_and(|s| s.starts_with("erased:"))
-            && e["on_behalf_of"]
-                .as_str()
-                .is_some_and(|s| s.starts_with("erased:"))
-    }));
+    assert!(
+        trail
+            .iter()
+            .any(|e| e["actor"] == "agent-1" && e["on_behalf_of"] == "bob")
+    );
 }
 both!(an_agent_acting_for_a_person);
 

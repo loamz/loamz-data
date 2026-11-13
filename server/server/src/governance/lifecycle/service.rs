@@ -9,7 +9,7 @@ use super::{
 use crate::{
     governance::{
         audit::{
-            model::{Who, pseudonym},
+            model::{Who, tombstone},
             service::Uow,
         },
         catalogs::service as catalogs,
@@ -228,7 +228,7 @@ async fn erase(app: &App, task: &Task) -> Result<()> {
         }
     }
     let raw_subject = task.subject.strip_prefix("user:").unwrap_or("");
-    let tombstone = pseudonym(org, raw_subject);
+    let erased_as = tombstone(org, raw_subject);
     let mut uow = Uow::begin(app).await?;
     orgs::can_forget_principal_in(&mut uow.tx, org, &task.subject).await?;
     for (run, folder) in run_files {
@@ -253,7 +253,7 @@ async fn erase(app: &App, task: &Task) -> Result<()> {
         org,
         &task.subject,
         raw_subject,
-        &tombstone,
+        &erased_as,
         now_ms(),
     )
     .await?;
@@ -288,6 +288,7 @@ async fn erase(app: &App, task: &Task) -> Result<()> {
         "ok",
     )
     .await?;
+    crate::governance::audit::service::forget_person(&mut uow, org, raw_subject).await?;
     uow.commit().await?;
     Ok(())
 }

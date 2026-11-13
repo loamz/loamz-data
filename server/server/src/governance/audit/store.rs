@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use sqlx::{Any, Executor, Row};
 
 use super::model::Entry;
-use crate::kernel::error::Result;
+use crate::kernel::{error::Result, new_id};
 
 fn entry(r: &sqlx::any::AnyRow) -> std::result::Result<Entry, sqlx::Error> {
     Ok(Entry {
@@ -88,4 +90,60 @@ pub async fn recent<'e, E: Executor<'e, Database = Any>>(
         .iter()
         .map(entry)
         .collect::<std::result::Result<_, _>>()?)
+}
+
+pub async fn name_ref(c: &mut sqlx::AnyConnection, org: &str, name: &str) -> Result<String> {
+    if let Some(reference) =
+        sqlx::query_scalar("SELECT ref FROM audit_names WHERE org_id = $1 AND name = $2")
+            .bind(org)
+            .bind(name)
+            .fetch_optional(&mut *c)
+            .await?
+    {
+        return Ok(reference);
+    }
+
+    let reference = format!("p_{}", new_id());
+    sqlx::query(
+        "INSERT INTO audit_names (org_id, ref, name) VALUES ($1,$2,$3) ON CONFLICT (org_id,name) DO NOTHING",
+    )
+    .bind(org)
+    .bind(reference)
+    .bind(name)
+    .execute(&mut *c)
+    .await?;
+    Ok(
+        sqlx::query_scalar("SELECT ref FROM audit_names WHERE org_id = $1 AND name = $2")
+            .bind(org)
+            .bind(name)
+            .fetch_one(&mut *c)
+            .await?,
+    )
+}
+
+pub async fn names<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    org: &str,
+) -> Result<HashMap<String, String>> {
+    let rows = sqlx::query("SELECT ref, name FROM audit_names WHERE org_id = $1")
+        .bind(org)
+        .fetch_all(e)
+        .await?;
+    rows.iter()
+        .map(|r| Ok((r.try_get("ref")?, r.try_get("name")?)))
+        .collect::<std::result::Result<_, sqlx::Error>>()
+        .map_err(Into::into)
+}
+
+pub async fn forget_name<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    org: &str,
+    name: &str,
+) -> Result<()> {
+    sqlx::query("DELETE FROM audit_names WHERE org_id = $1 AND name = $2")
+        .bind(org)
+        .bind(name)
+        .execute(e)
+        .await?;
+    Ok(())
 }

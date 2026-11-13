@@ -84,9 +84,11 @@ Every change and its audit entry are written in one transaction (`audit::service
 hash of the one before it, so an organization's entries form one chain; `GET /orgs/{org}/audit/verify` recomputes it. Refusals are
 audited too.
 
-Person identifiers in audit actors and explicit person-principal targets are stored as stable, organization-scoped pseudonyms when
-the entry is written. Erasure does not rewrite audit rows or hashes: it removes the person's content and access, then records
-`erase.done` in the same transaction that finishes the erase task.
+Person identifiers in audit actors and explicit person-principal targets are stored as random, organization-scoped refs. The
+`audit_names` mapping lets the list API show the subject while it exists, then show `erased person` after the mapping is deleted.
+This is a mapping rather than a deterministic hash: hashes are unreadable before erase and can be guessed from known subjects.
+Erasure deletes the mapping but never rewrites audit rows or hashes, then records `erase.done` in the same transaction that finishes
+the erase task.
 
 ## 4. Contracts
 

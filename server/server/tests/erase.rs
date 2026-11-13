@@ -9,6 +9,19 @@ use common::{ACME, RIVAL, Server, Who, ana, bob, fresh_db, person, server};
 use loamz_data_server::kernel::{hash_secret, new_id};
 use serde_json::json;
 
+type AuditRow = (
+    String,
+    i64,
+    i64,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+);
+
 macro_rules! both {
     ($name:ident) => {
         mod $name {
@@ -625,6 +638,173 @@ async fn audit_stays_verifiable_and_names_the_first_tampered_entry(s: Server) {
     assert_eq!(broken["first_broken"], 2);
 }
 both!(audit_stays_verifiable_and_names_the_first_tampered_entry);
+
+async fn audit_names_are_org_scoped_and_deleted_without_rewriting_history(s: Server) {
+    let workspace = s.acme().await;
+    s.assign(&workspace, &[&bob()]).await;
+    let catalog = s.make(&workspace, &ana(), "catalog", "", "shared").await;
+    s.grant(&workspace, &ana(), &catalog, "user:bob", "contributor")
+        .await;
+    s.make(&workspace, &bob(), "schema", &catalog, "bob_data")
+        .await;
+
+    let rita = Who {
+        sub: "rita".into(),
+        orgs: vec![(RIVAL.into(), "rival".into())],
+        groups: Vec::new(),
+        roles: vec!["account-admin".into()],
+        acting: None,
+        client: None,
+    };
+    assert_eq!(
+        s.post(&format!("/api/v1/orgs/{RIVAL}/account"), &rita, json!({}))
+            .await
+            .status,
+        201
+    );
+    let rival_workspace = s.workspace(&rita, RIVAL, "Theirs").await;
+    let rival_bob = person("bob").also_in(RIVAL, "rival");
+    assert_eq!(
+        s.put(
+            &format!("/api/v1/workspaces/{rival_workspace}/members"),
+            &rita,
+            json!({"principal":"user:bob","role":"user"}),
+        )
+        .await
+        .status,
+        204
+    );
+    let rival_catalog = s
+        .make(&rival_workspace, &rita, "catalog", "", "shared")
+        .await;
+    s.grant(
+        &rival_workspace,
+        &rita,
+        &rival_catalog,
+        "user:bob",
+        "contributor",
+    )
+    .await;
+    s.make(
+        &rival_workspace,
+        &rival_bob,
+        "schema",
+        &rival_catalog,
+        "bob_data",
+    )
+    .await;
+
+    let before = s
+        .get(&format!("/api/v1/orgs/{ACME}/audit?limit=500"), &ana())
+        .await;
+    assert!(
+        before.json()["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["actor"] == "bob")
+    );
+    assert!(
+        before.json()["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| {
+                entry["target"]
+                    .as_str()
+                    .is_some_and(|target| target.contains("user:bob"))
+            })
+    );
+    let before_rows: Vec<AuditRow> = sqlx::query_as(
+        "SELECT org_id,seq,at_ms,actor,on_behalf_of,action,target,outcome,prev_hash,hash FROM audit WHERE org_id = $1 ORDER BY seq",
+    )
+    .bind(ACME)
+    .fetch_all(s.app.db.pool())
+    .await
+    .unwrap();
+    let refs: Vec<(String, String)> = sqlx::query_as(
+        "SELECT org_id,ref FROM audit_names WHERE name = 'bob' AND org_id IN ($1,$2)",
+    )
+    .bind(ACME)
+    .bind(RIVAL)
+    .fetch_all(s.app.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(refs.len(), 2);
+    assert_ne!(
+        refs[0].1, refs[1].1,
+        "refs must not correlate organizations"
+    );
+    assert!(
+        refs.iter()
+            .all(|(_, reference)| reference.starts_with("p_"))
+    );
+    let rival_ref = refs.iter().find(|(org, _)| org == RIVAL).unwrap().1.clone();
+
+    request_erase(&s, &ana(), "user:bob").await;
+    s.work().await;
+
+    let after_rows: Vec<AuditRow> = sqlx::query_as(
+        "SELECT org_id,seq,at_ms,actor,on_behalf_of,action,target,outcome,prev_hash,hash FROM audit WHERE org_id = $1 ORDER BY seq",
+    )
+    .bind(ACME)
+    .fetch_all(s.app.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(&after_rows[..before_rows.len()], before_rows.as_slice());
+    let after = s
+        .get(&format!("/api/v1/orgs/{ACME}/audit?limit=500"), &ana())
+        .await
+        .json();
+    assert!(
+        after["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["actor"] == "erased person")
+    );
+    assert!(after["items"].as_array().unwrap().iter().any(|entry| {
+        entry["target"]
+            .as_str()
+            .is_some_and(|target| target.contains("user:erased person"))
+    }));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM audit_names WHERE org_id = $1 AND name = 'bob'"
+        )
+        .bind(ACME)
+        .fetch_one(s.app.db.pool())
+        .await
+        .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT ref FROM audit_names WHERE org_id = $1 AND name = 'bob'"
+        )
+        .bind(RIVAL)
+        .fetch_one(s.app.db.pool())
+        .await
+        .unwrap(),
+        rival_ref
+    );
+    assert_eq!(
+        s.get(&format!("/api/v1/orgs/{ACME}/audit/verify"), &ana())
+            .await
+            .json()["intact"],
+        true
+    );
+    assert!(
+        s.get(&format!("/api/v1/orgs/{RIVAL}/audit?limit=500"), &rita)
+            .await
+            .json()["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["actor"] == "bob")
+    );
+}
+both!(audit_names_are_org_scoped_and_deleted_without_rewriting_history);
 
 async fn erase_request_and_completion_are_audited_as_their_changes(s: Server) {
     let _workspace = s.acme().await;

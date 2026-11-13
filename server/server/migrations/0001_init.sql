@@ -102,6 +102,15 @@ CREATE TABLE audit (
     PRIMARY KEY (org_id, seq)
 );
 
+-- A readable, eraseable name for each identity ref used in an audit chain.
+CREATE TABLE audit_names (
+    org_id TEXT NOT NULL,
+    ref    TEXT NOT NULL,
+    name   TEXT NOT NULL,
+    PRIMARY KEY (org_id, ref),
+    UNIQUE (org_id, name)
+);
+
 -- Work that must finish even if the server stops half way: a worker leases a task, retries it, and marks it done.
 CREATE TABLE tasks (
     id           TEXT PRIMARY KEY,

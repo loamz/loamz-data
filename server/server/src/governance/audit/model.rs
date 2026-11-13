@@ -54,7 +54,7 @@ pub struct Entry {
 pub const GENESIS: &str = "";
 
 #[must_use]
-pub fn pseudonym(org: &str, subject: &str) -> String {
+pub fn tombstone(org: &str, subject: &str) -> String {
     let mut h = Sha256::new();
     for part in [org, subject] {
         h.update((part.len() as u64).to_be_bytes());
@@ -70,24 +70,11 @@ pub fn pseudonym(org: &str, subject: &str) -> String {
 }
 
 #[must_use]
-pub fn anonymize_target(org: &str, target: &str) -> String {
-    let mut out = String::with_capacity(target.len());
-    let mut rest = target;
-    while let Some(start) = rest.find("user:") {
-        out.push_str(&rest[..start + 5]);
-        let subject_start = start + 5;
-        let end = rest[subject_start..]
-            .find(char::is_whitespace)
-            .map_or(rest.len(), |offset| subject_start + offset);
-        if end == subject_start {
-            rest = &rest[subject_start..];
-            continue;
-        }
-        out.push_str(&pseudonym(org, &rest[subject_start..end]));
-        rest = &rest[end..];
-    }
-    out.push_str(rest);
-    out
+pub fn subject_token_len(value: &str) -> usize {
+    value
+        .char_indices()
+        .find(|(_, c)| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
+        .map_or(value.len(), |(i, _)| i)
 }
 
 /// Each field is length-prefixed, so two different entries can never produce the same bytes.
@@ -198,13 +185,9 @@ mod tests {
     }
 
     #[test]
-    fn pseudonyms_are_stable_but_organization_scoped() {
-        assert_eq!(pseudonym("o", "bob"), pseudonym("o", "bob"));
-        assert_ne!(pseudonym("o", "bob"), pseudonym("p", "bob"));
-        assert_ne!(pseudonym("o", "bob"), "bob");
-        assert_eq!(
-            anonymize_target("o", "catalog <- user:bob, reader"),
-            format!("catalog <- user:{} reader", pseudonym("o", "bob,"))
-        );
+    fn subject_tokens_stop_at_non_subject_characters() {
+        assert_eq!(subject_token_len("bob, reader"), 3);
+        assert_eq!(subject_token_len("a-subject_2.id)"), 14);
+        assert_eq!(subject_token_len(",bob"), 0);
     }
 }

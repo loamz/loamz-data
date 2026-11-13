@@ -6,7 +6,7 @@
 
 Erase one `user:<subject>` in the organization named by the request. Preserve a minimal run/task history, but remove identity links and content that can expose the person. Keep the organization’s audit history verifiable. “Everywhere” means every Data record and byte in that one organization; it does not mean another organization, the identity provider, or a separately scoped `personal:<subject>` account.
 
-The schema inventory below is from `server/server/migrations/0001_init.sql`. A “tombstone” is the stable, organization-scoped pseudonym `erased:<digest>`, not a usable principal.
+The schema inventory below is from `server/server/migrations/0001_init.sql`. A metadata “tombstone” is the stable, organization-scoped pseudonym `erased:<digest>`, not a usable principal.
 
 | Table and person-bearing column(s) | Erase action |
 |---|---|
@@ -17,8 +17,9 @@ The schema inventory below is from `server/server/migrations/0001_init.sql`. A �
 | `workspace_members.principal`, `entitlements.principal` | Delete matching memberships and capabilities. |
 | `securables.owner` | Delete each matching owned securable, its descendants, grants and files. Ownership is functional, so a detached tombstone owner would be misleading. |
 | `grants.principal` | Delete matching grants; `grants.granted_by` is tombstoned as attribution. |
-| `audit.actor`, `audit.on_behalf_of` | Keep each audit row and hash. Write stable pseudonyms from the outset so erasing a person never requires rewriting or rehashing history. |
-| `audit.target` | Keep resource labels and ids; pseudonymize embedded `user:<subject>` references before appending. The erase request itself must never put the raw subject in its target. |
+| `audit.actor`, `audit.on_behalf_of` | Keep each audit row and hash; store organization-specific random refs, resolving them through `audit_names` until erase deletes that person's mapping. |
+| `audit.target` | Keep resource labels and ids; store embedded `user:<ref>` values, splitting a subject at its first non-subject character. |
+| `audit_names.name` | Keep the subject as the readable label and lookup key until erase; then delete the mapping without touching audit rows. |
 | `tasks.subject` | Tombstone after the erase has used the original subject; retain task state and timestamps. |
 | `tasks.requested_by`, `tasks.on_behalf_of` | Tombstone matching raw subjects; retain task attribution without retaining the identity. |
 | `tasks.last_error` | Clear on successful completion; an error string is not a safe place to retain a subject or file path. |
@@ -33,9 +34,9 @@ The schema inventory below is from `server/server/migrations/0001_init.sql`. A �
 
 ### Audit design
 
-At audit append time, encode identity values as a deterministic, organization-scoped pseudonym and replace explicit person-principal references in `target` the same way. Hash the pseudonymized entry. This preserves existing audit row bytes and hashes through erase; `verify` continues to recompute the original chain. It also avoids cross-organization correlation from one subject’s pseudonym. The current code hashes raw actor fields, so tests must prove that new audit entries do not persist the subject.
+At audit append time, map each identity value to a random `p_<uuid>` ref scoped to its organization. Store the subject in `audit_names.name`, since it is readable and is the only stable lookup key available in the requested schema; the unique `(org_id, name)` constraint prevents duplicate refs when two writers race. Use refs for actor, on-behalf-of and `user:` target values, then hash those stored refs. The API resolves refs to names while mappings exist and to `erased person` after deletion. Erasure deletes only the subject's mapping in the same transaction that finishes the erase; every audit row and hash stays byte-identical.
 
-Rejected: rewrite actor strings in old audit rows and recompute every later hash. That makes the chain verify only after changing its historical evidence and makes an erase operation indistinguishable from deliberate audit rewriting.
+Rejected: a deterministic hash of `(org, subject)` in each audit entry. It is unreadable before erase and guessable by anyone who knows likely subjects. Also rejected: rewriting audit rows and recomputing later hashes, which would change historical evidence.
 
 Queue insertion plus `erase.requested` is already one `Uow`. For completion, delete external files idempotently first, then scrub metadata, finish the task, and append `erase.done` in one database transaction. A crash before that transaction leaves a retryable task; a crash after commit leaves both the scrub and its completion evidence. Never record a completed erase separately from its final database changes.
 
@@ -74,10 +75,10 @@ This checkout already has `POST /api/v1/orgs/{org}/erase` with `{ "subject": "us
 
 ## Phase 3: build
 
-The existing lifecycle worker now preflights and locks the account-admin rows before external file deletion. It removes owned securables and run-scoped output files, then scrubs person references, clears run content and tokens, finishes the task and appends `erase.done` in one `Uow`. Audit identities and explicit `user:` targets are pseudonymized on append; old rows are never rewritten. Pending erases block new grants and workspace/account assignments. No migration was needed.
+The existing lifecycle worker now preflights and locks the account-admin rows before external file deletion. It removes owned securables and run-scoped output files, then scrubs person references, clears run content and tokens, deletes the audit-name mapping, finishes the task and appends `erase.done` in one `Uow`. Audit rows store refs and are never rewritten. Pending erases block new grants and workspace/account assignments. `audit_names` was added to `0001_init.sql`.
 
 ## Phase 4: hostile review and validation
 
 Hostile review found and fixed three gaps: a last-admin check could race file deletion, a run output reference needed organization scoping and active-run file coverage, and task diagnostics outside the current task could retain the erased subject. Added/extended tests cover last-admin preservation, active run files/late completion and unrelated task errors. Audit target punctuation is also tested to avoid partial-subject leaks.
 
-Validation: `make check` passed. The configured Postgres container at port 55434 was initially unhealthy while syncing its existing data directory; the full command also passed against an isolated fresh Postgres 17 instance at port 55435. After the configured container recovered, the exact `AGENTS.md` command passed there too. All 10 erase scenarios passed on SQLite and Postgres.
+Validation: `nice -n 19 make check` passed (format, clippy, Rust workspace tests, and web type/tests). The documented Postgres command passed with `-- --test-threads=4`; the erase mapping, immutable audit rows, and verification cases passed on both SQLite and Postgres. Hostile review found that legacy `user:erased:<digest>` targets were not displayed as erased after changing token parsing; fixed the display path and added a regression test.
