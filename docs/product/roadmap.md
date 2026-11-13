@@ -68,11 +68,13 @@ a store per storage location (a customer's own bucket), external objects and sto
 | Grants on compute and storage | governance | | 📅 | | | | |
 | Row filters and column masks | governance | | | | ✅ | | |
 | Lineage | governance | | | | | | ❓ |
-| Personal data: column tags, retention, erasure across snapshots | governance | | | | | | ❓ |
+| Erase a person's data; the audit chain stays verifiable (`/audit/verify`) | governance | ✅ | | | | | |
+| Personal data: column tags, retention, erasure across table snapshots | governance | | | | | | ❓ |
 | **Data** | | | | | | | |
 | Catalogs, schemas, tables, views, volumes | data | ✅ | | | | | |
 | Iceberg REST catalog: read, write, commit | data | ✅ | | | | | |
-| Bring data in: file upload, load from S3 or a URL, database connectors | data | | | | | ❓ | |
+| Bring data in from a file: `loamz import` (CSV, Parquet), written straight to storage | data | ✅ | | | | | |
+| Bring data in from the console, from S3 or a URL, database connectors | data | | | | | | 📅 |
 | File index at commit, pruning before reads | data | | | 📅 | | | |
 | Compaction, sort on write, snapshot expiry | data | | | 📅 | | | |
 | Functions (SQL, Python) as agent tools, run in sandboxes | data | | | | 📅 | | |
@@ -86,9 +88,9 @@ a store per storage location (a customer's own bucket), external objects and sto
 | Serverless SQL | compute | ✅ | | | | | |
 | Active-run cap per organization | compute | ✅ | | | | | |
 | Benchmark of the query path (`bench/run.py`) | compute | ✅ | | | | | |
-| Warm engine (Rust, DuckDB, all cores), on machines and serverless | compute | | | 📅 | | | |
+| Warm engine (Rust, DuckDB, all cores), on machines (built, being measured); on serverless | compute | | | 🛠️ | | | |
 | Arrow results, streamed | compute | | | 📅 | | | |
-| Ranged reads instead of downloading tables | compute | | | 📅 | | | |
+| Ranged reads instead of downloading tables (through the broker, being measured) | compute | | | 🛠️ | | | |
 | Credential cache: the same table read twice asks the store once | compute | ✅ | | | | | |
 | Notifications instead of polling | compute | | | 📅 | | | |
 | Sandboxes for agents: a workspace folder per thread, a query path | compute | | | | 📅 | | |
@@ -98,38 +100,39 @@ a store per storage location (a customer's own bucket), external objects and sto
 | **Storage** | | | | | | | |
 | S3-compatible store; short-lived credentials scoped to one folder (R2) | storage | ✅ | | | | | |
 | Credentials and locations per workspace; paths never overlap | storage | ✅ | |
-| One root per catalog; managed and external objects; storage grants | storage | | 📅 | | | | |
+| A catalog on a registered location (its root is the location's folder) | storage | ✅ | | | | | |
+| External objects, a store per location (a customer's own bucket), storage grants | storage | | | | | | 📅 |
 | Credentials through STS (RustFS; S3 untested) | storage | ✅ | | | | | |
 | Default storage on RustFS, nothing to set up (development) | storage | ✅ | | | | | |
 | Defined behavior when access is revoked | storage | | | | | 📅 | |
 | **Secrets and recovery** | | | | | | | |
 | Every secret in OpenBao; the server keeps references (dev: OpenBao in compose) | secrets | ✅ | | | | | |
-| Production OpenBao: HA, audit device, snapshots, a tested restore | secrets | | | | | 📅 | |
+| Production OpenBao: audit device, three-share unseal, snapshots, a tested restore (role written, being run on a test machine) | secrets | | | | | 🛠️ | |
 | One sign-in for operator tools: OpenBao and RustFS through Keycloak (development) | identity | ✅ | | | | | |
-| The same in production: the realm template and each tool's settings | identity | | | | | 📅 | |
+| The same in production: the realm template and each tool's settings (written, being tested) | identity | | | | | 🛠️ | |
 | Tables readable without our server (version hint) | recovery | ✅ | | | | | |
 | Backups of the catalog and sign-in (`scripts/backup.sh`) and a restore check (`scripts/restore-check.sh`) | recovery | ✅ | | | | | |
 | Break-glass: an owner reads the bucket credential from OpenBao, audited (development) | recovery | ✅ | | | | | |
-| Continuous (WAL) archiving and the same in production | recovery | | | | | 📅 | |
+| Continuous (WAL) archiving and the same in production (daily backup and weekly restore check written, WAL next) | recovery | | | | | 🛠️ | |
 | **Platform** | | | | | | | |
 | Web console | platform | ✅ | | | | | |
 | Versioned public API, OpenAPI | platform | ✅ | | | | | |
 | Metrics: `/metrics` (request counts and times, queued and running runs), behind a vault token | platform | ✅ | | | | | |
 | Traces | platform | | | | | 📅 | |
 | Outbound traffic denied by default | platform | | | | | 📅 | |
-| Production deployment (`*.data.loamz.com`) | platform | | | | | 📅 | |
+| Production deployment (`*.data.loamz.com`) | platform | | | | | 🛠️ | |
 | Limits an organization's admin sets (`Entitlements`), with safety caps | platform | | | | | 📅 | |
 | Durable usage events (outbox) and cost allocation (`UsageSink`) | platform | | | | | | 📅 |
 | Self-hosted install: guide, one-organization default, upgrades | platform | | | | | | 📅 |
 | Loamz Cloud: sign-up, plans, billing, one private service for every product | platform | | | | | | 📅 |
 | Hybrid: our control plane, the customer's bucket and machines | platform | | | | | | ❓ |
 | Sharing data across organizations | platform | | | | | | ❓ |
-| Access tokens, a command-line tool and a Python SDK | platform | | | | | ❓ | |
+| Access tokens, a command-line tool and a Python SDK | platform | ✅ | | | | | |
 | SQL connection for BI tools (Arrow Flight SQL, JDBC) | platform | | | | | ❓ | |
 | Abuse protection: invite-only start, prepaid or spend cap, API rate limits, suspend an organization | platform | | | | | ❓ | |
 | Safe upgrades: forward-only migrations, neighbouring versions work together | platform | | | | | ❓ | |
-| Dependency checks in CI, signed releases with an SBOM, a threat model | platform | | | | | ❓ | |
-| User documentation site (private, at `data.loamz.com/docs`) | platform | | | | | ❓ | |
+| Dependency checks in CI, releases with an SBOM, a threat model (signing is not done) | platform | ✅ | | | | | |
+| User documentation site (private, at `data.loamz.com/docs`; built, not yet published) | platform | ✅ | | | | | |
 | Cost budgets and alerts per workspace | platform | | | | | | ❓ |
 | Compliance (SOC 2) and data residency by region | platform | | | | | | ❓ |
 | Audited support access, status page, incident process | platform | | | | | | ❓ |
