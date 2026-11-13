@@ -12,5 +12,6 @@
 pub mod agent;
 pub mod check;
 pub mod exec;
+pub mod pool;
 pub mod spec;
 pub mod work;
