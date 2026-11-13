@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-/// Open connections at once (two threads each: the sandbox allows a few hundred). DuckDB keeps one open per file and thread.
+/// Open connections at once (two threads each: the sandbox allows a few hundred). `DuckDB` keeps one open per file and thread.
 const MAX_CONNECTIONS: usize = 64;
 
 /// There is no outbound network: every connection reaches only this Unix socket.

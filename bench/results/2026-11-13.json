@@ -1,174 +1,109 @@
 {
-  "load_seconds": 10.4,
+  "load_seconds": 12.3,
   "rows": 11198003,
   "direct": {
     "point": {
-      "cold": 0.168,
-      "warm": 0.102,
+      "cold": 0.243,
+      "warm": 0.094,
       "rows_returned": 1
     },
     "filtered_agg": {
-      "cold": 0.155,
-      "warm": 0.061,
+      "cold": 0.21,
+      "warm": 0.076,
       "rows_returned": 1
     },
     "group_by": {
-      "cold": 0.081,
-      "warm": 0.032,
+      "cold": 0.097,
+      "warm": 0.036,
       "rows_returned": 10
     },
     "full_scan": {
-      "cold": 0.094,
-      "warm": 0.04,
+      "cold": 0.114,
+      "warm": 0.043,
       "rows_returned": 1
     }
   },
   "catalog": {
     "point": {
-      "cold": 0.197,
-      "warm": 0.122,
+      "cold": 0.235,
+      "warm": 0.134,
       "rows_returned": 1
     },
     "filtered_agg": {
-      "cold": 0.167,
-      "warm": 0.082,
+      "cold": 0.199,
+      "warm": 0.108,
       "rows_returned": 1
     },
     "group_by": {
-      "cold": 0.098,
-      "warm": 0.04,
+      "cold": 0.146,
+      "warm": 0.05,
       "rows_returned": 10
     },
     "join": {
-      "cold": 0.128,
-      "warm": 0.071,
+      "cold": 0.198,
+      "warm": 0.115,
       "rows_returned": 8
     },
     "full_scan": {
-      "cold": 0.107,
-      "warm": 0.05,
+      "cold": 0.296,
+      "warm": 0.086,
       "rows_returned": 1
     }
   },
   "machine": {
     "point": {
-      "cold": 0.905,
-      "warm": 0.787,
-      "queued_ms": 2,
-      "run_ms": 771,
+      "cold": 0.629,
+      "warm": 0.276,
+      "queued_ms": 9,
+      "run_ms": 225,
       "worker": {
-        "prepare_ms": 315,
-        "run_ms": 355,
-        "steps": [
-          [
-            "open",
-            87
-          ],
-          [
-            "extensions",
-            298
-          ],
-          [
-            "secret",
-            299
-          ]
-        ]
+        "prepare_ms": 16,
+        "run_ms": 165,
+        "start_ms": 0
       }
     },
     "filtered_agg": {
-      "cold": 1.009,
-      "warm": 0.945,
-      "queued_ms": 2,
-      "run_ms": 930,
+      "cold": 0.557,
+      "warm": 0.223,
+      "queued_ms": 15,
+      "run_ms": 185,
       "worker": {
-        "prepare_ms": 339,
-        "run_ms": 432,
-        "steps": [
-          [
-            "open",
-            96
-          ],
-          [
-            "extensions",
-            321
-          ],
-          [
-            "secret",
-            322
-          ]
-        ]
+        "prepare_ms": 11,
+        "run_ms": 125,
+        "start_ms": 0
       }
     },
     "group_by": {
-      "cold": 0.72,
-      "warm": 0.72,
-      "queued_ms": 3,
-      "run_ms": 704,
+      "cold": 0.22,
+      "warm": 0.194,
+      "queued_ms": 12,
+      "run_ms": 149,
       "worker": {
-        "prepare_ms": 319,
-        "run_ms": 278,
-        "steps": [
-          [
-            "open",
-            77
-          ],
-          [
-            "extensions",
-            300
-          ],
-          [
-            "secret",
-            301
-          ]
-        ]
+        "prepare_ms": 9,
+        "run_ms": 81,
+        "start_ms": 0
       }
     },
     "join": {
-      "cold": 0.95,
-      "warm": 0.84,
-      "queued_ms": 3,
-      "run_ms": 819,
+      "cold": 0.454,
+      "warm": 0.293,
+      "queued_ms": 12,
+      "run_ms": 251,
       "worker": {
-        "prepare_ms": 340,
-        "run_ms": 376,
-        "steps": [
-          [
-            "open",
-            92
-          ],
-          [
-            "extensions",
-            312
-          ],
-          [
-            "secret",
-            314
-          ]
-        ]
+        "prepare_ms": 15,
+        "run_ms": 210,
+        "start_ms": 0
       }
     },
     "full_scan": {
-      "cold": 0.907,
-      "warm": 0.781,
-      "queued_ms": 2,
-      "run_ms": 766,
+      "cold": 0.313,
+      "warm": 0.249,
+      "queued_ms": 14,
+      "run_ms": 200,
       "worker": {
-        "prepare_ms": 339,
-        "run_ms": 303,
-        "steps": [
-          [
-            "open",
-            102
-          ],
-          [
-            "extensions",
-            321
-          ],
-          [
-            "secret",
-            322
-          ]
-        ]
+        "prepare_ms": 11,
+        "run_ms": 130,
+        "start_ms": 0
       }
     }
   }
