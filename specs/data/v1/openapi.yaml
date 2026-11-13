@@ -1716,6 +1716,24 @@ paths:
       responses:
         '200':
           description: A run and its token
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run, token, limits, storage]
+                properties:
+                  run:
+                    type: object
+                    required: [id, kind, org_id, workspace_id, spec]
+                    properties:
+                      id: {type: string}
+                      kind: {type: string}
+                      org_id: {type: string}
+                      workspace_id: {type: string}
+                      spec: {type: object}
+                  token: {type: string}
+                  limits: {type: object}
+                  storage: {type: object, nullable: true}
         '204':
           description: Nothing is waiting
         '401':

@@ -39,6 +39,7 @@ pub struct Lease {
 pub struct RunInfo {
     pub id: String,
     pub kind: String,
+    pub org_id: String,
     pub workspace_id: String,
     pub spec: Value,
 }
@@ -678,5 +679,6 @@ mod tests {
             (lease.run.kind.as_str(), lease.limits.timeout_s),
             ("sql", 30)
         );
+        assert_eq!(lease.run.org_id, "o");
     }
 }
