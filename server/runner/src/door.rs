@@ -4,12 +4,13 @@
 //!
 //! * the **catalog door** forwards the REST-catalog requests for the tables the run declared to the Data server, adding the run's own
 //!   token (which the sandbox never sees);
-//! * the **storage door** takes the S3 requests DuckDB makes, checks method, folder and operation against the lease, signs them again
+//! * the **storage door** takes the S3 requests `DuckDB` makes, checks method, folder and operation against the lease, signs them again
 //!   with the lease's own credentials (the signature the sandbox made is ignored) and forwards them to the real store.
 //!
 //! Neither door passes a header through. Both refuse anything not named by the lease, and both stop working when the lease is closed.
 
 use std::{
+    fmt::Write as _,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -187,9 +188,8 @@ async fn read_request(stream: &mut UnixStream) -> Result<Option<Asked>, u16> {
         if raw.len() > 32_768 {
             return Err(431);
         }
-        let n = match tokio::time::timeout(IDLE, stream.read(&mut block)).await {
-            Ok(Ok(n)) => n,
-            _ => return Ok(None),
+        let Ok(Ok(n)) = tokio::time::timeout(IDLE, stream.read(&mut block)).await else {
+            return Ok(None);
         };
         if n == 0 {
             return Ok(None);
@@ -284,7 +284,7 @@ async fn write_answer(
     );
     for (name, value) in &answer.headers {
         if !value.contains(['\r', '\n']) {
-            head.push_str(&format!("{name}: {value}\r\n"));
+            let _ = write!(head, "{name}: {value}\r\n");
         }
     }
     head.push_str("\r\n");
@@ -538,9 +538,7 @@ pub fn storage_allows(
         return Err("outside the leased folders");
     }
     match method {
-        "GET" | "HEAD" => Ok(()),
-        "PUT" => Ok(()),
-        "DELETE" => Ok(()),
+        "GET" | "HEAD" | "PUT" | "DELETE" => Ok(()),
         "POST" if has("uploads") || has("uploadId") => Ok(()),
         _ => Err("a method that is not allowed"),
     }
@@ -705,7 +703,7 @@ fn amz_date(now: SystemTime) -> String {
     )
 }
 
-/// Percent-encodes everything but the unreserved characters (and `/` when `keep_slash`), as SigV4 asks.
+/// Percent-encodes everything but the unreserved characters (and `/` when `keep_slash`), as `SigV4` asks.
 fn uri_encode(text: &str, keep_slash: bool) -> String {
     let mut out = String::with_capacity(text.len());
     for b in text.bytes() {
@@ -715,7 +713,7 @@ fn uri_encode(text: &str, keep_slash: bool) -> String {
         {
             out.push(char::from(b));
         } else {
-            out.push_str(&format!("%{b:02X}"));
+            let _ = write!(out, "%{b:02X}");
         }
     }
     out
@@ -726,12 +724,13 @@ fn pct_decode(text: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
-                out.push(h * 16 + l);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2]))
+        {
+            out.push(h * 16 + l);
+            i += 3;
+            continue;
         }
         out.push(bytes[i]);
         i += 1;
@@ -794,10 +793,10 @@ fn sign_request(
         headers.push(("x-amz-security-token", grant.session_token.clone()));
     }
     headers.sort_by(|a, b| a.0.cmp(b.0));
-    let canonical_headers: String = headers
-        .iter()
-        .map(|(k, v)| format!("{k}:{}\n", v.trim()))
-        .collect();
+    let mut canonical_headers = String::new();
+    for (key, value) in &headers {
+        let _ = writeln!(canonical_headers, "{key}:{}", value.trim());
+    }
     let signed_names = headers
         .iter()
         .map(|(k, _)| *k)
@@ -866,15 +865,16 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::duration_suboptimal_units)]
     fn dates_are_written_the_way_signatures_expect() {
         assert_eq!(amz_date(UNIX_EPOCH), "19700101T000000Z");
         assert_eq!(
-            amz_date(UNIX_EPOCH + Duration::from_secs(1_440_938_160)),
+            amz_date(UNIX_EPOCH + Duration::from_secs(16_677 * 86_400 + 12 * 3_600 + 36 * 60)),
             "20150830T123600Z"
         );
         // A leap day.
         assert_eq!(
-            amz_date(UNIX_EPOCH + Duration::from_secs(1_709_208_000)),
+            amz_date(UNIX_EPOCH + Duration::from_secs(19_782 * 86_400 + 12 * 3_600)),
             "20240229T120000Z"
         );
     }
