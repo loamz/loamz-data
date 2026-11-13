@@ -3,13 +3,14 @@ use sqlx::{Any, Executor, Row};
 use super::model::{Kind, Securable};
 use crate::kernel::error::{Error, Result};
 
-const COLUMNS: &str = "id, org_id, kind, parent_id, name, owner, classification, placement, consistency, state, created_ms, metadata";
+const COLUMNS: &str = "id, org_id, workspace_id, kind, parent_id, name, owner, classification, placement, consistency, state, created_ms, metadata";
 
 fn row(r: &sqlx::any::AnyRow) -> Result<Securable> {
     let kind: String = r.try_get("kind")?;
     Ok(Securable {
         id: r.try_get("id")?,
         org_id: r.try_get("org_id")?,
+        workspace_id: r.try_get("workspace_id")?,
         kind: Kind::parse(&kind)
             .ok_or_else(|| Error::Internal(format!("unknown kind {kind} in the database")))?,
         parent_id: r.try_get("parent_id")?,
@@ -26,10 +27,11 @@ fn row(r: &sqlx::any::AnyRow) -> Result<Securable> {
 
 pub async fn insert<'e, E: Executor<'e, Database = Any>>(e: E, s: &Securable) -> Result<()> {
     sqlx::query(&format!(
-        "INSERT INTO securables ({COLUMNS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
+        "INSERT INTO securables ({COLUMNS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
     ))
     .bind(&s.id)
     .bind(&s.org_id)
+    .bind(&s.workspace_id)
     .bind(s.kind.as_str())
     .bind(&s.parent_id)
     .bind(&s.name)
@@ -43,6 +45,21 @@ pub async fn insert<'e, E: Executor<'e, Database = Any>>(e: E, s: &Securable) ->
     .execute(e)
     .await?;
     Ok(())
+}
+
+/// How many catalogs the workspace owns.
+pub async fn count_catalogs<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    org: &str,
+    workspace: &str,
+) -> Result<i64> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM securables WHERE org_id = $1 AND workspace_id = $2 AND kind = 'catalog'",
+    )
+    .bind(org)
+    .bind(workspace)
+    .fetch_one(e)
+    .await?)
 }
 
 pub async fn get<'e, E: Executor<'e, Database = Any>>(

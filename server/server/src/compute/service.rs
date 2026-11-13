@@ -39,14 +39,6 @@ use crate::{
     },
 };
 
-fn secret(prefix: &str) -> String {
-    format!(
-        "{prefix}{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
-    )
-}
-
 // ---- targets (the account's) -------------------------------------------------------------------------------------
 
 /// A target as it is first made: the secret is shown once, and only its hash is kept.
@@ -88,7 +80,7 @@ pub async fn add_target(
         created_ms: now_ms(),
         last_seen_ms: 0,
     };
-    let secret = secret("agt_");
+    let secret = crate::kernel::new_secret("agt_");
     let mut uow = Uow::begin(app).await?;
     if store::name_taken(&mut *uow.tx, org, name).await? {
         return Err(Error::Conflict(format!(
@@ -169,7 +161,12 @@ pub async fn add_serverless(
         )));
     }
     // Nothing connects out with a secret here, so the stored one is random and never given to anyone.
-    store::insert_target(&mut *uow.tx, &target, &hash_secret(&secret("none_"))).await?;
+    store::insert_target(
+        &mut *uow.tx,
+        &target,
+        &hash_secret(&crate::kernel::new_secret("none_")),
+    )
+    .await?;
     uow.audit(
         org,
         &Who::of(identity),
@@ -255,7 +252,7 @@ pub async fn new_secret(app: &App, identity: &Identity, org: &str, id: &str) -> 
     let target = store::target_by_id(app.db.pool(), org, id)
         .await?
         .ok_or_else(|| Error::NotFound("no such compute".into()))?;
-    let secret = secret("agt_");
+    let secret = crate::kernel::new_secret("agt_");
     let mut uow = Uow::begin(app).await?;
     store::set_secret(&mut *uow.tx, id, &hash_secret(&secret)).await?;
     uow.audit(
@@ -438,6 +435,7 @@ impl As {
             roles: vec![],
             actor: self.actor,
             scope: Some(scope),
+            confined_to: None,
         }
     }
 }
@@ -1101,7 +1099,7 @@ pub async fn lease(app: &App, target: &Target) -> Result<Option<Lease>> {
     let token = if run.kind == "sql" {
         String::new()
     } else {
-        let token = secret("jt_");
+        let token = crate::kernel::new_secret("jt_");
         store::insert_token(
             app.db.pool(),
             &hash_secret(&token),

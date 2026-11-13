@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use loamz_lake::{
-    grants::Issuer,
+    grants::{Issuer, R2Issuer},
     objects::{Bucket, Store},
 };
 use object_store::{ObjectStore, ObjectStoreExt, aws::AmazonS3Builder, path::Path};
@@ -41,7 +41,7 @@ async fn issued_credentials_reach_one_volume_only() {
         up.write(b"hello").await.unwrap();
         up.commit().await.unwrap();
     }
-    let issuer = Issuer::new(&endpoint, "loamz-data", &key_id, &r("api-token")).unwrap();
+    let issuer = R2Issuer::new(&endpoint, "loamz-data", &key_id, &r("api-token")).unwrap();
     let c = issuer
         .issue(&[a], false, Duration::from_secs(120))
         .await

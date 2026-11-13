@@ -62,7 +62,7 @@ describe("routes", () => {
     expect(parseRoute(`/catalog/${id}`, "workspace", WS)).toEqual({ screen: "catalog", ws: WS, id });
     expect(parseRoute("/catalog/<script>", "workspace", WS)).toEqual({ screen: "catalog", ws: WS, id: null });
     expect(parseRoute("/settings", "workspace", WS)).toEqual({ screen: "settings", ws: WS, tab: "members" });
-    expect(parseRoute("/settings/catalogs", "workspace", WS)).toEqual({ screen: "settings", ws: WS, tab: "catalogs" });
+    expect(parseRoute("/settings/catalogs", "workspace", WS)).toEqual({ screen: "settings", ws: WS, tab: "members" }); // no such tab any more
     expect(parseRoute("/settings/nonsense", "workspace", WS)).toEqual({ screen: "settings", ws: WS, tab: "members" });
     expect(parseRoute("/sql", "workspace", WS)).toEqual({ screen: "sql", ws: WS });
     expect(parseRoute("/compute", "workspace", WS)).toEqual({ screen: "compute", ws: WS });

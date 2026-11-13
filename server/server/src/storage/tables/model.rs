@@ -474,6 +474,19 @@ pub fn next_metadata_path(current: &str, unique: &str) -> String {
     format!("metadata/{n:05}-{unique}.metadata.json")
 }
 
+/// Where a table keeps its version hint, which every Iceberg reader that has no catalog looks for.
+pub const VERSION_HINT: &str = "metadata/version-hint.text";
+
+/// What the version hint says about the current metadata file `metadata/00004-x.metadata.json`: its name without the extension
+/// (`00004-x`), which readers such as `DuckDB` turn back into the file name.
+#[must_use]
+pub fn version_hint(metadata: &str) -> String {
+    let file = metadata.rsplit('/').next().unwrap_or(metadata);
+    file.strip_suffix(".metadata.json")
+        .unwrap_or(file)
+        .to_owned()
+}
+
 /// The columns people see: name, type and whether it may be empty, for the current schema.
 #[must_use]
 pub fn columns(meta: &Value) -> Vec<Value> {
@@ -738,6 +751,15 @@ mod tests {
         assert_eq!(id_in_location("s3://other/abc", "s3://b"), None);
         assert_eq!(id_in_location("s3://b/a/b", "s3://b"), None);
         assert_eq!(id_in_location("s3://b/", "s3://b"), None);
+    }
+
+    #[test]
+    fn the_version_hint_names_the_metadata_file_without_its_extension() {
+        assert_eq!(
+            version_hint("metadata/00004-abc.metadata.json"),
+            "00004-abc"
+        );
+        assert_eq!(version_hint("00000-x.metadata.json"), "00000-x");
     }
 
     #[test]

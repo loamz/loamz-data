@@ -1,7 +1,5 @@
 //! What a target and a run are, and the rules for asking for one. Pure.
 
-use sha2::{Digest, Sha256};
-
 /// An agent that has not been heard from for this long is offline.
 pub const ONLINE_MS: i64 = 45_000;
 /// How long an agent owns a run before the server gives up on it and fails it. The agent renews it while it works.
@@ -123,17 +121,7 @@ pub fn is_final_report(state: &str) -> bool {
     is_terminal(state)
 }
 
-/// The hash a secret or token is kept as.
-#[must_use]
-pub fn hash_secret(secret: &str) -> String {
-    Sha256::digest(secret.as_bytes())
-        .iter()
-        .fold(String::new(), |mut s, b| {
-            use std::fmt::Write;
-            let _ = write!(s, "{b:02x}");
-            s
-        })
-}
+pub use crate::kernel::hash_secret;
 
 /// A target's name is what people pick it by: words, digits, spaces, dashes, up to 64 characters.
 #[must_use]

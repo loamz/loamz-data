@@ -1,6 +1,6 @@
 use sqlx::{Any, Executor, Row};
 
-use super::model::{Member, Role, Workspace};
+use super::model::{Member, Role, ServicePrincipal, Workspace};
 use crate::kernel::error::{Error, Result};
 
 fn ws(r: &sqlx::any::AnyRow) -> std::result::Result<Workspace, sqlx::Error> {
@@ -78,13 +78,13 @@ pub async fn rename<'e, E: Executor<'e, Database = Any>>(e: E, id: &str, name: &
     Ok(())
 }
 
-/// Removes a workspace and everything that hangs on it (members, entitlements, bindings).
+/// Removes a workspace and everything that hangs on it (members, entitlements, saved queries).
 pub async fn delete(c: &mut sqlx::AnyConnection, id: &str) -> Result<()> {
     for table in [
         "workspace_members",
         "entitlements",
-        "catalog_bindings",
         "saved_queries",
+        "service_principals",
     ] {
         sqlx::query(&format!("DELETE FROM {table} WHERE workspace_id = $1"))
             .bind(id)
@@ -191,71 +191,6 @@ pub async fn remove_entitlement<'e, E: Executor<'e, Database = Any>>(
     .rows_affected())
 }
 
-/// The workspaces a catalog is bound to (none: it is visible in all).
-pub async fn bindings_of_catalog<'e, E: Executor<'e, Database = Any>>(
-    e: E,
-    catalog: &str,
-) -> Result<Vec<String>> {
-    let rows = sqlx::query("SELECT workspace_id FROM catalog_bindings WHERE catalog_id = $1")
-        .bind(catalog)
-        .fetch_all(e)
-        .await?;
-    rows.iter()
-        .map(|r| r.try_get("workspace_id"))
-        .collect::<std::result::Result<_, _>>()
-        .map_err(Into::into)
-}
-
-pub async fn bound_catalogs<'e, E: Executor<'e, Database = Any>>(
-    e: E,
-    workspace: &str,
-) -> Result<Vec<String>> {
-    let rows = sqlx::query("SELECT catalog_id FROM catalog_bindings WHERE workspace_id = $1")
-        .bind(workspace)
-        .fetch_all(e)
-        .await?;
-    rows.iter()
-        .map(|r| r.try_get("catalog_id"))
-        .collect::<std::result::Result<_, _>>()
-        .map_err(Into::into)
-}
-
-pub async fn bind<'e, E: Executor<'e, Database = Any>>(
-    e: E,
-    workspace: &str,
-    catalog: &str,
-) -> Result<()> {
-    sqlx::query("INSERT INTO catalog_bindings (workspace_id, catalog_id) VALUES ($1,$2) ON CONFLICT (workspace_id, catalog_id) DO NOTHING").bind(workspace).bind(catalog).execute(e).await?;
-    Ok(())
-}
-
-pub async fn unbind<'e, E: Executor<'e, Database = Any>>(
-    e: E,
-    workspace: &str,
-    catalog: &str,
-) -> Result<u64> {
-    Ok(
-        sqlx::query("DELETE FROM catalog_bindings WHERE workspace_id = $1 AND catalog_id = $2")
-            .bind(workspace)
-            .bind(catalog)
-            .execute(e)
-            .await?
-            .rows_affected(),
-    )
-}
-
-/// Used when a catalog is dropped.
-pub async fn forget_catalog<'e, E: Executor<'e, Database = Any>>(
-    e: E,
-    catalog: &str,
-) -> Result<()> {
-    sqlx::query("DELETE FROM catalog_bindings WHERE catalog_id = $1")
-        .bind(catalog)
-        .execute(e)
-        .await?;
-    Ok(())
-}
-
 /// Used when a person is erased: takes them out of every workspace of the organization.
 pub async fn forget_principal(
     c: &mut sqlx::AnyConnection,
@@ -276,4 +211,111 @@ pub async fn count_assignments<'e, E: Executor<'e, Database = Any>>(
 ) -> Result<i64> {
     let r = sqlx::query("SELECT COUNT(*) AS n FROM workspace_members WHERE principal = $1 AND workspace_id IN (SELECT id FROM workspaces WHERE org_id = $2)").bind(principal).bind(org).fetch_one(e).await?;
     Ok(r.try_get("n")?)
+}
+
+const SP_COLUMNS: &str = "id, org_id, workspace_id, name, created_by, created_ms";
+
+fn service_principal(r: &sqlx::any::AnyRow) -> Result<ServicePrincipal> {
+    Ok(ServicePrincipal {
+        id: r.try_get("id")?,
+        org_id: r.try_get("org_id")?,
+        workspace_id: r.try_get("workspace_id")?,
+        name: r.try_get("name")?,
+        created_by: r.try_get("created_by")?,
+        created_ms: r.try_get("created_ms")?,
+    })
+}
+
+pub async fn insert_service_principal<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    sp: &ServicePrincipal,
+    secret_hash: &str,
+) -> Result<()> {
+    sqlx::query(&format!(
+        "INSERT INTO service_principals ({SP_COLUMNS}, secret_hash) VALUES ($1,$2,$3,$4,$5,$6,$7)"
+    ))
+    .bind(&sp.id)
+    .bind(&sp.org_id)
+    .bind(&sp.workspace_id)
+    .bind(&sp.name)
+    .bind(&sp.created_by)
+    .bind(sp.created_ms)
+    .bind(secret_hash)
+    .execute(e)
+    .await?;
+    Ok(())
+}
+
+pub async fn service_principals<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    workspace: &str,
+) -> Result<Vec<ServicePrincipal>> {
+    let rows = sqlx::query(&format!(
+        "SELECT {SP_COLUMNS} FROM service_principals WHERE workspace_id = $1 ORDER BY name"
+    ))
+    .bind(workspace)
+    .fetch_all(e)
+    .await?;
+    rows.iter().map(service_principal).collect()
+}
+
+/// The service principal whose token has this hash.
+pub async fn service_principal_by_secret<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    secret_hash: &str,
+) -> Result<Option<ServicePrincipal>> {
+    let r = sqlx::query(&format!(
+        "SELECT {SP_COLUMNS} FROM service_principals WHERE secret_hash = $1"
+    ))
+    .bind(secret_hash)
+    .fetch_optional(e)
+    .await?;
+    r.as_ref().map(service_principal).transpose()
+}
+
+pub async fn service_principal_name_taken<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    workspace: &str,
+    name: &str,
+) -> Result<bool> {
+    Ok(
+        sqlx::query("SELECT id FROM service_principals WHERE workspace_id = $1 AND name = $2")
+            .bind(workspace)
+            .bind(name)
+            .fetch_optional(e)
+            .await?
+            .is_some(),
+    )
+}
+
+pub async fn set_service_principal_secret<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    workspace: &str,
+    id: &str,
+    secret_hash: &str,
+) -> Result<u64> {
+    Ok(sqlx::query(
+        "UPDATE service_principals SET secret_hash = $3 WHERE workspace_id = $1 AND id = $2",
+    )
+    .bind(workspace)
+    .bind(id)
+    .bind(secret_hash)
+    .execute(e)
+    .await?
+    .rows_affected())
+}
+
+pub async fn delete_service_principal(
+    c: &mut sqlx::AnyConnection,
+    workspace: &str,
+    id: &str,
+) -> Result<u64> {
+    Ok(
+        sqlx::query("DELETE FROM service_principals WHERE workspace_id = $1 AND id = $2")
+            .bind(workspace)
+            .bind(id)
+            .execute(&mut *c)
+            .await?
+            .rows_affected(),
+    )
 }

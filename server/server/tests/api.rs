@@ -235,6 +235,125 @@ async fn accounts(s: Server) {
 }
 both!(accounts);
 
+// ---- the installation's admin ------------------------------------------------------------------------------------
+
+fn root() -> Who {
+    person("root").with_role("platform-admin")
+}
+
+async fn the_platform_admin_makes_organizations(s: Server) {
+    let body =
+        json!({"alias": "globex", "admin_email": "Gia@Globex.test", "admin_name": "Gia Globex"});
+    assert_eq!(
+        s.post("/api/v1/orgs", &ana(), body.clone()).await.status,
+        403,
+        "an account admin is not the installation's admin"
+    );
+    assert_eq!(
+        s.post("/api/v1/orgs", &root().acting_as("agent-1"), body.clone())
+            .await
+            .status,
+        403,
+        "an agent never creates an organization"
+    );
+    for bad in [
+        json!({"alias": "Not Valid", "admin_email": "g@globex.test", "admin_name": "G"}),
+        json!({"alias": "globex", "admin_email": "nobody", "admin_name": "G"}),
+        json!({"alias": "globex", "admin_email": "g@globex.test", "admin_name": " "}),
+    ] {
+        assert_eq!(s.post("/api/v1/orgs", &root(), bad).await.status, 400);
+    }
+    assert!(
+        s.directory.organizations.lock().unwrap().is_empty(),
+        "nothing was made for a bad request"
+    );
+
+    let made = s.post("/api/v1/orgs", &root(), body.clone()).await;
+    assert_eq!(made.status, 201, "{}", made.text());
+    let made = made.json();
+    assert_eq!(made["id"], "globex");
+    assert_eq!(made["admin"]["email"], "gia@globex.test");
+    assert!(
+        made["admin"]["temporary_password"]
+            .as_str()
+            .is_some_and(|p| p.len() >= 20),
+        "a new person is given a password to change"
+    );
+    assert_eq!(
+        s.post("/api/v1/orgs", &root(), body).await.status,
+        409,
+        "only once"
+    );
+
+    // The first admin can sign in and manage the account.
+    let subject = made["admin"]["subject"].as_str().unwrap();
+    let gia = person(subject).also_in("globex", "globex");
+    assert_eq!(
+        s.get("/api/v1/orgs/globex/admins", &gia).await.json()["items"],
+        json!([format!("user:{subject}")])
+    );
+    assert_eq!(
+        s.directory.members.lock().unwrap().as_slice(),
+        [("globex".to_owned(), subject.to_owned())]
+    );
+    assert_eq!(
+        s.get("/api/v1/me", &root()).await.json()["platform_admin"],
+        true
+    );
+    assert_eq!(
+        s.get("/api/v1/me", &ana()).await.json()["platform_admin"],
+        false
+    );
+}
+both!(the_platform_admin_makes_organizations);
+
+async fn admins_add_people(s: Server) {
+    let path = format!("/api/v1/orgs/{ACME}/people");
+    let dee = json!({"email": "Dee@Acme.test", "name": "Dee Acme"});
+    assert_eq!(
+        s.post(&format!("/api/v1/orgs/{ACME}/account"), &ana(), json!({}))
+            .await
+            .status,
+        201
+    );
+    assert_eq!(
+        s.post(&path, &bob(), dee.clone()).await.status,
+        403,
+        "a member who is not an admin cannot add people"
+    );
+    assert_eq!(
+        s.post(&path, &person("pete"), dee.clone()).await.status,
+        404,
+        "an outsider cannot tell the account exists"
+    );
+    assert_eq!(
+        s.post(&path, &ana(), json!({"email": "x", "name": "X"}))
+            .await
+            .status,
+        400
+    );
+
+    let added = s.post(&path, &ana(), dee.clone()).await;
+    assert_eq!(added.status, 201, "{}", added.text());
+    assert_eq!(added.json()["email"], "dee@acme.test");
+    assert!(added.json()["temporary_password"].is_string());
+    let again = s.post(&path, &ana(), dee).await.json();
+    assert!(
+        again["temporary_password"].is_null(),
+        "a person who exists keeps their own password"
+    );
+    assert_eq!(again["subject"], added.json()["subject"]);
+    assert_eq!(s.directory.members.lock().unwrap().len(), 1, "added once");
+}
+both!(admins_add_people);
+
+#[tokio::test]
+async fn without_a_directory_people_cannot_be_made() {
+    let s = common::server_without_directory(fresh_db(false).await).await;
+    let body = json!({"alias": "globex", "admin_email": "g@globex.test", "admin_name": "G"});
+    assert_eq!(s.post("/api/v1/orgs", &root(), body).await.status, 503);
+}
+
 async fn workspaces(s: Server) {
     let main = s.acme().await;
     let org = format!("/api/v1/orgs/{ACME}/workspaces");
@@ -781,63 +900,34 @@ async fn groups_hold_privileges(s: Server) {
 }
 both!(groups_hold_privileges);
 
-async fn catalog_bindings(s: Server) {
+async fn a_catalog_belongs_to_one_workspace(s: Server) {
     let main = s.acme().await;
     let other = s.workspace(&ana(), ACME, "Other").await;
     s.assign(&main, &[&bob()]).await;
     s.assign(&other, &[&bob()]).await;
-    let (c, _, v) = tree(&s, &main).await;
+    let (c, schema, v) = tree(&s, &main).await;
     s.grant(&main, &ana(), &c, "user:bob", "reader").await;
     s.upload(&main, &v, "a.txt", &ana(), b"x").await;
 
-    // Unbound: visible from every workspace.
-    assert_eq!(
-        s.get(&format!("{}/{c}", securables(&other)), &bob())
-            .await
-            .status,
-        200
-    );
-    // Bound to Main: gone from Other, as if it did not exist, and its files with it.
-    assert_eq!(
-        s.put(
-            &format!("/api/v1/workspaces/{main}/catalogs/{c}"),
-            &bob(),
-            json!({})
-        )
-        .await
-        .status,
-        403,
-        "binding is for the account"
-    );
-    assert_eq!(
-        s.put(
-            &format!("/api/v1/workspaces/{main}/catalogs/{c}"),
-            &ana(),
-            json!({})
-        )
-        .await
-        .status,
-        204
-    );
-    assert_eq!(
-        s.get(&format!("{}/{c}", securables(&other)), &bob())
-            .await
-            .status,
-        404
-    );
+    // Its own workspace sees it, and its files.
+    let inside = |ws: &str, id: &str| format!("{}/{id}", securables(ws));
+    assert_eq!(s.get(&inside(&main, &c), &bob()).await.status, 200);
+    assert_eq!(s.download(&main, &v, "a.txt", &bob()).await.status, 200);
+
+    // Another workspace of the same organization does not have it: as if it did not exist, for everything inside it too, and even for
+    // someone with a grant or the account admin.
+    for who in [bob(), ana()] {
+        for id in [&c, &schema, &v] {
+            assert_eq!(s.get(&inside(&other, id), &who).await.status, 404);
+        }
+    }
     assert_eq!(items(&s.get(&securables(&other), &bob()).await).len(), 0);
     assert_eq!(s.download(&other, &v, "a.txt", &bob()).await.status, 404);
-    assert_eq!(
-        s.get(&format!("{}/{c}", securables(&main)), &bob())
-            .await
-            .status,
-        200
-    );
-    assert_eq!(s.download(&main, &v, "a.txt", &bob()).await.status, 200);
-    // A catalog of another organization cannot be bound.
+
+    // Catalogs are not bound or shared: there is no such route.
     assert_eq!(
         s.put(
-            &format!("/api/v1/workspaces/{main}/catalogs/not-a-catalog"),
+            &format!("/api/v1/workspaces/{other}/catalogs/{c}"),
             &ana(),
             json!({})
         )
@@ -845,21 +935,116 @@ async fn catalog_bindings(s: Server) {
         .status,
         404
     );
+
+    // A workspace that owns catalogs cannot be deleted; an empty one can.
     assert_eq!(
-        s.delete(&format!("/api/v1/workspaces/{main}/catalogs/{c}"), &ana())
+        s.delete(&format!("/api/v1/workspaces/{main}"), &ana())
+            .await
+            .status,
+        409
+    );
+    assert_eq!(
+        s.delete(&format!("/api/v1/workspaces/{other}"), &ana())
             .await
             .status,
         204
     );
+}
+both!(a_catalog_belongs_to_one_workspace);
+
+async fn service_principals_work_in_their_workspace(s: Server) {
+    let main = s.acme().await;
+    let other = s.workspace(&ana(), ACME, "Other").await;
+    s.assign(&main, &[&bob()]).await;
+    let (c, _, _) = tree(&s, &main).await;
+    let path = format!("/api/v1/workspaces/{main}/service-principals");
+
+    // A workspace's admins make them; a member cannot.
     assert_eq!(
-        s.get(&format!("{}/{c}", securables(&other)), &bob())
+        s.post(&path, &bob(), json!({"name": "bi"})).await.status,
+        403
+    );
+    assert_eq!(s.get(&path, &bob()).await.status, 403);
+    assert_eq!(
+        s.post(&path, &ana(), json!({"name": "bad/name"}))
             .await
             .status,
-        200,
-        "unbound again, visible again"
+        400
     );
+    let made = s.post(&path, &ana(), json!({"name": "bi"})).await;
+    assert_eq!(made.status, 201, "{}", made.text());
+    let made = made.json();
+    let (id, sp, token) = (
+        made["id"].as_str().unwrap().to_owned(),
+        made["principal"].as_str().unwrap().to_owned(),
+        made["token"].as_str().unwrap().to_owned(),
+    );
+    assert!(token.starts_with("lsp_") && token.len() > 60);
+    assert_eq!(sp, format!("sp:{id}"));
+    assert_eq!(
+        s.post(&path, &ana(), json!({"name": "bi"})).await.status,
+        409
+    );
+
+    // The list never shows a token.
+    let listed = s.get(&path, &ana()).await.json();
+    assert_eq!(listed["items"][0]["principal"], sp);
+    assert!(listed["items"][0].get("token").is_none());
+
+    // It is a principal like any other: no grant, no sight; with a grant, it reads.
+    let catalog = format!("{}/{c}", securables(&main));
+    assert_eq!(s.bearer("GET", &catalog, &token, None).await.status, 404);
+    s.grant(&main, &ana(), &c, &sp, "reader").await;
+    assert_eq!(s.bearer("GET", &catalog, &token, None).await.status, 200);
+    let me = s.bearer("GET", "/api/v1/me", &token, None).await;
+    assert_eq!(me.status, 200, "{}", me.text());
+    assert_eq!(me.json()["kind"], "service");
+
+    // It belongs to one workspace: assigned to another, it still cannot open it.
+    let put = s
+        .put(
+            &format!("/api/v1/workspaces/{other}/members"),
+            &ana(),
+            json!({"principal": sp, "role": "user"}),
+        )
+        .await;
+    assert_eq!(put.status, 204);
+    assert_eq!(
+        s.bearer("GET", &securables(&other), &token, None)
+            .await
+            .status,
+        404
+    );
+    // It does not make service principals, and a token that is not one of ours is no one.
+    assert_eq!(
+        s.bearer("POST", &path, &token, Some(json!({"name": "more"})))
+            .await
+            .status,
+        403
+    );
+    assert_eq!(
+        s.bearer("GET", &catalog, "lsp_not-a-token", None)
+            .await
+            .status,
+        401
+    );
+
+    // A new token replaces the old at once.
+    let renewed = s
+        .post(&format!("{path}/{id}/token"), &ana(), json!({}))
+        .await;
+    assert_eq!(renewed.status, 200, "{}", renewed.text());
+    let fresh = renewed.json()["token"].as_str().unwrap().to_owned();
+    assert_eq!(s.bearer("GET", &catalog, &token, None).await.status, 401);
+    assert_eq!(s.bearer("GET", &catalog, &fresh, None).await.status, 200);
+
+    // Deleting it ends the token and the assignment.
+    assert_eq!(s.delete(&format!("{path}/{id}"), &ana()).await.status, 204);
+    assert_eq!(s.bearer("GET", &catalog, &fresh, None).await.status, 401);
+    assert_eq!(s.delete(&format!("{path}/{id}"), &ana()).await.status, 404);
+    assert!(items(&s.get(&path, &ana()).await).is_empty());
 }
-both!(catalog_bindings);
+both!(service_principals_work_in_their_workspace);
 
 async fn organizations_are_separate(s: Server) {
     let ws = s.acme().await;

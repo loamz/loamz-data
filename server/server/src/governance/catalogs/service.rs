@@ -10,7 +10,6 @@ use crate::{
     governance::{
         audit::{model::Who, service::Uow},
         iam::service as iam,
-        workspaces::service as workspaces,
     },
     kernel::{
         auth::Identity,
@@ -74,23 +73,20 @@ pub async fn target(app: &App, org: &str, id: &str) -> Result<(Securable, Target
     Ok((entry, Target { chain, label }))
 }
 
-/// The catalog an entry sits in (or is).
-async fn catalog_of(app: &App, org: &str, entry: &Securable) -> Result<String> {
-    let mut at = entry.clone();
-    while !at.parent_id.is_empty() {
-        at = store::get(app.db.pool(), org, &at.parent_id)
-            .await?
-            .ok_or_else(|| Error::Internal("a parent is missing".into()))?;
-    }
-    Ok(at.id)
-}
-
-/// A catalog bound to other workspaces is not there from this one.
-async fn in_workspace(app: &App, workspace: &str, org: &str, entry: &Securable) -> Result<()> {
-    if !workspaces::catalog_visible(app, workspace, &catalog_of(app, org, entry).await?).await? {
+/// A catalog belongs to one workspace: from any other it is not there.
+fn in_workspace(workspace: &str, entry: &Securable) -> Result<()> {
+    if entry.workspace_id != workspace {
         return Err(Error::NotFound("not found".into()));
     }
     Ok(())
+}
+
+/// How many catalogs a workspace owns. A workspace that owns any cannot be deleted.
+///
+/// # Errors
+/// The database could not be read.
+pub async fn count_in_workspace(app: &App, org: &str, workspace: &str) -> Result<i64> {
+    store::count_catalogs(app.db.pool(), org, workspace).await
 }
 
 /// What `target` returns, also checking the entry is visible from this workspace.
@@ -104,7 +100,7 @@ pub async fn target_in(
     id: &str,
 ) -> Result<(Securable, Target)> {
     let (entry, t) = target(app, org, id).await?;
-    in_workspace(app, workspace, org, &entry).await?;
+    in_workspace(workspace, &entry)?;
     Ok((entry, t))
 }
 
@@ -158,6 +154,7 @@ pub async fn create(
     let entry = Securable {
         id,
         org_id: org.to_owned(),
+        workspace_id: workspace.to_owned(),
         kind: draft.kind,
         parent_id: draft.parent_id,
         name: draft.name,
@@ -306,7 +303,7 @@ pub async fn list(
         if child.state != "active" {
             continue;
         }
-        if parent.is_empty() && !workspaces::catalog_visible(app, workspace, &child.id).await? {
+        if in_workspace(workspace, &child).is_err() {
             continue;
         }
         let mut chain = vec![Link {
@@ -412,7 +409,7 @@ pub async fn exists(app: &App, org: &str, id: &str) -> Result<bool> {
 }
 
 /// Finds an entry by its names, `catalog`, then `schema`, then `table` or `volume`, as seen from a workspace. An entry that is not there,
-/// is being dropped, or sits in a catalog bound to other workspaces is "not found".
+/// is being dropped, or sits in another workspace's catalog is "not found".
 ///
 /// # Errors
 /// `NotFound`.

@@ -1,7 +1,7 @@
 # Life of a query
 
 One SQL statement from the SQL editor to its rows, as the code works today (12 Nov 2026). Paths are under `server/server/src`
-unless they start with `web/` or `server/runner`. What changes next: [RFC 001](rfcs/001-fast-data-plane.md).
+unless they start with `web/` or `server/runner`. What changes next: [proposal 0001](../proposals/0001-fast-data-plane.md).
 
 ## 1. The browser sends it
 `web/src/screens/SqlEditor.tsx::run` refuses if no running compute is picked, then `web/src/api.ts::runStatement` sends
@@ -48,4 +48,4 @@ done for, or an admin, and shows the rows only if they may still read every tabl
 
 ## Where the time goes
 Steps 1 and 6 poll; step 6 downloads whole tables and starts a sandbox, Python and DuckDB per statement; results are JSON.
-RFC 001 removes each of these.
+proposal 0001 removes each of these.

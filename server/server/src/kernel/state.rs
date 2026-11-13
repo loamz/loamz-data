@@ -3,7 +3,11 @@ use std::sync::Arc;
 use loamz_lake::{grants::Issuer, objects::Store, sql::Db};
 use tokio::sync::Mutex;
 
-use super::{auth::Verifier, settings::Settings};
+use super::{
+    auth::Verifier,
+    directory::Directory,
+    settings::{Secrets, Settings},
+};
 
 pub struct App {
     pub db: Db,
@@ -11,7 +15,9 @@ pub struct App {
     pub stores: Store,
     pub verifier: Verifier,
     /// Issues short-lived credentials for some folders of the bucket, for machines that read data themselves.
-    pub issuer: Option<Issuer>,
+    pub issuer: Option<Arc<dyn Issuer>>,
+    /// The directory of people and organizations, where the installation's admin creates them. None: it is not connected.
+    pub directory: Option<Arc<dyn Directory>>,
     /// Table metadata files, which never change once written: read from the bucket once.
     pub metadata_cache: std::sync::Mutex<super::cache::BoundedCache>,
     /// Wakes the serverless worker the moment a statement is queued, instead of when it next looks.
@@ -34,13 +40,14 @@ pub type Shared = Arc<App>;
 impl App {
     /// # Errors
     /// The storage cannot be opened.
-    pub fn new(settings: &Settings, db: Db) -> Result<Self, String> {
+    pub fn new(settings: &Settings, secrets: &Secrets, db: Db) -> Result<Self, String> {
         Ok(Self {
             db,
-            stores: settings.storage.open()?,
+            stores: settings.storage.open(secrets)?,
             verifier: Verifier::new(&settings.issuer)
                 .with_agent_clients(settings.agent_clients.clone()),
-            issuer: settings.storage.issuer()?,
+            issuer: settings.storage.issuer(secrets)?,
+            directory: settings.directory(secrets)?,
             metadata_cache: std::sync::Mutex::new(super::cache::BoundedCache::new(64 << 20)),
             queued: tokio::sync::Notify::new(),
             serverless_http: reqwest::Client::builder()
@@ -49,7 +56,7 @@ impl App {
                 .unwrap_or_default(),
             max_upload: settings.max_upload_bytes,
             max_active_runs: settings.max_active_runs,
-            serverless_token: settings.serverless_token()?,
+            serverless_token: secrets.serverless_token.clone(),
             serverless_endpoint: settings.serverless_endpoint.clone(),
             write: Mutex::new(()),
         })

@@ -3,41 +3,11 @@
 
 use axum::{
     Router,
-    extract::FromRequestParts,
     handler::Handler,
-    http::{header::AUTHORIZATION, request::Parts},
     routing::{delete, get, post, put},
 };
 
-use super::{
-    auth::{AuthError, Identity},
-    error::Error,
-    state::Shared,
-};
-
-impl FromRequestParts<Shared> for Identity {
-    type Rejection = Error;
-
-    async fn from_request_parts(parts: &mut Parts, app: &Shared) -> Result<Self, Error> {
-        let token = parts
-            .headers
-            .get(AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .ok_or(Error::Unauthorized)?;
-        match app.verifier.verify(token) {
-            Ok(caller) => Ok(caller),
-            Err(AuthError::UnknownKey) => {
-                // The provider may have rotated its keys: look once more, then decide.
-                if let Err(e) = app.verifier.refresh().await {
-                    tracing::warn!(error = e, "could not refresh the signing keys");
-                }
-                app.verifier.verify(token).map_err(|_| Error::Unauthorized)
-            }
-            Err(_) => Err(Error::Unauthorized),
-        }
-    }
-}
+use super::{error::Error, state::Shared};
 
 #[derive(Default)]
 pub struct Routes {

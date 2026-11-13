@@ -1,6 +1,6 @@
-# RFC 001: Fast data plane
+# Proposal 0001: Fast data plane
 
-- **Status:** accepted, 12 Nov 2026. Task 1 (benchmark) is next.
+- **Status:** accepted, 12 Nov 2026. Phase 2 of the [roadmap](../product/roadmap.md). Task 1 (benchmark) is next.
 - **Authors:** Ravikumar, Claude.
 
 ## Context
@@ -88,28 +88,3 @@ After each task, rerun the benchmark and put the numbers in the commit message.
 | 5 | Ranged reads of planned files; `fetch_table` deleted | bytes moved ≈ bytes needed |
 | 6 | Notifications, per-organization lock, one authorization read, credential cache | no sleep loops on the query path |
 | 7 | Sort on write, compaction, snapshot expiry | file count stays bounded |
-| 8 | Any S3-compatible store: an `Issuer` trait with STS `AssumeRole` (scoped session policy, no `Id` element) beside R2's own API. Test on RustFS (the default store) | a run reads its tables on RustFS with credentials limited to their folders |
-| 9 | First login: a default admin in the realm; the account console can create organizations and add people (Keycloak admin API behind ours). Then `seed.py` goes, and Getting started is compose, then `scripts/dev.sh`, then sign in as `admin` (password `admin`, changed on first login) | a new checkout reaches a signed-in workspace with no seed script |
-| 10 | Local storage for getting started: RustFS in `compose.yml`, and `scripts/dev.sh` points the server at it. Production changes only the storage settings | a fresh checkout stores and reads a table with no cloud account |
-| 11 | Workspace model (decisions of 2026-11-12): catalogs owned by one workspace, compute owned by the workspace with a per-catalog read policy, a bucket per catalog. Delete catalog bindings | the schema and the API match the README picture |
-
-## Sandboxes for agents
-
-We own the planner, the compute, the catalog and the sandbox, so an agent gets a built-in path to data, not a tool call over HTTP.
-
-```
-person ─ chat ─► Agents ─ token exchange ─► session token (person + agent + thread, read-only, minutes, bound to this sandbox)
-                  │ start sandbox(thread id)
-                  ▼
-   one host:  gVisor sandbox  ──Arrow Flight, unix socket──►  Data governance ─► warm DuckDB worker ─► store (RustFS)
-              /workspace (thread folder, read-write)  ◄── big results written here as Parquet by the worker
-```
-
-- **Sandbox:** stateful. gVisor plus one mounted **workspace** folder per thread (read-write, quota); everything else read-only, `/tmp` in memory. The person can upload files into it, and download what the agent generates. Agents never write tables.
-- **Data is queried, not mounted or downloaded.** The agent calls the `loamz` SDK, which sends SQL over Arrow Flight. Governance checks the person and the agent, applies column masks and row filters when it plans the statement, audits it (thread, rows, bytes, result hash) and runs it on the warm worker next to the store. Only the answer moves.
-- **Results:** small ones come back as Arrow, which DuckDB, Polars and pandas read without copying. Large ones the worker writes as Parquet into the thread's workspace on the same host (a file hand-off, not a transfer), so they never pass through the model's context.
-- **Access:** the sandbox holds no storage credentials and reaches only the Loamz socket or API. The token is read-only, short-lived, and only that sandbox can use it. Per-thread budgets (rows, bytes, CPU) go through the same admission as other runs.
-- **Speed:** the same worker, file index and caches as the SQL editor (tasks 2 to 6). Results are cached by table snapshot, and shared between users only when the policy is the same.
-- **Away from the host:** the same protocol works over the network when a sandbox runs on another machine; only the file hand-off becomes a transfer.
-- **Workspace lifetime:** the sandbox is disposable and the folder is the state, kept between turns and deleted with the thread. One machine first, so a local directory, checkpointed to the store when idle. NFSv4 if workspaces must be live on any worker.
-- **To decide:** how long an idle workspace is kept, and how big one may be.

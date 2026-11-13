@@ -10,12 +10,68 @@ use axum::{
 
 use super::{
     orgs::{model::personal_id, service as orgs},
-    workspaces::{model::Workspace, service as workspaces, service::Standing},
+    workspaces::{
+        model::{TOKEN_PREFIX, Workspace},
+        principals, service as workspaces,
+        service::Standing,
+    },
 };
 use crate::{
     compute::service as compute,
-    kernel::{auth::Identity, authz::Side, error::Error, state::Shared},
+    kernel::{
+        auth::{AuthError, Identity, Kind, OrgRef},
+        authz::Side,
+        error::Error,
+        state::Shared,
+    },
 };
+
+/// Who is calling: a person or a client by their `OpenID Connect` token, or a service principal by its own token.
+impl FromRequestParts<Shared> for Identity {
+    type Rejection = Error;
+
+    async fn from_request_parts(parts: &mut Parts, app: &Shared) -> Result<Self, Error> {
+        let token = parts
+            .headers
+            .get(AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or(Error::Unauthorized)?;
+        if token.starts_with(TOKEN_PREFIX) {
+            let sp = principals::authenticate(app, token)
+                .await?
+                .ok_or(Error::Unauthorized)?;
+            return Ok(Identity {
+                subject: sp.id,
+                kind: Kind::Service,
+                client: "service-principal".into(),
+                name: sp.name,
+                email: String::new(),
+                groups: vec![],
+                // For an organization the id is its name.
+                orgs: vec![OrgRef {
+                    id: sp.org_id.clone(),
+                    alias: sp.org_id,
+                }],
+                roles: vec![],
+                actor: None,
+                scope: None,
+                confined_to: Some(sp.workspace_id),
+            });
+        }
+        match app.verifier.verify(token) {
+            Ok(caller) => Ok(caller),
+            Err(AuthError::UnknownKey) => {
+                // The provider may have rotated its keys: look once more, then decide.
+                if let Err(e) = app.verifier.refresh().await {
+                    tracing::warn!(error = e, "could not refresh the signing keys");
+                }
+                app.verifier.verify(token).map_err(|_| Error::Unauthorized)
+            }
+            Err(_) => Err(Error::Unauthorized),
+        }
+    }
+}
 
 fn param(p: &HashMap<String, String>, name: &str) -> Result<String, Error> {
     p.get(name)

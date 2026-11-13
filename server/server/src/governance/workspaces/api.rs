@@ -3,7 +3,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{
-    model::{Role, Workspace},
+    model::{Role, ServicePrincipal, Workspace},
+    principals,
     service::{self, Standing},
 };
 use crate::{
@@ -76,7 +77,9 @@ async fn rename(State(app): State<Shared>, c: WsCtx, body: Bytes) -> Result<Json
 }
 
 async fn delete(State(app): State<Shared>, c: WsCtx) -> Result<StatusCode> {
-    service::delete(&app, &c.identity, &c.workspace.id).await?;
+    // The workspace owns its catalogs; one that still has any cannot go (they would have nowhere to be).
+    let catalogs = catalogs::count_in_workspace(&app, c.org(), &c.workspace.id).await?;
+    service::delete(&app, &c.identity, &c.workspace.id, catalogs).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -140,22 +143,39 @@ async fn unentitle(State(app): State<Shared>, c: WsCtx) -> Result<StatusCode> {
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn bound(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
-    Ok(Json(
-        json!({"items": service::bound(&app, &c.identity, &c.workspace.id).await?}),
-    ))
+fn service_principal(sp: &ServicePrincipal) -> Value {
+    json!({"id": sp.id, "name": sp.name, "principal": sp.principal(), "created_by": sp.created_by, "created_ms": sp.created_ms})
 }
 
-async fn bind(State(app): State<Shared>, c: WsCtx) -> Result<StatusCode> {
-    let catalog = param(&c, "catalog")?;
-    // Only a catalog of this organization can be bound.
-    catalogs::target(&app, c.org(), &catalog).await?;
-    service::bind(&app, &c.identity, &c.workspace.id, &catalog).await?;
-    Ok(StatusCode::NO_CONTENT)
+/// Makes a service principal. Its token is in the answer, once.
+async fn create_service_principal(
+    State(app): State<Shared>,
+    c: WsCtx,
+    body: Bytes,
+) -> Result<(StatusCode, Json<Value>)> {
+    let req: Name = body_json(&body)?;
+    let (sp, token) = principals::create(&app, &c.identity, &c.workspace.id, &req.name).await?;
+    let mut shown = service_principal(&sp);
+    shown["token"] = json!(token);
+    Ok((StatusCode::CREATED, Json(shown)))
 }
 
-async fn unbind(State(app): State<Shared>, c: WsCtx) -> Result<StatusCode> {
-    service::unbind(&app, &c.identity, &c.workspace.id, &param(&c, "catalog")?).await?;
+async fn service_principals(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
+    let items: Vec<Value> = principals::list(&app, &c.identity, &c.workspace.id)
+        .await?
+        .iter()
+        .map(service_principal)
+        .collect();
+    Ok(Json(json!({"items": items})))
+}
+
+async fn renew_service_principal_token(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
+    let token = principals::rotate(&app, &c.identity, &c.workspace.id, &param(&c, "id")?).await?;
+    Ok(Json(json!({"token": token})))
+}
+
+async fn delete_service_principal(State(app): State<Shared>, c: WsCtx) -> Result<StatusCode> {
+    principals::delete(&app, &c.identity, &c.workspace.id, &param(&c, "id")?).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -176,7 +196,20 @@ pub fn routes() -> Routes {
             "/api/v1/workspaces/{ws}/entitlements/{principal}/{entitlement}",
             unentitle,
         )
-        .get("/api/v1/workspaces/{ws}/catalogs", bound)
-        .put("/api/v1/workspaces/{ws}/catalogs/{catalog}", bind)
-        .delete("/api/v1/workspaces/{ws}/catalogs/{catalog}", unbind)
+        .get(
+            "/api/v1/workspaces/{ws}/service-principals",
+            service_principals,
+        )
+        .post(
+            "/api/v1/workspaces/{ws}/service-principals",
+            create_service_principal,
+        )
+        .post(
+            "/api/v1/workspaces/{ws}/service-principals/{id}/token",
+            renew_service_principal_token,
+        )
+        .delete(
+            "/api/v1/workspaces/{ws}/service-principals/{id}",
+            delete_service_principal,
+        )
 }

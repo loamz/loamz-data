@@ -2,14 +2,17 @@
 //! Keycloak role `account-admin` and belongs to it; a person's own space exists for them from the first sign-in.
 
 use super::{
-    model::{Org, belongs, personal_id, valid_principal},
+    model::{
+        Invited, Org, belongs, personal_id, valid_alias, valid_email, valid_name, valid_principal,
+    },
     store,
 };
 use crate::{
     governance::audit::{model::Who, service::Uow},
     kernel::{
-        auth::{ACCOUNT_ADMIN_ROLE, Identity},
+        auth::{ACCOUNT_ADMIN_ROLE, Identity, PLATFORM_ADMIN_ROLE},
         authz::Side,
+        directory::{Directory, NewPerson},
         error::{Error, Result},
         now_ms,
         state::App,
@@ -112,6 +115,136 @@ pub async fn create(app: &App, identity: &Identity, org: &str) -> Result<Org> {
     .await?;
     uow.commit().await?;
     Ok(o)
+}
+
+fn directory(app: &App) -> Result<&dyn Directory> {
+    app.directory.as_deref().ok_or_else(|| {
+        Error::Unavailable(
+            "the directory of people is not connected to this server (LOAMZ_DATA_DIRECTORY_SECRET_FILE)".into(),
+        )
+    })
+}
+
+/// A password for someone's first sign-in, which they must change at once.
+fn temporary_password() -> String {
+    crate::kernel::new_id().replace('-', "")
+}
+
+fn person(email: &str, name: &str) -> Result<NewPerson> {
+    if !valid_email(email) {
+        return Err(Error::Invalid("the email is not valid".into()));
+    }
+    if !valid_name(name) {
+        return Err(Error::Invalid("the name is not valid".into()));
+    }
+    Ok(NewPerson {
+        email: email.trim().to_lowercase(),
+        name: name.trim().to_owned(),
+    })
+}
+
+/// Makes the person if they are new and adds them to the organization; the answer says what they need to sign in.
+async fn invite(app: &App, alias: &str, who: &NewPerson) -> Result<Invited> {
+    let password = temporary_password();
+    let found = directory(app)?.ensure_person(who, &password).await?;
+    directory(app)?.add_member(alias, &found.subject).await?;
+    Ok(Invited {
+        subject: found.subject,
+        email: who.email.clone(),
+        temporary_password: found.created.then_some(password),
+    })
+}
+
+/// Makes a new organization, with its first admin: the installation's admin does this. The organization and its first admin are
+/// made in the directory, then the Data account (with its audit entry) in one transaction. Asking again for the same one is safe.
+///
+/// # Errors
+/// The caller is not the platform admin, the alias or the person is not valid, the account exists, or the directory is not
+/// connected.
+pub async fn create_org(
+    app: &App,
+    identity: &Identity,
+    alias: &str,
+    admin_email: &str,
+    admin_name: &str,
+) -> Result<(Org, Invited)> {
+    if identity.actor.is_some() || !identity.has_role(PLATFORM_ADMIN_ROLE) {
+        return Err(Error::Denied(crate::kernel::error::Denied {
+            action: "create an organization",
+            target: format!("org {alias}"),
+        }));
+    }
+    if !valid_alias(alias) {
+        return Err(Error::Invalid(
+            "the alias is 2 to 40 lower-case letters, digits or dashes".into(),
+        ));
+    }
+    let first = person(admin_email, admin_name)?;
+    if store::get(app.db.pool(), alias).await?.is_some() {
+        return Err(Error::Conflict("this organization already exists".into()));
+    }
+    directory(app)?.create_organization(alias).await?;
+    let invited = invite(app, alias, &first).await?;
+    let o = Org {
+        id: alias.to_owned(),
+        kind: "org".into(),
+        alias: alias.to_owned(),
+        created_ms: now_ms(),
+    };
+    let mut uow = Uow::begin(app).await?;
+    if store::get(&mut *uow.tx, alias).await?.is_some() {
+        return Err(Error::Conflict("this organization already exists".into()));
+    }
+    store::insert(&mut *uow.tx, &o, &identity.subject).await?;
+    store::add_admin(
+        &mut *uow.tx,
+        alias,
+        &format!("user:{}", invited.subject),
+        &identity.subject,
+        o.created_ms,
+    )
+    .await?;
+    uow.audit(
+        alias,
+        &Who::of(identity),
+        "account.create",
+        &format!("org {alias}"),
+        "ok",
+    )
+    .await?;
+    uow.commit().await?;
+    Ok((o, invited))
+}
+
+/// Adds a person to an organization: an account admin does this. A person who already exists is only added.
+///
+/// # Errors
+/// Not an admin, the person is not valid, or the directory is not connected.
+pub async fn add_person(
+    app: &App,
+    identity: &Identity,
+    org: &str,
+    email: &str,
+    name: &str,
+) -> Result<Invited> {
+    require_admin(app, identity, org).await?;
+    let who = person(email, name)?;
+    let o = get(app, identity, org).await?;
+    if o.kind != "org" {
+        return Err(Error::Invalid("a personal space has no one to add".into()));
+    }
+    let invited = invite(app, &o.alias, &who).await?;
+    let mut uow = Uow::begin(app).await?;
+    uow.audit(
+        org,
+        &Who::of(identity),
+        "account.person.add",
+        &format!("user:{}", invited.subject),
+        "ok",
+    )
+    .await?;
+    uow.commit().await?;
+    Ok(invited)
 }
 
 /// Whether any of the principals is an account admin of the organization.
@@ -278,15 +411,19 @@ pub struct Membership {
 /// # Errors
 /// The database could not be read or written.
 pub async fn memberships(app: &App, identity: &Identity) -> Result<Vec<Membership>> {
-    let personal = ensure_personal(app, identity).await?;
-    let mut out = vec![Membership {
-        id: personal.id.clone(),
-        alias: personal.alias,
-        kind: personal.kind,
-        has_account: true,
-        admin: is_admin(app, &personal.id, &identity.principals()).await?,
-        can_create: false,
-    }];
+    let mut out = Vec::new();
+    // Only a person has a space of their own; a service (a service principal, a client) works in organizations.
+    if identity.kind == crate::kernel::auth::Kind::Person {
+        let personal = ensure_personal(app, identity).await?;
+        out.push(Membership {
+            id: personal.id.clone(),
+            alias: personal.alias,
+            kind: personal.kind,
+            has_account: true,
+            admin: is_admin(app, &personal.id, &identity.principals()).await?,
+            can_create: false,
+        });
+    }
     for r in &identity.orgs {
         let org = store::get(app.db.pool(), &r.id).await?;
         let admin = if org.is_some() {

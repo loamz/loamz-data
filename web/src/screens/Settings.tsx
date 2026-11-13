@@ -1,9 +1,10 @@
-import { Building2, Database, KeyRound, Trash2, UserMinus, Users, type LucideIcon } from "lucide-react";
+import { Building2, Bot, KeyRound, Trash2, UserMinus, Users, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Badge, Body, Button, DataTable, Input, ObjectHeader, Page, PageEmpty, Select, SidebarItem, confirmAction, toast, type Column } from "@/design";
 import * as api from "@/api";
 import { Principal } from "@/components/Principal";
 import { PrincipalField } from "@/components/PrincipalField";
+import { ShownOnce } from "@/components/ShownOnce";
 import { useLoad } from "@/hooks";
 import { hrefOf, navigate, type Route, type SettingsTab } from "@/route";
 import { centralOrigin } from "@/site";
@@ -13,7 +14,7 @@ const ROLES = [
   { value: "admin", label: "Admin" },
 ];
 
-/** A workspace's members, what they are entitled to, and which catalogs it can see. For the workspace's admins. */
+/** A workspace's members and what they are entitled to. For the workspace's admins. */
 export function Settings({ ws, tab }: { ws: string; tab: SettingsTab; me: api.Me | undefined }) {
   const w = useLoad(() => api.workspace(ws), ws);
   const here = w.data;
@@ -37,8 +38,8 @@ export function Settings({ ws, tab }: { ws: string; tab: SettingsTab; me: api.Me
   // Renaming and deleting belong to account admins; for anyone else that page is not offered, and its address shows the first one.
   const sections: { tab: SettingsTab; label: string; icon: LucideIcon }[] = [
     { tab: "members", label: "Members", icon: Users },
+    { tab: "principals", label: "Service principals", icon: Bot },
     { tab: "entitlements", label: "Entitlements", icon: KeyRound },
-    { tab: "catalogs", label: "Catalogs", icon: Database },
     ...(here.account_admin ? [{ tab: "workspace" as const, label: "Workspace", icon: Building2 }] : []),
   ];
   const now = sections.find((s) => s.tab === tab)?.tab ?? "members";
@@ -56,8 +57,8 @@ export function Settings({ ws, tab }: { ws: string; tab: SettingsTab; me: api.Me
         </nav>
         <div className="min-w-0 max-w-3xl flex-1">
           {now === "members" && <Members ws={ws} />}
+          {now === "principals" && <ServicePrincipals ws={ws} />}
           {now === "entitlements" && <Entitlements ws={ws} />}
-          {now === "catalogs" && <Bindings ws={ws} accountAdmin={here.account_admin} />}
           {now === "workspace" && <Danger ws={ws} workspace={here} />}
         </div>
       </div>
@@ -75,6 +76,83 @@ function Section({ title, note, children }: { title: string; note: string; child
       </div>
       {children}
     </section>
+  );
+}
+
+function ServicePrincipals({ ws }: { ws: string }) {
+  const list = useLoad(() => api.servicePrincipals(ws), ws);
+  const [name, setName] = useState("");
+  const [shown, setShown] = useState<{ name: string; token: string } | null>(null);
+  const columns: Column<api.ServicePrincipal>[] = [
+    { key: "name", header: "Name", width: "fill", cell: (p) => p.name },
+    { key: "principal", header: "Principal", cell: (p) => <span className="font-mono text-xs text-muted">{p.principal}</span> },
+    {
+      key: "actions",
+      header: "",
+      cell: (p) => (
+        <span className="flex gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={async () => {
+              if (!(await confirmAction({ title: `New token for ${p.name}?`, description: "The old token stops working at once.", confirmLabel: "Replace token" }))) return;
+              try {
+                setShown({ name: p.name, token: (await api.renewServicePrincipalToken(ws, p.id)).token });
+              } catch (err) {
+                toast.error("Could not renew it", (err as Error).message);
+              }
+            }}
+          >
+            New token
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={async () => {
+              if (!(await confirmAction({ title: `Delete ${p.name}?`, description: "Its token stops working at once.", confirmLabel: "Delete" }))) return;
+              try {
+                await api.deleteServicePrincipal(ws, p.id);
+                list.reload();
+              } catch (err) {
+                toast.error("Could not delete it", (err as Error).message);
+              }
+            }}
+          >
+            Delete
+          </Button>
+        </span>
+      ),
+    },
+  ];
+  return (
+    <Section title="Service principals" note="An app or pipeline of this workspace (a BI tool, an ML app) that is not a person. It signs in with a token, works only here, and gets grants like anyone: name it as sp:<id>.">
+      <form
+        className="flex flex-wrap items-center gap-2"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          try {
+            const made = await api.createServicePrincipal(ws, name.trim());
+            setShown({ name: made.name, token: made.token });
+            setName("");
+            list.reload();
+          } catch (err) {
+            toast.error("Could not create it", (err as Error).message);
+          }
+        }}
+      >
+        <Input className="w-full sm:w-64" placeholder="Name, such as tableau" aria-label="Service principal name" value={name} onChange={(e) => setName(e.target.value)} />
+        <Button variant="primary" type="submit" disabled={!name.trim()}>
+          Create
+        </Button>
+      </form>
+      <DataTable columns={columns} rows={list.data ?? []} rowKey={(p) => p.id} count={`${(list.data ?? []).length} service principals`} empty="No service principals yet." />
+      <ShownOnce
+        title={`Token for ${shown?.name ?? ""}`}
+        description="It is shown once. Send it as a bearer token: Authorization: Bearer <token>."
+        text={shown?.token ?? null}
+        onClose={() => setShown(null)}
+      />
+    </Section>
   );
 }
 
@@ -207,65 +285,10 @@ function Entitlements({ ws }: { ws: string }) {
   );
 }
 
-function Bindings({ ws, accountAdmin }: { ws: string; accountAdmin: boolean }) {
-  const bound = useLoad(() => api.boundCatalogs(ws), ws);
-  const catalogs = useLoad(() => api.list(ws, ""), ws);
-  const [pick, setPick] = useState("");
-  const names = Object.fromEntries((catalogs.data ?? []).map((c) => [c.id, c.name]));
-  const columns: Column<string>[] = [
-    { key: "name", header: "Catalog", width: "fill", cell: (id) => names[id] ?? id },
-    ...(accountAdmin
-      ? [
-          {
-            key: "unbind",
-            header: "",
-            cell: (id: string) => (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={async () => {
-                  await api.unbindCatalog(ws, id).catch((e: Error) => toast.error("Could not unbind", e.message));
-                  bound.reload();
-                }}
-              >
-                Unbind
-              </Button>
-            ),
-          },
-        ]
-      : []),
-  ];
-  return (
-    <Section title="Catalogs" note="A catalog bound to workspaces shows only in those. One bound to none shows in every workspace of the organization.">
-      {accountAdmin && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Select className="w-full sm:w-64" aria-label="Catalog" placeholder="Bind a catalog here" value={pick} onValueChange={setPick} options={(catalogs.data ?? []).filter((c) => !(bound.data ?? []).includes(c.id)).map((c) => ({ value: c.id, label: c.name }))} />
-          <Button
-            variant="primary"
-            disabled={!pick}
-            onClick={async () => {
-              try {
-                await api.bindCatalog(ws, pick);
-                setPick("");
-                bound.reload();
-              } catch (e) {
-                toast.error("Could not bind it", (e as Error).message);
-              }
-            }}
-          >
-            Bind
-          </Button>
-        </div>
-      )}
-      <DataTable columns={columns} rows={bound.data ?? []} rowKey={(id) => id} count={`${(bound.data ?? []).length} bound`} empty="No catalog is bound here, so all of the organization's catalogs show." />
-    </Section>
-  );
-}
-
 function Danger({ ws, workspace }: { ws: string; workspace: api.Workspace }) {
   const [name, setName] = useState(workspace.name);
   return (
-    <Section title="Workspace" note="Only account admins can rename or delete a workspace. Deleting it does not touch the organization's catalogs.">
+    <Section title="Workspace" note="Only account admins can rename or delete a workspace. A workspace that owns catalogs cannot be deleted: drop them first.">
       <div className="flex flex-wrap items-center gap-2">
         <Input className="w-64" value={name} onChange={(e) => setName(e.target.value)} aria-label="Workspace name" />
         <Button
@@ -286,12 +309,12 @@ function Danger({ ws, workspace }: { ws: string; workspace: api.Workspace }) {
       <div className="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
         <div>
           <h3 className="text-sm font-semibold">Delete this workspace</h3>
-          <p className="text-sm text-muted">Everyone is unassigned and its settings go. Data stays in the catalogs.</p>
+          <p className="text-sm text-muted">Everyone is unassigned and its settings go.</p>
         </div>
         <Button
           variant="danger"
           onClick={async () => {
-            if (!(await confirmAction({ title: `Delete ${workspace.name}?`, description: "People lose access to this workspace. The catalogs and files are not touched.", confirmLabel: "Delete", danger: true }))) return;
+            if (!(await confirmAction({ title: `Delete ${workspace.name}?`, description: "People lose access to this workspace.", confirmLabel: "Delete", danger: true }))) return;
             try {
               await api.deleteWorkspace(ws);
               // The workspace is gone, so there is nothing here to stay on: go to the account site.

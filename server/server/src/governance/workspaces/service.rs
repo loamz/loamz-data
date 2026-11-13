@@ -44,6 +44,14 @@ pub async fn open(app: &App, identity: &Identity, id: &str) -> Result<(Workspace
     if !belongs(identity, &w.org_id) {
         return Err(gone());
     }
+    // A service principal belongs to one workspace and can open no other.
+    if identity
+        .confined_to
+        .as_deref()
+        .is_some_and(|only| only != id)
+    {
+        return Err(gone());
+    }
     let sides = orgs::sides(app, identity, &w.org_id).await?;
     // Every side must stand somewhere in the workspace: an agent is let in only if it was assigned too.
     let members = store::members(app.db.pool(), id).await?;
@@ -74,7 +82,12 @@ fn rank(s: Standing) -> u8 {
     }
 }
 
-async fn deny(app: &App, identity: &Identity, w: &Workspace, action: &'static str) -> Error {
+pub(super) async fn deny(
+    app: &App,
+    identity: &Identity,
+    w: &Workspace,
+    action: &'static str,
+) -> Error {
     let _ = crate::governance::audit::service::record(
         app,
         &w.org_id,
@@ -185,12 +198,19 @@ pub async fn rename(app: &App, identity: &Identity, id: &str, name: &str) -> Res
 
 /// Removes a workspace and its assignments. The organization's catalogs are not touched: they belong to the account.
 ///
+/// `catalogs` is how many catalogs the workspace owns: it cannot be deleted while it owns any.
+///
 /// # Errors
-/// Not an account admin.
-pub async fn delete(app: &App, identity: &Identity, id: &str) -> Result<()> {
+/// Not an account admin, or the workspace still owns catalogs.
+pub async fn delete(app: &App, identity: &Identity, id: &str, catalogs: i64) -> Result<()> {
     let (w, standing) = open(app, identity, id).await?;
     if standing != Standing::Account {
         return Err(deny(app, identity, &w, "delete a workspace").await);
+    }
+    if catalogs > 0 {
+        return Err(Error::Conflict(
+            "this workspace still owns catalogs: drop them first".into(),
+        ));
     }
     let mut uow = Uow::begin(app).await?;
     store::delete(&mut uow.tx, id).await?;
@@ -387,76 +407,6 @@ pub async fn entitled(
                 .iter()
                 .any(|(p, e)| e == entitlement && side.principals.contains(p))
     }))
-}
-
-/// Whether a catalog is visible from this workspace: unbound catalogs are visible everywhere, bound ones only where bound.
-///
-/// # Errors
-/// The database could not be read.
-pub async fn catalog_visible(app: &App, workspace: &str, catalog: &str) -> Result<bool> {
-    let bound = store::bindings_of_catalog(app.db.pool(), catalog).await?;
-    Ok(bound.is_empty() || bound.iter().any(|w| w == workspace))
-}
-
-/// Binds a catalog to a workspace (account admins only). The caller has already checked the catalog is in this organization.
-///
-/// # Errors
-/// Not an account admin.
-pub async fn bind(app: &App, identity: &Identity, workspace: &str, catalog: &str) -> Result<()> {
-    let (w, standing) = open(app, identity, workspace).await?;
-    if standing != Standing::Account {
-        return Err(deny(app, identity, &w, "bind a catalog").await);
-    }
-    let mut uow = Uow::begin(app).await?;
-    store::bind(&mut *uow.tx, workspace, catalog).await?;
-    uow.audit(
-        &w.org_id,
-        &Who::of(identity),
-        "workspace.bind",
-        &format!("workspace {workspace} <- catalog {catalog}"),
-        "ok",
-    )
-    .await?;
-    uow.commit().await
-}
-
-/// # Errors
-/// Not an account admin, or it was not bound.
-pub async fn unbind(app: &App, identity: &Identity, workspace: &str, catalog: &str) -> Result<()> {
-    let (w, standing) = open(app, identity, workspace).await?;
-    if standing != Standing::Account {
-        return Err(deny(app, identity, &w, "unbind a catalog").await);
-    }
-    let mut uow = Uow::begin(app).await?;
-    if store::unbind(&mut *uow.tx, workspace, catalog).await? == 0 {
-        return Err(Error::NotFound("that catalog is not bound here".into()));
-    }
-    uow.audit(
-        &w.org_id,
-        &Who::of(identity),
-        "workspace.unbind",
-        &format!("workspace {workspace} <- catalog {catalog}"),
-        "ok",
-    )
-    .await?;
-    uow.commit().await
-}
-
-/// The catalogs bound to a workspace.
-///
-/// # Errors
-/// Not a member of the workspace.
-pub async fn bound(app: &App, identity: &Identity, workspace: &str) -> Result<Vec<String>> {
-    open(app, identity, workspace).await?;
-    store::bound_catalogs(app.db.pool(), workspace).await
-}
-
-/// Used when a catalog is dropped.
-///
-/// # Errors
-/// The database could not be written.
-pub async fn forget_catalog(uow: &mut Uow<'_>, catalog: &str) -> Result<()> {
-    store::forget_catalog(&mut *uow.tx, catalog).await
 }
 
 /// Used when a person is erased.

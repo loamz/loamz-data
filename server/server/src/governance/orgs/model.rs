@@ -23,6 +23,49 @@ pub fn belongs(identity: &Identity, org: &str) -> bool {
     identity.member_of(org) || org == personal_id(&identity.subject)
 }
 
+/// An organization's alias: its name in the identity provider. Lower-case letters, digits and dashes, 2 to 40 long, starting and
+/// ending with a letter or digit.
+#[must_use]
+pub fn valid_alias(alias: &str) -> bool {
+    let edge = |c: Option<char>| c.is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+    (2..=40).contains(&alias.len())
+        && alias
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && edge(alias.chars().next())
+        && edge(alias.chars().last())
+}
+
+/// An email address, checked only as far as telling a typo from an address: one `@`, something on both sides, a dot in the domain.
+#[must_use]
+pub fn valid_email(email: &str) -> bool {
+    let Some((local, domain)) = email.split_once('@') else {
+        return false;
+    };
+    email.len() <= 254
+        && !local.is_empty()
+        && !domain.contains('@')
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && !email.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+/// A person's display name: not empty, short, one line.
+#[must_use]
+pub fn valid_name(name: &str) -> bool {
+    !name.trim().is_empty() && name.len() <= 100 && !name.chars().any(char::is_control)
+}
+
+/// Someone just added to an organization. `temporary_password` is set only when they were made now: it is shown once, and they
+/// must change it at their first sign-in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Invited {
+    pub subject: String,
+    pub email: String,
+    pub temporary_password: Option<String>,
+}
+
 /// A principal is typed (`user:`, `group:` or `sp:`) and plain.
 #[must_use]
 pub fn valid_principal(p: &str) -> bool {
@@ -36,6 +79,40 @@ pub fn valid_principal(p: &str) -> bool {
 mod tests {
     use super::*;
     use crate::kernel::auth::{Kind, OrgRef};
+
+    #[test]
+    fn aliases_are_plain_and_short() {
+        for ok in ["acme", "a1", "my-team-2"] {
+            assert!(valid_alias(ok), "{ok}");
+        }
+        for bad in [
+            "a",
+            "-acme",
+            "acme-",
+            "Acme",
+            "ac me",
+            "ac_me",
+            &"a".repeat(41),
+        ] {
+            assert!(!valid_alias(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn emails_are_told_from_typos() {
+        assert!(valid_email("ana@acme.test"));
+        for bad in [
+            "ana",
+            "@acme.test",
+            "ana@acme",
+            "a@b@c.d",
+            "ana @acme.test",
+            "ana@.test",
+            "ana@acme.",
+        ] {
+            assert!(!valid_email(bad), "{bad:?}");
+        }
+    }
 
     #[test]
     fn principals_are_typed_and_plain() {
@@ -71,6 +148,7 @@ mod tests {
             roles: vec![],
             actor: None,
             scope: None,
+            confined_to: None,
         }
     }
 

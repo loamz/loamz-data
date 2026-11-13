@@ -145,6 +145,24 @@ async fn iceberg_tables_are_governed(s: Server) {
             .await
             .starts_with("metadata/00001-")
     );
+    // Every commit leaves the version hint at the current metadata file, so any Iceberg reader can find it without us.
+    let current = pointer(&s, l.orders.clone()).await;
+    let (mut hint, _) = s
+        .app
+        .stores
+        .open(&l.orders, "metadata/version-hint.text")
+        .await
+        .unwrap();
+    let mut said = Vec::new();
+    while let Some(chunk) = futures_util::StreamExt::next(&mut hint).await {
+        said.extend_from_slice(&chunk.unwrap());
+    }
+    assert_eq!(
+        String::from_utf8(said).unwrap(),
+        current
+            .trim_start_matches("metadata/")
+            .trim_end_matches(".metadata.json")
+    );
     let stale = json!({"requirements": [{"type": "assert-table-uuid", "uuid": "someone-else"}], "updates": []});
     assert_eq!(
         s.post(&format!("{base}/orders"), &ana(), stale)

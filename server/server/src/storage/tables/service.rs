@@ -224,6 +224,24 @@ async fn write_metadata(app: &App, id: &str, rel: &str, meta: &Value) -> Result<
     Ok(())
 }
 
+/// Points the table's version hint at its current metadata file, so any Iceberg reader can find the latest snapshot straight from
+/// the bucket with no Loamz server. The commit is already durable, so a failure here is logged: the hint then names an older
+/// snapshot, which is still a valid one, until the next commit.
+async fn publish_hint(app: &App, id: &str, rel: &str) {
+    let hint = model::version_hint(rel);
+    let put = async {
+        let mut up = app
+            .stores
+            .begin_put(id, model::VERSION_HINT, MAX_METADATA)
+            .await?;
+        up.write(hint.as_bytes()).await?;
+        up.commit().await
+    };
+    if let Err(e) = put.await {
+        tracing::warn!(table = id, error = ?e, "could not write the table's version hint");
+    }
+}
+
 /// What a client is given to read a table.
 pub struct Loaded {
     pub id: String,
@@ -406,6 +424,7 @@ async fn create_in(app: &App, ask: &Ask<'_>, parent: Securable, new: NewTable) -
         let _ = app.stores.remove_volume(&id).await;
         return Err(e);
     }
+    publish_hint(app, &id, &rel).await;
     let credentials = vend_for_client(app, &id, true).await?;
     Ok(Loaded {
         metadata_location: format!("{location}/{rel}"),
@@ -464,6 +483,7 @@ pub async fn commit(
     )
     .await?;
     uow.commit().await?;
+    publish_hint(app, &entry.id, &rel).await;
     Ok((format!("{}/{rel}", app.stores.uri(&entry.id)?), next))
 }
 
@@ -514,6 +534,7 @@ async fn commit_new(
         let _ = app.stores.delete(&id, &rel).await;
         return Err(e);
     }
+    publish_hint(app, &id, &rel).await;
     Ok((format!("{location}/{rel}"), meta))
 }
 

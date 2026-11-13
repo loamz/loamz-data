@@ -59,6 +59,8 @@ pub const CONSISTENCIES: [&str; 2] = ["transaction", "snapshot"];
 pub struct Securable {
     pub id: String,
     pub org_id: String,
+    /// The workspace its catalog belongs to: a catalog has exactly one, and everything inside it carries the same.
+    pub workspace_id: String,
     pub kind: Kind,
     pub parent_id: String,
     pub name: String,

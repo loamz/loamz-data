@@ -5,15 +5,12 @@
 <h1 align="center">Loamz Data</h1>
 
 <p align="center">
-  <b>Governed data platform for Data, AI/ML engineers.</b><br>
-  Built on Open Data Format.
+  <b>A governed data platform for analytics and AI.</b><br>
+  Built on open table formats, with flexible storage and compute.
 </p>
 
 <p align="center">
-  <a href="docs/ARCHITECTURE.md">Architecture</a> ·
-  <a href="docs/life-of-a-query.md">Life of a query</a> ·
-  <a href="docs/CONTRIBUTING.md">Contributing</a> ·
-  <a href="docs/rfcs/">RFCs</a> ·
+  <a href="docs/README.md">Documentation</a> ·
   <a href="specs/data/v1/openapi.yaml">API</a>
 </p>
 
@@ -49,9 +46,9 @@ docker compose -f deploy/dev/compose.yml up -d
 scripts/dev.sh
 ```
 
-Open http://localhost:5180 and sign in as `admin` with password `admin`; you change it on first login. The admin creates organizations and adds people.
+Open http://localhost:5180 and sign in as `admin` with password `admin`; you change it on first login. The admin creates organizations and adds people. The same sign-in opens the tools around it: OpenBao (http://127.0.0.1:8200, "Sign in with OIDC Provider") and the RustFS console (http://127.0.0.1:9001, "Login with Loamz").
 
-Data is kept in a local RustFS container. To use your own S3-compatible bucket, change the storage settings in [CONTRIBUTING](docs/CONTRIBUTING.md).
+Data is kept in a local RustFS container. To use your own S3-compatible bucket, change the storage settings in [CONTRIBUTING](CONTRIBUTING.md).
 
 ## Use it from DuckDB
 
@@ -61,27 +58,29 @@ ATTACH 'nyc' AS lz (TYPE iceberg, ENDPOINT 'http://127.0.0.1:8020/api/v1/workspa
 SELECT count(*) FROM lz.main.yellow_trips;
 ```
 
-`deploy/dev/token.py admin` prints a token. You see only what you may see.
+With `deploy/dev/seed.py` run once, `deploy/dev/token.py ana` prints a token. You see only what you may see.
 
 ## How it works
 
 <p align="center">
-  <img src="docs/assets/architecture.svg" alt="An organization decides who may use which workspace. In a workspace, a project, members, service principals and AI agents work; compute runs jobs, serverless SQL and sandboxes; the catalog checks every query and write first. The catalog has governance (metadata, grants, audit) over its storage: Iceberg tables and files in your S3-compatible bucket. Loamz Agents is a connected app acting for a member or a service principal." width="760">
+  <img src="docs/assets/architecture.svg" alt="Apps act as a principal. In a workspace, governance (grants, policies, audit) is a layer over four things: who (principals: members and service principals), compute (jobs, serverless SQL, sandboxes), data (catalog, schema, tables, volumes, functions, MLflow) and storage (credentials, locations, a root per catalog). A principal runs work on compute; compute asks and governance checks and gives short-lived, scoped access; compute reads and writes the bytes in storage directly.">
 </p>
 
 | | |
 |---|---|
-| **Organization** | Your company. Decides who may use which workspace. People sign in once. |
-| **Workspace** | A project: its members, its service principals (BI, ML apps, pipelines), its compute and its catalogs. |
-| **Catalog** | Your tables and files, with their own governance (metadata, permissions, audit) and S3-compatible bucket. Belongs to one workspace. |
-| **Compute** | Jobs for ETL, serverless SQL, and sandboxes for AI agents. Reads the workspace's catalogs, only where each allows. |
-| **Connected apps** | Loamz Agents is our own app; it signs in like any connector and acts for a member or a service principal. |
+| **Organization** | Your company. Decides who can use which workspace. People sign in once. |
+| **Workspace** | A project: its principals, its compute and its catalogs. A principal is a member (a person) or a service principal (BI, ML apps, pipelines); every action runs under a principal. |
+| **Governance** | Decides who can do what, on which thing, across principals, compute, data and storage. Grants, policies and audit. |
+| **Catalog** | Schemas of tables (Iceberg), volumes (files), functions and MLflow (ML: experiments, models; GenAI: traces, evals, prompts). Belongs to one workspace. |
+| **Storage** | Credentials are long-lived secrets that compute never sees; compute only gets short-lived access scoped to one object. Locations are approved buckets or prefixes; each catalog has one managed root inside a location. Buckets can be shared; default storage needs no setup. |
+| **Compute** | Jobs for ETL, serverless SQL, and sandboxes for AI agents. Runs as a principal, asks governance first, then reads and writes the bytes directly. |
+| **Apps** | Loamz Agents and connectors. Each acts as a principal, never with more access. |
 
-More in [ARCHITECTURE](docs/ARCHITECTURE.md).
+More in the [architecture](docs/architecture/overview.md) and the [documentation](docs/README.md).
 
 ## Development
 
-`make check` runs formatting, lints and tests. Setup, Postgres and sandbox tests: [CONTRIBUTING](docs/CONTRIBUTING.md).
+`make check` runs formatting, lints and tests. Setup, Postgres and sandbox tests: [CONTRIBUTING](CONTRIBUTING.md).
 
 ## Status
 

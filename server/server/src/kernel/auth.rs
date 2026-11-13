@@ -21,6 +21,8 @@ use serde::Deserialize;
 pub const AUDIENCE: &str = "loamz-data";
 /// The Keycloak client role that may create an organization's Data account.
 pub const ACCOUNT_ADMIN_ROLE: &str = "account-admin";
+/// The Keycloak client role of the installation's global admin: creates organizations and adds people to them.
+pub const PLATFORM_ADMIN_ROLE: &str = "platform-admin";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -65,6 +67,8 @@ pub struct Identity {
     pub actor: Option<String>,
     /// Set only for a job running on someone's behalf: the person's rights, narrowed to what the job declared.
     pub scope: Option<Scope>,
+    /// Set for a service principal: the one workspace it belongs to, and the only one it can open.
+    pub confined_to: Option<String>,
 }
 
 impl Identity {
@@ -360,6 +364,7 @@ impl Verifier {
                 .unwrap_or_default(),
             actor,
             scope: None,
+            confined_to: None,
         })
     }
 }

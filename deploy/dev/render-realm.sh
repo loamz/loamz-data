@@ -7,7 +7,14 @@ python3 - <<'PY'
 import json, jinja2, os
 t = jinja2.Template(open(os.environ.get("DEPLOY_REPO", "../loamz-deploy") + "/roles/keycloak/templates/realm-loamz.json.j2").read())
 out = t.render(dev=True, scheme="http", domain="localhost:5173", data_domain="localhost:5180", smtp_host="")
-json.loads(out)  # fail loudly if the template made invalid JSON
-open("deploy/dev/realm-loamz-dev.json", "w").write(json.dumps(json.loads(out), indent=2) + "\n")
+realm = json.loads(out)  # fail loudly if the template made invalid JSON
+
+# Development only: the first admin, the directory roles, and single sign-on for OpenBao and RustFS (deploy/dev/realm_dev.py).
+import sys
+sys.path.insert(0, "deploy/dev")
+import realm_dev
+realm_dev.add_dev(realm)
+
+open("deploy/dev/realm-loamz-dev.json", "w").write(json.dumps(realm, indent=2) + "\n")
 print("wrote deploy/dev/realm-loamz-dev.json")
 PY

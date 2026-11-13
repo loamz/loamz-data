@@ -251,8 +251,11 @@ async fn fetch_table(storage: &Value, id: &str, folder: &Path) -> Result<(), Str
             .as_str()
             .ok_or_else(|| format!("the lease has no storage {k}"))
     };
+    let endpoint = text("endpoint")?;
     let s3 = AmazonS3Builder::new()
-        .with_endpoint(text("endpoint")?)
+        .with_endpoint(endpoint)
+        // A local store (RustFS in development) is plain http.
+        .with_allow_http(endpoint.starts_with("http://"))
         .with_bucket_name(text("bucket")?)
         .with_access_key_id(text("key_id")?)
         .with_secret_access_key(text("secret")?)

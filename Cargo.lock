@@ -1226,6 +1226,7 @@ name = "loamz-data-server"
 version = "0.1.0"
 dependencies = [
  "apache-avro",
+ "async-trait",
  "axum",
  "base64 0.22.1",
  "futures-util",
@@ -1254,8 +1255,11 @@ dependencies = [
 name = "loamz-lake"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bytes",
  "futures",
+ "hex",
+ "hmac",
  "http",
  "object_store",
  "reqwest 0.12.28",
@@ -1263,6 +1267,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror",
  "tokio",

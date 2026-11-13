@@ -59,6 +59,8 @@ impl Store {
         install_tls_provider();
         let s3 = AmazonS3Builder::new()
             .with_endpoint(&b.endpoint)
+            // A local store (RustFS in development) is plain http.
+            .with_allow_http(b.endpoint.starts_with("http://"))
             .with_bucket_name(&b.name)
             .with_access_key_id(&b.key_id)
             .with_secret_access_key(&b.secret)

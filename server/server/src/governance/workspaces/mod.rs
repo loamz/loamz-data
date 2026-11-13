@@ -2,5 +2,6 @@
 
 pub mod api;
 pub mod model;
+pub mod principals;
 pub mod service;
 mod store;

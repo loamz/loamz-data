@@ -9,7 +9,7 @@ use super::{
 use crate::{
     governance::{
         audit::{model::Who, service::Uow},
-        catalogs::{model::Kind, service as catalogs},
+        catalogs::service as catalogs,
         iam::service as iam,
         orgs::{model::valid_principal, service as orgs},
         workspaces::service as workspaces,
@@ -121,9 +121,6 @@ async fn remove_subtree(app: &App, org: &str, id: &str) -> Result<()> {
         }
         let mut uow = Uow::begin(app).await?;
         iam::forget_securable(&mut uow, org, &entry.id).await?;
-        if entry.kind == Kind::Catalog {
-            workspaces::forget_catalog(&mut uow, &entry.id).await?;
-        }
         catalogs::remove_row(&mut uow, org, &entry.id).await?;
         uow.commit().await?;
     }

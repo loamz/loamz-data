@@ -2,6 +2,8 @@
 #   docker compose -f deploy/dev/compose.yml up -d
 # Keycloak is the same realm the live server uses (rendered by deploy/dev/render-realm.sh from the loamz-deploy template).
 # Admin console: http://127.0.0.1:8082 (admin / admin-dev-only). Issuer: http://127.0.0.1:8082/realms/loamz
+# OpenBao keeps every secret (dev mode: in memory, root token `loamz-dev-only`, KV v2 at `secret/`; scripts/dev.sh fills it).
+# RustFS is the default object store (S3 API on :9000, console on :9001): bucket `loamz-data`, key loamz-dev / loamz-dev-only.
 name: loamz-data-dev
 services:
   postgres:
@@ -22,15 +24,61 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.8.1
     command: start-dev --import-realm
+    healthcheck:
+      # The image has no curl: ask for the realm's discovery document over a plain socket.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8082 && printf 'GET /realms/loamz/.well-known/openid-configuration HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
+      interval: 3s
+      retries: 60
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin-dev-only
       KC_HTTP_PORT: "8082"
       KC_HOSTNAME: http://127.0.0.1:8082
       LOAMZ_DATA_DIRECTORY_SECRET: directory-dev-only
+    # OpenBao and RustFS share this container's network, so they reach Keycloak as 127.0.0.1:8082, the address in its tokens (their
+    # sign-in checks it); their ports are published here.
     ports:
       - "127.0.0.1:8082:8082"
+      - "127.0.0.1:8200:8200"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - ./realm-loamz-dev.json:/opt/keycloak/data/import/realm-loamz.json:ro
       # The Loamz sign-in theme, the same folder the live server is given (kept in the deploy repository, next to this one).
       - ../../../loamz-deploy/roles/keycloak/files/theme/loamz:/opt/keycloak/themes/loamz:ro
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    environment:
+      RUSTFS_ACCESS_KEY: loamz-dev
+      RUSTFS_SECRET_KEY: loamz-dev-only
+      # Single sign-on for the console: Keycloak, client loamz-rustfs; the claim `policy` names what a person may do.
+      RUSTFS_OUTBOUND_ALLOW_ORIGINS: http://127.0.0.1:8082
+      RUSTFS_IDENTITY_OPENID_ENABLE: "on"
+      RUSTFS_IDENTITY_OPENID_CONFIG_URL: http://127.0.0.1:8082/realms/loamz/.well-known/openid-configuration
+      RUSTFS_IDENTITY_OPENID_CLIENT_ID: loamz-rustfs
+      RUSTFS_IDENTITY_OPENID_CLIENT_SECRET: rustfs-dev-only
+      RUSTFS_IDENTITY_OPENID_SCOPES: openid,profile,email
+      RUSTFS_IDENTITY_OPENID_CLAIM_NAME: policy
+      RUSTFS_IDENTITY_OPENID_DISPLAY_NAME: Loamz
+      RUSTFS_IDENTITY_OPENID_REDIRECT_URI_DYNAMIC: "on"
+    network_mode: "service:keycloak"
+    # Starts once Keycloak answers: RustFS reads Keycloak's discovery document at start.
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    volumes:
+      - rustfs-data:/data
+
+  openbao:
+    image: openbao/openbao:latest
+    command: ["server", "-dev", "-dev-root-token-id=loamz-dev-only", "-dev-listen-address=0.0.0.0:8200"]
+    cap_add:
+      - IPC_LOCK
+    network_mode: "service:keycloak"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+
+volumes:
+  rustfs-data:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """A real query and a real job, end to end: a person's real Keycloak token, a table of a few rows, a compute agent running in gVisor.
-Needs the dev stack (deploy/dev), `cargo build --release -p loamz-data-server -p loamz-runner`, ~/.cache/loamz/{runsc,rootfs}
+Needs the dev stack (deploy/dev; RustFS included), `cargo build --release -p loamz-data-server -p loamz-runner`, ~/.cache/loamz/{runsc,rootfs}
 (scripts/fetch-runsc.sh, server/runner/rootfs/build.sh). Uses only the standard library, and a throwaway folder.
 
   scripts/compute-smoke.py            (prints each step and what came back)
@@ -15,7 +15,13 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 API = "http://127.0.0.1:18040"
 work = tempfile.mkdtemp(prefix="loamz-smoke-")
 procs = []
-r2 = os.path.expanduser("~/.config/loamz/r2")
+# RustFS and OpenBao from deploy/dev/compose.yml (throwaway development values): the bucket key goes into the vault, as the server expects.
+S3 = "http://127.0.0.1:9000"
+BAO = "http://127.0.0.1:8200"
+os.makedirs(work + "/bao", exist_ok=True)
+open(work + "/bao/token", "w").write("loamz-dev-only")
+urllib.request.urlopen(urllib.request.Request(BAO + "/v1/secret/data/loamz-data/bucket", data=json.dumps({"data": {"key_id": "loamz-dev", "secret": "loamz-dev-only"}}).encode(),
+                                              headers={"X-Vault-Token": "loamz-dev-only"}, method="POST")).read()
 DUCK = os.path.expanduser("~/.cache/loamz/modal-venv/bin/python")
 
 
@@ -53,7 +59,8 @@ def stop():
 
 try:
     env = {**os.environ, "LOAMZ_DATA_LISTEN": "127.0.0.1:18040", "LOAMZ_DATA_DATABASE_URL": f"sqlite:{work}/d.db?mode=rwc",
-           "LOAMZ_DATA_BUCKET": "loamz-data", "LOAMZ_DATA_BUCKET_ENDPOINT": open(r2 + "/endpoint").read().strip(), "LOAMZ_DATA_BUCKET_KEY_ID_FILE": r2 + "/key-id", "LOAMZ_DATA_BUCKET_SECRET_FILE": r2 + "/secret", "LOAMZ_DATA_BUCKET_ISSUER_TOKEN_FILE": r2 + "/api-token", "LOAMZ_DATA_OIDC_ISSUER": "http://127.0.0.1:8082/realms/loamz"}
+           "LOAMZ_DATA_BUCKET": "loamz-data", "LOAMZ_DATA_BUCKET_ENDPOINT": S3, "LOAMZ_DATA_BUCKET_KEY_ID_REF": "loamz-data/bucket#key_id", "LOAMZ_DATA_BUCKET_SECRET_REF": "loamz-data/bucket#secret", "LOAMZ_DATA_BUCKET_STS_ENDPOINT": S3,
+           "LOAMZ_DATA_OPENBAO_ADDR": BAO, "LOAMZ_DATA_OPENBAO_TOKEN_FILE": work + "/bao/token", "LOAMZ_DATA_OIDC_ISSUER": "http://127.0.0.1:8082/realms/loamz"}
     procs.append(subprocess.Popen([os.path.join(ROOT, "target/release/loamz-data"), "serve"], env=env, stdout=open(f"{work}/server.log", "w"), stderr=subprocess.STDOUT))
     for _ in range(100):
         try:
@@ -77,7 +84,7 @@ try:
     if seed.returncode:
         sys.exit("seeding failed: " + seed.stderr[-400:])
     orders = next(i["id"] for i in call("GET", f"{S}/securables?parent_id={sch}", ana)[1]["items"] if i["name"] == "orders")
-    step("an Iceberg table of 5 rows was made and filled through the catalog, as any DuckDB client would (its files are in the R2 bucket)")
+    step("an Iceberg table of 5 rows was made and filled through the catalog, as any DuckDB client would (its files are in the RustFS bucket)")
 
     _, t = call("POST", f"/api/v1/orgs/{org}/compute/targets", ana, {"name": "this-machine", "max_memory_mb": 2048, "max_cpu_millis": 1000})
     secret = f"{work}/agent.secret"

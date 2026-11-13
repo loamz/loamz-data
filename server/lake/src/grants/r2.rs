@@ -1,31 +1,20 @@
-//! Short-lived storage credentials for a machine that must read (or write) some of the bucket: valid for minutes, limited to the
-//! folders asked for, read-only unless writing was asked for. The bucket's own key never leaves the server.
-//!
-//! Cloudflare R2 issues these (`temp-access-credentials`); the server holds a management token for that and nothing else.
+//! Cloudflare R2 issues temporary credentials itself (`temp-access-credentials`); the server holds a management token for that
+//! and nothing else.
 
 use std::time::Duration;
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use super::{Credentials, Issuer, folders, provider_error};
 use crate::files::FileError;
 
-pub struct Issuer {
+pub struct R2Issuer {
     http: reqwest::Client,
     url: String,
     token: String,
     bucket: String,
     parent_key_id: String,
-}
-
-/// What a machine is given: an S3 key pair and session token, good until they expire.
-#[derive(Debug, Clone, Deserialize)]
-pub struct Credentials {
-    #[serde(rename = "accessKeyId")]
-    pub key_id: String,
-    #[serde(rename = "secretAccessKey")]
-    pub secret: String,
-    #[serde(rename = "sessionToken")]
-    pub session_token: String,
 }
 
 #[derive(Serialize)]
@@ -45,7 +34,7 @@ struct Answer {
     result: Option<Credentials>,
 }
 
-impl Issuer {
+impl R2Issuer {
     /// `endpoint` is the bucket's S3 address, whose first label is the Cloudflare account.
     ///
     /// # Errors
@@ -74,25 +63,17 @@ impl Issuer {
             parent_key_id: parent_key_id.to_owned(),
         })
     }
+}
 
-    /// Credentials for the given volume folders (each `<id>/`), for `ttl`.
-    ///
-    /// # Errors
-    /// A folder name is not allowed, or the provider refused.
-    pub async fn issue(
+#[async_trait]
+impl Issuer for R2Issuer {
+    async fn issue(
         &self,
         volumes: &[&str],
         write: bool,
         ttl: Duration,
     ) -> Result<Credentials, FileError> {
-        let mut prefixes = Vec::new();
-        for v in volumes {
-            crate::files::check_volume(v)?;
-            prefixes.push(format!("{v}/"));
-        }
-        if prefixes.is_empty() {
-            return Err(FileError::BadPath("no folders"));
-        }
+        let prefixes = folders(volumes)?;
         let ask = Ask {
             bucket: &self.bucket,
             parent_access_key_id: &self.parent_key_id,
@@ -104,7 +85,6 @@ impl Issuer {
             ttl_seconds: ttl.as_secs().clamp(60, 3600),
             prefixes: &prefixes,
         };
-        let io = |e: String| FileError::Io(std::io::Error::other(e));
         let reply = self
             .http
             .post(&self.url)
@@ -112,16 +92,16 @@ impl Issuer {
             .json(&ask)
             .send()
             .await
-            .map_err(|e| io(e.to_string()))?;
+            .map_err(|e| provider_error(e.to_string()))?;
         let status = reply.status();
         let answer: Answer = reply.json().await.map_err(|e| {
-            io(format!(
+            provider_error(format!(
                 "the provider answered {status} with something unreadable: {e}"
             ))
         })?;
         match answer.result {
             Some(c) if answer.success => Ok(c),
-            _ => Err(io(format!(
+            _ => Err(provider_error(format!(
                 "the provider refused to issue credentials ({status})"
             ))),
         }

@@ -38,6 +38,31 @@ paths:
         '401':
           $ref: '#/components/responses/Problem'
       description: A person's own space and a workspace in it are made on first use.
+  /api/v1/orgs:
+    post:
+      summary: Make an organization and its first admin. Only the installation's admin (the Keycloak role `platform-admin`) can.
+      description: The first admin is made in the directory if new, with a temporary password shown once in the answer; they must change
+        it at their first sign-in. Asking again for an organization that exists is a conflict.
+      parameters: []
+      responses:
+        '201':
+          description: Created
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewOrganization'
   /api/v1/orgs/{org}/account:
     post:
       summary: Create the Data account of an organization the caller belongs to. Needs the Keycloak role `account-admin`; the creator becomes
@@ -119,6 +144,31 @@ paths:
           $ref: '#/components/responses/Problem'
         '409':
           $ref: '#/components/responses/Problem'
+  /api/v1/orgs/{org}/people:
+    post:
+      summary: Add a person to the organization. Account admins only.
+      description: A person who already exists is only added. A new one is made with a temporary password, shown once in the answer.
+      parameters:
+      - *id001
+      responses:
+        '201':
+          description: Added
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewPerson'
   /api/v1/orgs/{org}/workspaces:
     get:
       summary: The workspaces of the organization the caller can open.
@@ -196,7 +246,7 @@ paths:
             schema:
               $ref: '#/components/schemas/Name'
     delete:
-      summary: Delete a workspace and its assignments. Catalogs are not touched.
+      summary: Delete a workspace and its assignments. A workspace that still owns catalogs cannot be deleted.
       parameters:
       - *id002
       responses:
@@ -207,6 +257,8 @@ paths:
         '403':
           $ref: '#/components/responses/Problem'
         '404':
+          $ref: '#/components/responses/Problem'
+        '409':
           $ref: '#/components/responses/Problem'
   /api/v1/workspaces/{ws}/members:
     get:
@@ -260,6 +312,83 @@ paths:
           $ref: '#/components/responses/Problem'
         '409':
           $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/service-principals:
+    get:
+      summary: The workspace's service principals (never their tokens). Workspace admins.
+      parameters:
+      - *id002
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+    post:
+      summary: Make a service principal (a BI tool, an ML app, a pipeline) of this workspace. Workspace admins.
+      description: Its token is in the answer, once. It starts with `lsp_`, is sent as a bearer token like any other, and opens only this
+        workspace. The principal is `sp:<id>`; give it grants and entitlements like anyone's.
+      parameters:
+      - *id002
+      responses:
+        '201':
+          description: Created
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Name'
+  /api/v1/workspaces/{ws}/service-principals/{id}:
+    delete:
+      summary: Remove a service principal; its token stops working at once.
+      parameters:
+      - *id002
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Removed
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/service-principals/{id}/token:
+    post:
+      summary: Give a service principal a new token (in the answer, once); the old one stops working at once.
+      parameters:
+      - *id002
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
   /api/v1/workspaces/{ws}/entitlements:
     get:
       summary: What assigned principals are entitled to.
@@ -311,55 +440,6 @@ paths:
           description: Removed
         '400':
           $ref: '#/components/responses/Problem'
-        '401':
-          $ref: '#/components/responses/Problem'
-        '403':
-          $ref: '#/components/responses/Problem'
-        '404':
-          $ref: '#/components/responses/Problem'
-  /api/v1/workspaces/{ws}/catalogs:
-    get:
-      summary: The catalogs bound to this workspace (none bound anywhere means a catalog is visible in every workspace).
-      parameters:
-      - *id002
-      responses:
-        '200':
-          description: OK
-        '401':
-          $ref: '#/components/responses/Problem'
-        '404':
-          $ref: '#/components/responses/Problem'
-  /api/v1/workspaces/{ws}/catalogs/{catalog}:
-    put:
-      summary: Bind a catalog to this workspace. Account admins.
-      parameters:
-      - *id002
-      - name: catalog
-        in: path
-        required: true
-        schema:
-          type: string
-      responses:
-        '204':
-          description: Bound
-        '401':
-          $ref: '#/components/responses/Problem'
-        '403':
-          $ref: '#/components/responses/Problem'
-        '404':
-          $ref: '#/components/responses/Problem'
-    delete:
-      summary: Remove a binding.
-      parameters:
-      - *id002
-      - name: catalog
-        in: path
-        required: true
-        schema:
-          type: string
-      responses:
-        '204':
-          description: Unbound
         '401':
           $ref: '#/components/responses/Problem'
         '403':
@@ -1517,6 +1597,30 @@ components:
       - principal
       properties:
         principal:
+          type: string
+    NewOrganization:
+      type: object
+      required:
+      - alias
+      - admin_email
+      - admin_name
+      properties:
+        alias:
+          type: string
+          description: 2 to 40 lower-case letters, digits or dashes.
+        admin_email:
+          type: string
+        admin_name:
+          type: string
+    NewPerson:
+      type: object
+      required:
+      - email
+      - name
+      properties:
+        email:
+          type: string
+        name:
           type: string
     Name:
       type: object

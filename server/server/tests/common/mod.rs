@@ -3,8 +3,12 @@
 
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
 
-use std::{path::PathBuf, sync::OnceLock};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex, OnceLock},
+};
 
+use async_trait::async_trait;
 use axum::{
     Router,
     body::Body,
@@ -16,8 +20,10 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use loamz_data_server::{
     MIGRATIONS,
     kernel::{
+        directory::{Directory, NewPerson, Person},
+        error::Result as KernelResult,
         new_id,
-        settings::{Settings, Storage},
+        settings::{Secrets, Settings, Storage},
         state::{App, Shared},
     },
     router, shared,
@@ -193,8 +199,49 @@ impl Reply {
     }
 }
 
+/// A directory of people kept in memory, so a test can see what was asked of it.
+#[derive(Default)]
+pub struct FakeDirectory {
+    pub organizations: Mutex<Vec<String>>,
+    pub people: Mutex<Vec<String>>,
+    pub members: Mutex<Vec<(String, String)>>,
+}
+
+#[async_trait]
+impl Directory for FakeDirectory {
+    async fn create_organization(&self, alias: &str) -> KernelResult<()> {
+        let mut all = self.organizations.lock().unwrap();
+        if !all.iter().any(|a| a == alias) {
+            all.push(alias.into());
+        }
+        Ok(())
+    }
+
+    async fn ensure_person(&self, person: &NewPerson, _password: &str) -> KernelResult<Person> {
+        let mut all = self.people.lock().unwrap();
+        let created = !all.contains(&person.email);
+        if created {
+            all.push(person.email.clone());
+        }
+        Ok(Person {
+            subject: format!("kc-{}", person.email),
+            created,
+        })
+    }
+
+    async fn add_member(&self, alias: &str, subject: &str) -> KernelResult<()> {
+        let mut all = self.members.lock().unwrap();
+        let pair = (alias.to_owned(), subject.to_owned());
+        if !all.contains(&pair) {
+            all.push(pair);
+        }
+        Ok(())
+    }
+}
+
 pub struct Server {
     pub app: Shared,
+    pub directory: Arc<FakeDirectory>,
     pub routes: Vec<(&'static str, String)>,
     router: Router,
     dir: PathBuf,
@@ -230,6 +277,15 @@ pub async fn server_with(db: Db, max_upload: u64) -> Server {
 }
 
 pub async fn server_with_limits(db: Db, max_upload: u64, max_active_runs: i64) -> Server {
+    build(db, max_upload, max_active_runs, true).await
+}
+
+/// A server whose directory of people is not connected.
+pub async fn server_without_directory(db: Db) -> Server {
+    build(db, 1024 * 1024, 32, false).await
+}
+
+async fn build(db: Db, max_upload: u64, max_active_runs: i64, directory: bool) -> Server {
     let dir = std::env::temp_dir().join(format!("loamz-data-stores-{}", new_id()));
     let settings = Settings {
         listen: "127.0.0.1:0".parse().unwrap(),
@@ -239,16 +295,25 @@ pub async fn server_with_limits(db: Db, max_upload: u64, max_active_runs: i64) -
         max_upload_bytes: max_upload,
         max_active_runs,
         web_dir: None,
-        serverless_token_file: None,
+        serverless_token: None,
         serverless_endpoint: Some("https://sql.example.test/run".into()),
         agent_clients: vec!["loamz-agents".into()],
+        directory_client: "loamz-data-directory".into(),
+        directory_secret: None,
+        openbao: None,
     };
     db.migrate(&MIGRATIONS).await.unwrap();
-    let app = shared(App::new(&settings, db).unwrap());
+    let fake = Arc::new(FakeDirectory::default());
+    let mut app = App::new(&settings, &Secrets::default(), db).unwrap();
+    if directory {
+        app.directory = Some(fake.clone());
+    }
+    let app = shared(app);
     app.verifier.set_keys(&keys().jwks).unwrap();
     let (door, routes) = router(app.clone());
     Server {
         app,
+        directory: fake,
         routes,
         router: door,
         dir,
@@ -280,6 +345,23 @@ impl Server {
             content_type,
             bytes,
         }
+    }
+
+    /// A request with a bearer token as given (a service principal's, say), not one minted from a [`Who`].
+    pub async fn bearer(
+        &self,
+        method: &str,
+        path: &str,
+        token: &str,
+        body: Option<Value>,
+    ) -> Reply {
+        self.send(
+            method,
+            path,
+            Some(token),
+            body.map_or_else(Body::empty, |b| Body::from(b.to_string())),
+        )
+        .await
     }
 
     pub async fn call(&self, method: &str, path: &str, who: &Who, body: Option<Value>) -> Reply {

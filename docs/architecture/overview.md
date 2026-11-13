@@ -1,87 +1,104 @@
-# Architecture
+# Architecture overview
 
-How Loamz Data is built, for the people changing it. What it is and why: [README](../README.md). One query through the code:
-[life of a query](life-of-a-query.md). Work in progress: [RFCs](rfcs/).
+How the parts of Loamz Data fit and how work flows through them. What it does: [requirements](../product/requirements.md).
+How it runs as a service: [platform](platform.md). Each part in detail: [design](../design/). One query through today's code:
+[life of a query](../design/life-of-a-query.md).
 
-## Bird's-eye view
+## 1. The picture
 
-Loamz Data is a governed data platform: people, agents and apps keep tables and files in it, and query them with SQL or jobs.
-Three parts, and one rule between them: **governance decides, storage keeps bytes, compute runs work, and nothing touches data
-without governance's say.**
+<p align="center"><img src="../assets/architecture.svg" alt="Governance over who, compute, data and storage in a workspace" width="100%"></p>
+
+The picture shows the target design; the [requirements](../product/requirements.md) say what is built today.
+
+**Governance decides, compute does the work, storage keeps the bytes.** Every action runs under a principal. Compute asks governance
+first, gets short-lived access scoped to one object, then reads and writes the bytes itself. The catalog never carries data.
+
+## 2. Parts
+
+| part | does | built with | code |
+|---|---|---|---|
+| Identity | sign-in, organizations, groups | Keycloak (OpenID Connect) | `kernel/auth.rs` |
+| Governance | principals, grants, policies, audit; the only place that decides | Rust (axum, sqlx), Postgres | `kernel/authz.rs`, `governance/` |
+| Data | the catalog tree, the Iceberg REST catalog, volumes | Apache Iceberg, Parquet | `governance/catalogs/`, `storage/` |
+| Compute | runs SQL statements and jobs | DuckDB in gVisor on machines; serverless on Modal | `compute/`, `server/runner`, `server/serverless` |
+| Storage | the bytes, and the credentials to reach them | any S3-compatible store (R2 today) | `server/lake` |
+| Secrets | every credential and token | OpenBao, read once at start (0002 task 6) | `kernel` settings |
+| Web console | catalog, SQL editor, history, compute, settings | React | `web/` |
+
+Paths are under `server/server/src` unless they start with `server/` or `web/`.
+
+## 3. Context
 
 ```mermaid
 flowchart LR
-  U[browser, DuckDB, agents] --> G
-  subgraph G[governance: the Data server]
-    A[auth] --> I[iam + catalog] --> Q[runs and admission] --> L[audit]
-  end
-  G -->|scoped, short-lived credentials| S[(storage: Postgres + object store)]
-  G -->|work| C[compute: machines that connect out, or serverless]
-  C -->|reads only what it was given| S
+  people["People<br/>web console"] --> data
+  clients["Iceberg clients<br/>DuckDB and others"] --> data
+  apps["Apps<br/>Loamz Agents"] --> data
+  data["Loamz Data server<br/>governance + catalog"]
+  data -- "verify tokens" --> idp["Keycloak"]
+  data -- "metadata, grants, audit" --> pg[("Postgres")]
+  data -- "metadata files" --> store[("Object store<br/>S3-compatible")]
+  data -- "short-lived login, read secrets" --> vault[("Vault · OpenBao<br/>planned")]
+  data -- "statements" --> sls["Serverless SQL<br/>Modal"]
+  runner["Machines<br/>loamz-runner, gVisor"] -- "connect out, lease work" --> data
+  runner -- "bytes, scoped credentials" --> store
+  sls -- "bytes, scoped credentials" --> store
+  clients -- "bytes, scoped credentials" --> store
 ```
 
-- **Governance** is the Data server: identity, the catalog, grants, admission, audit. It is also the Iceberg REST catalog.
-- **Storage** is a SQL database (Postgres, SQLite in tests) for metadata, and an object store (R2, a folder in tests) for bytes.
-- **Compute** runs SQL and jobs: our runner on machines (it connects out; nothing connects in) or a serverless endpoint (Modal).
+## 4. A read
 
-## Stack
+```mermaid
+sequenceDiagram
+  actor P as Principal
+  participant G as Governance
+  participant C as Compute
+  participant S as Storage
+  P->>G: SQL statement
+  G->>G: token, entitlement, one plain query, SELECT on every table
+  G->>C: queue the run (admission cap per organization)
+  C->>G: lease the run, load each table
+  G-->>C: metadata and read-only credentials for each table's folder
+  C->>S: read the Parquet files
+  C->>G: report the result
+  G->>G: check access again before showing results
+  G-->>P: rows
+```
 
-| Part | What it does here |
-|---|---|
-| Rust (axum, sqlx, object_store) | the server and the runner |
-| Apache Iceberg | table format: snapshots, schema; this server is the REST catalog |
-| Parquet | the files tables are made of |
-| DuckDB | runs SQL and writes tables, inside the sandbox or on serverless |
-| PostgreSQL (SQLite in tests) | catalog, grants, runs and audit |
-| Cloudflare R2 (a folder in tests) | where the bytes live |
-| Keycloak | sign-in; an organization is a tenant |
-| gVisor | sandbox for each run on a machine |
-| Modal | serverless SQL |
-| React, Tailwind, Radix | the workbench |
+## 5. A write
 
-## Design principles
+```mermaid
+sequenceDiagram
+  participant E as Engine (any Iceberg client)
+  participant G as Governance
+  participant S as Storage
+  E->>G: load table for writing
+  G->>G: MODIFY on the table
+  G-->>E: metadata and read-write credentials for the table's folder
+  E->>S: write data and manifest files
+  E->>G: commit (expected snapshot, changes)
+  G->>G: one transaction: check the expected snapshot, write the metadata file, move the pointer, add the audit entry
+  G-->>E: committed, or 409 to retry on a newer snapshot
+```
 
-Speed comes from design, so every change keeps to these, and is measured:
-don't move data (send work to it) · read less (prune before reading) · never compute twice (snapshots and files are immutable,
-so caches keyed by them are safe) · stay columnar (Parquet at rest, Arrow on the wire) · keep engines warm · keep governance off
-the hot path. And for two developers: the smallest change that removes the most work; nothing built "for later".
+Writing bytes and committing them are separate steps: credentials let an engine write files, only the commit makes them part of the
+table.
 
-## Code map
+## 6. Rules every change keeps
 
-| Path | What lives there |
-|---|---|
-| `server/lake` | storage library: `sql.rs` (one layer for SQLite and Postgres), `objects.rs` (the `Store`: bucket or folder), `files.rs`, `grants.rs` (short-lived R2 credentials) |
-| `server/server/src/kernel` | knows no feature: settings, token check (`auth.rs`), the one `authz::authorize`, errors (problem+json), HTTP, app state |
-| `server/server/src/governance` | `audit`, `orgs`, `workspaces`, `iam`, `catalogs`, `lifecycle`; `context.rs` works out what a request is about (`OrgCtx`, `WsCtx`, `FileCtx`) |
-| `server/server/src/storage` | `tables` (Iceberg REST catalog: load, commit, credentials) and `volumes` (files) |
-| `server/server/src/compute` | targets, runs, admission, the agent protocol (`api.rs`, `service.rs`), SQL checks (`sql.rs`), serverless dispatch (`serverless.rs`) |
-| `server/server/src/work` | saved queries |
-| `server/runner` | the compute agent: lease, run in gVisor, report |
-| `server/serverless/modal_app.py` | the serverless SQL endpoint |
-| `web` | the workbench (React) |
-| `specs/data/v1/openapi.yaml` | the public API |
+Each is enforced in code and most have a test in `server/server/tests/`, except those marked *target*: the design guarantees them,
+the code does not yet.
 
-Each feature has `model.rs` (pure), `service.rs` (use cases), `store.rs` (SQL) and `api.rs` (HTTP).
-
-## Invariants
-
-Each is enforced by code, and most by a test (in `server/server/tests/` unless named).
-
-1. **Services form one line**: audit < orgs < workspaces < iam < catalogs < volumes < tables < compute < queries < lifecycle; a service
-   uses only those before it; `model.rs` files are pure. `layering.rs`
-2. **Data depends on nothing else of Loamz**, in Rust or in the web app. `layering.rs::data_depends_on_no_agents_code`
-3. **Only `iam` decides access**, through `kernel::authz`. A caller who may not see a thing gets 404, never 403; every refusal is audited.
-4. **A change and its audit entry are one transaction** (`audit::service::Uow`); one hash chain per organization. `api.rs::a_change_that_fails_leaves_no_record`
-5. **Access is checked again** when a run starts and when its results are read. `compute.rs`
-6. **No machine holds the storage key**: a run gets read-only credentials for its tables' folders, for its time limit plus five minutes.
-7. **SQL is one plain query** over tables named in full; reading files is refused. `compute/sql.rs` tests
-8. **The router and the OpenAPI document agree.** `api.rs::the_routes_and_the_spec_agree`
-9. **Every database test runs on SQLite and on Postgres** (the `both!` macro; Postgres when `LOAMZ_TEST_POSTGRES_URL` is set).
-
-## Cross-cutting
-
-- **Identity:** OIDC tokens from Keycloak (`kernel/auth.rs`); an organization is a Keycloak organization alias. A token issued to a
-  client in `LOAMZ_DATA_AGENT_CLIENTS` is an agent acting for a person: the pair gets what both may do.
-- **Errors:** RFC 9457 problem documents, from `kernel/error.rs`.
-- **Long work:** erase and drop are durable tasks in `lifecycle` (lease, retry, verify, audit). Runs are reaped when their lease expires.
-- **Admission:** queued and running work is capped per organization with a row lock, so several servers agree.
+1. **Only governance decides**, through `kernel::authz`. A caller who cannot see a thing gets 404; every refusal is audited.
+2. **A change and its audit entry are one transaction.** Each organization has its own hash chain.
+3. **Bytes never pass through governance.** Compute gets short-lived credentials scoped to one object; long-lived storage
+   credentials never leave the server.
+4. **Secrets live only in the vault** (*target*, 0002 task 6). The catalog stores a reference; services read a secret with an
+   authenticated, short-lived login and hold it in memory only. The server's own login to OpenBao is the one bootstrap secret.
+5. **Compute connects out.** The server never connects to a machine; a serverless provider endpoint is the one exception.
+6. **Access is checked again** when a run starts and when its results are read.
+7. **SQL is one plain query** over tables named in full; reading files is refused.
+8. **Services form one line**: audit, orgs, workspaces, iam, catalogs, volumes, tables, compute, queries, lifecycle. Each uses only
+   those before it (`layering.rs`).
+9. **Data depends on no other Loamz product**; apps are clients of its public API.
+10. **The router and the OpenAPI document agree**, and every database test runs on SQLite and on Postgres.

@@ -1,6 +1,8 @@
 import { Building2, ChevronRight, Layers } from "lucide-react";
-import { Badge, Button, Page, PageEmpty, Section, toast } from "@/design";
+import { useState } from "react";
+import { Badge, Button, Input, Page, PageEmpty, Section, toast } from "@/design";
 import * as api from "@/api";
+import { Invitation } from "@/components/Invitation";
 import { openWorkspace } from "@/site";
 import { go } from "@/route";
 
@@ -67,6 +69,49 @@ export function Home({ me, reload }: { me: api.Me | undefined; reload: () => voi
           ))}
         </div>
       </Section>
+
+      {me.platform_admin && <NewOrganization reload={reload} />}
     </Page>
+  );
+}
+
+/** For the installation's admin: make an organization and its first admin. */
+function NewOrganization({ reload }: { reload: () => void }) {
+  const [alias, setAlias] = useState("");
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [invited, setInvited] = useState<api.Invited | null>(null);
+  return (
+    <Section title="New organization" description="You manage this installation. Make an organization and its first admin, who then adds the rest of their people.">
+      <form
+        className="flex flex-wrap items-center gap-2"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          try {
+            const made = await api.createOrganization(alias.trim(), email.trim(), name.trim());
+            toast.success(`Created ${made.alias}`);
+            setInvited(made.admin);
+            setAlias("");
+            setEmail("");
+            setName("");
+            reload();
+          } catch (err) {
+            toast.error("Could not create it", (err as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Input className="min-w-40 max-w-48" placeholder="Name, such as acme" aria-label="Organization name" value={alias} onChange={(e) => setAlias(e.target.value)} />
+        <Input className="min-w-56 max-w-xs" type="email" placeholder="First admin's email" aria-label="First admin's email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <Input className="min-w-40 max-w-48" placeholder="Their name" aria-label="First admin's name" value={name} onChange={(e) => setName(e.target.value)} />
+        <Button variant="primary" type="submit" disabled={busy || !alias.trim() || !email.trim() || !name.trim()}>
+          Create
+        </Button>
+      </form>
+      <Invitation invited={invited} onClose={() => setInvited(null)} />
+    </Section>
   );
 }

@@ -39,6 +39,14 @@ export interface Me {
   agent: string | null;
   orgs: OrgInfo[];
   workspaces: WorkspaceInfo[];
+  /** The installation's admin: creates organizations. */
+  platform_admin: boolean;
+}
+/** Someone just added to an organization. The password is set only when they were made now: shown once, changed at first sign-in. */
+export interface Invited {
+  subject: string;
+  email: string;
+  temporary_password: string | null;
 }
 export interface Workspace {
   id: string;
@@ -131,6 +139,9 @@ export const me = () => json<Me>(send("GET", "/api/v1/me"));
 
 // Account console (an organization)
 export const createAccount = (org: string) => none(send("POST", `/api/v1/orgs/${enc(org)}/account`, {}));
+export const createOrganization = (alias: string, admin_email: string, admin_name: string) =>
+  json<{ id: string; alias: string; admin: Invited }>(send("POST", "/api/v1/orgs", { alias, admin_email, admin_name }));
+export const addPerson = (org: string, email: string, name: string) => json<Invited>(send("POST", `/api/v1/orgs/${enc(org)}/people`, { email, name }));
 export const admins = async (org: string) => (await json<{ items: string[] }>(send("GET", `/api/v1/orgs/${enc(org)}/admins`))).items;
 export const addAdmin = (org: string, principal: string) => none(send("PUT", `/api/v1/orgs/${enc(org)}/admins`, { principal }));
 export const removeAdmin = (org: string, principal: string) => none(send("DELETE", `/api/v1/orgs/${enc(org)}/admins/${enc(principal)}`));
@@ -143,6 +154,19 @@ export const task = (org: string, id: string) => json<Task>(send("GET", `/api/v1
 
 // A workspace
 const W = (ws: string) => `/api/v1/workspaces/${enc(ws)}`;
+export interface ServicePrincipal {
+  id: string;
+  name: string;
+  /** How grants and assignments name it: `sp:<id>`. */
+  principal: string;
+  created_by: string;
+  created_ms: number;
+}
+export const servicePrincipals = async (ws: string) => (await json<{ items: ServicePrincipal[] }>(send("GET", `${W(ws)}/service-principals`))).items;
+/** The token is in the answer once. */
+export const createServicePrincipal = (ws: string, name: string) => json<ServicePrincipal & { token: string }>(send("POST", `${W(ws)}/service-principals`, { name }));
+export const renewServicePrincipalToken = (ws: string, id: string) => json<{ token: string }>(send("POST", `${W(ws)}/service-principals/${enc(id)}/token`, {}));
+export const deleteServicePrincipal = (ws: string, id: string) => none(send("DELETE", `${W(ws)}/service-principals/${enc(id)}`));
 export const workspace = (ws: string) => json<Workspace>(send("GET", W(ws)));
 export const renameWorkspace = (ws: string, name: string) => json<Workspace>(send("PUT", W(ws), { name }));
 export const deleteWorkspace = (ws: string) => none(send("DELETE", W(ws)));
@@ -152,9 +176,6 @@ export const removeMember = (ws: string, principal: string) => none(send("DELETE
 export const entitlements = (ws: string) => json<{ items: { principal: string; entitlement: string }[]; available: string[] }>(send("GET", `${W(ws)}/entitlements`));
 export const entitle = (ws: string, principal: string, entitlement: string) => none(send("PUT", `${W(ws)}/entitlements`, { principal, entitlement }));
 export const unentitle = (ws: string, principal: string, entitlement: string) => none(send("DELETE", `${W(ws)}/entitlements/${enc(principal)}/${enc(entitlement)}`));
-export const boundCatalogs = async (ws: string) => (await json<{ items: string[] }>(send("GET", `${W(ws)}/catalogs`))).items;
-export const bindCatalog = (ws: string, catalog: string) => none(send("PUT", `${W(ws)}/catalogs/${enc(catalog)}`, {}));
-export const unbindCatalog = (ws: string, catalog: string) => none(send("DELETE", `${W(ws)}/catalogs/${enc(catalog)}`));
 
 // The catalog, in a workspace
 export const list = async (ws: string, parent = "") => (await json<{ items: Securable[] }>(send("GET", `${W(ws)}/securables?parent_id=${enc(parent)}`))).items;

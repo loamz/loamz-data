@@ -41,6 +41,7 @@ async fn me(State(app): State<Shared>, identity: Identity) -> Result<Json<Value>
         "subject": identity.subject,
         "name": identity.name,
         "email": identity.email,
+        "platform_admin": identity.has_role(crate::kernel::auth::PLATFORM_ADMIN_ROLE),
         "kind": match identity.kind { crate::kernel::auth::Kind::Person => "person", crate::kernel::auth::Kind::Service => "service" },
         "groups": identity.groups,
         "agent": identity.actor,
@@ -60,6 +61,55 @@ async fn create_account(
         StatusCode::CREATED,
         Json(json!({"id": o.id, "alias": o.alias})),
     ))
+}
+
+#[derive(Deserialize)]
+struct NewOrg {
+    alias: String,
+    admin_email: String,
+    admin_name: String,
+}
+
+fn invited(i: &super::model::Invited) -> Value {
+    json!({"subject": i.subject, "email": i.email, "temporary_password": i.temporary_password})
+}
+
+/// Makes an organization and its first admin (the installation's admin only). The temporary password is shown once.
+async fn create_org(
+    State(app): State<Shared>,
+    identity: Identity,
+    body: Bytes,
+) -> Result<(StatusCode, Json<Value>)> {
+    let req: NewOrg = body_json(&body)?;
+    let (o, first) = service::create_org(
+        &app,
+        &identity,
+        &req.alias,
+        &req.admin_email,
+        &req.admin_name,
+    )
+    .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({"id": o.id, "alias": o.alias, "admin": invited(&first)})),
+    ))
+}
+
+#[derive(Deserialize)]
+struct NewPerson {
+    email: String,
+    name: String,
+}
+
+/// Adds a person to the organization; a new one gets a temporary password, shown once.
+async fn add_person(
+    State(app): State<Shared>,
+    c: OrgCtx,
+    body: Bytes,
+) -> Result<(StatusCode, Json<Value>)> {
+    let req: NewPerson = body_json(&body)?;
+    let added = service::add_person(&app, &c.identity, &c.org, &req.email, &req.name).await?;
+    Ok((StatusCode::CREATED, Json(invited(&added))))
 }
 
 async fn admins(State(app): State<Shared>, c: OrgCtx) -> Result<Json<Value>> {
@@ -89,7 +139,9 @@ async fn remove_admin(State(app): State<Shared>, c: OrgCtx) -> Result<StatusCode
 pub fn routes() -> Routes {
     Routes::new()
         .get("/api/v1/me", me)
+        .post("/api/v1/orgs", create_org)
         .post("/api/v1/orgs/{org}/account", create_account)
+        .post("/api/v1/orgs/{org}/people", add_person)
         .get("/api/v1/orgs/{org}/admins", admins)
         .put("/api/v1/orgs/{org}/admins", add_admin)
         .delete("/api/v1/orgs/{org}/admins/{principal}", remove_admin)

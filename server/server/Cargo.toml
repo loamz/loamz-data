@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 loamz-lake = { path = "../lake" }
+async-trait = "0.1"
 axum = "0.8"
 futures-util = "0.3"
 jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }

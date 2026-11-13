@@ -1,9 +1,10 @@
-import { CheckCircle2, Cpu, KeyRound, Layers, Plus, ScrollText, ShieldAlert, ShieldCheck, Trash2, UserMinus, UserX, UsersRound } from "lucide-react";
+import { CheckCircle2, Cpu, KeyRound, Layers, Plus, ScrollText, ShieldAlert, ShieldCheck, Trash2, UserMinus, UserPlus, UserX, UsersRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Badge, Button, Dialog, DialogContent, DialogFooter, Input, NavItem, Page, PageEmpty, Section, Segmented, confirmAction, toast } from "@/design";
 import * as api from "@/api";
 import { AgentCommand } from "@/components/AgentCommand";
 import { CreateCompute } from "@/components/CreateCompute";
+import { Invitation } from "@/components/Invitation";
 import { PowerButton } from "@/components/PowerButton";
 import { computeState, stateLabel } from "@/computeState";
 import { Principal } from "@/components/Principal";
@@ -17,6 +18,7 @@ import { go, type AccountTab } from "@/route";
 const tabs: { id: AccountTab; label: string; icon: typeof Layers }[] = [
   { id: "workspaces", label: "Workspaces", icon: Layers },
   { id: "compute", label: "Compute", icon: Cpu },
+  { id: "people", label: "People", icon: UserPlus },
   { id: "admins", label: "Account admins", icon: UsersRound },
   { id: "activity", label: "Activity", icon: ScrollText },
   { id: "erase", label: "Erase a person", icon: UserX },
@@ -60,6 +62,7 @@ export function Account({ org, tab, me }: { org: string; tab: AccountTab; me: ap
       <section className="min-h-0 min-w-0 flex-1">
         {tab === "workspaces" && <Workspaces org={org} />}
         {tab === "compute" && <ComputeTab org={org} />}
+        {tab === "people" && <People org={org} />}
         {tab === "admins" && <Admins org={org} />}
         {tab === "activity" && <Activity org={org} ws={me?.workspaces.find((w) => w.org_id === org)?.id} />}
         {tab === "erase" && <Erase org={org} />}
@@ -109,6 +112,40 @@ function Workspaces({ org }: { org: string }) {
           </div>
         ))}
       </div>
+    </Page>
+  );
+}
+
+function People({ org }: { org: string }) {
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [invited, setInvited] = useState<api.Invited | null>(null);
+  return (
+    <Page title="People" subtitle="Add someone to this organization. They sign in with their email; you then put them in a workspace.">
+      <form
+        className="flex flex-wrap items-center gap-2"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          try {
+            setInvited(await api.addPerson(org, email.trim(), name.trim()));
+            setEmail("");
+            setName("");
+          } catch (err) {
+            toast.error("Could not add them", (err as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Input className="min-w-56 max-w-xs" type="email" placeholder="Email" aria-label="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <Input className="min-w-56 max-w-xs" placeholder="Name" aria-label="Name" value={name} onChange={(e) => setName(e.target.value)} />
+        <Button variant="primary" type="submit" disabled={busy || !email.trim() || !name.trim()}>
+          Add
+        </Button>
+      </form>
+      <Invitation invited={invited} onClose={() => setInvited(null)} />
     </Page>
   );
 }

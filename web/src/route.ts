@@ -1,7 +1,7 @@
 // The address is the screen. Real paths, so a link can be shared and the server can serve the page at any of them. There are
 // two sites (see site.ts), each with its own paths:
 //   account site    /                        Home
-//                   /account/<org>[/<tab>]   the account console of an organization (tabs: workspaces, compute, admins, activity, erase)
+//                   /account/<org>[/<tab>]   the account console of an organization (tabs: workspaces, compute, people, admins, activity, erase)
 //   workspace site  /                        the workspace's overview: what you can do in it
 //                   /catalog[/<id>]          its Catalog Explorer
 //                   /sql                     the SQL editor
@@ -10,12 +10,12 @@
 //                   /jobs                    jobs that ran, and the button to start one
 //                   /runs/<id>               one run: how it went and what it printed
 //                   /compute                 the compute work runs on
-//                   /settings[/<tab>]        its members, entitlements, bound catalogs (tabs: members, entitlements, catalogs, workspace)
+//                   /settings[/<tab>]        its members, service principals and entitlements (tabs: members, principals, entitlements, workspace)
 
 import type { MouseEvent } from "react";
 
-export type SettingsTab = "members" | "entitlements" | "catalogs" | "workspace";
-export type AccountTab = "workspaces" | "compute" | "admins" | "activity" | "erase";
+export type SettingsTab = "members" | "principals" | "entitlements" | "workspace";
+export type AccountTab = "workspaces" | "compute" | "people" | "admins" | "activity" | "erase";
 
 export type Route =
   | { screen: "home" }
@@ -30,8 +30,8 @@ export type Route =
   | { screen: "settings"; ws: string; tab: SettingsTab }
   | { screen: "account"; org: string; tab: AccountTab };
 
-const SETTINGS_TABS: SettingsTab[] = ["members", "entitlements", "catalogs", "workspace"];
-const TABS: AccountTab[] = ["workspaces", "compute", "admins", "activity", "erase"];
+const SETTINGS_TABS: SettingsTab[] = ["members", "principals", "entitlements", "workspace"];
+const TABS: AccountTab[] = ["workspaces", "compute", "people", "admins", "activity", "erase"];
 const WS = /^[0-9a-f-]{8,64}$/;
 
 export function parseRoute(path: string, kind: "account" | "workspace", ws = ""): Route {

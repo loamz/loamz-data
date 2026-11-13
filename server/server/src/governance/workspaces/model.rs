@@ -35,6 +35,29 @@ pub struct Workspace {
     pub created_ms: i64,
 }
 
+/// A service principal: an identity of one workspace that is not a person (a BI tool, an ML app, a pipeline). It signs in with a
+/// token we issue and is named in grants and assignments as `sp:<id>`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ServicePrincipal {
+    pub id: String,
+    pub org_id: String,
+    pub workspace_id: String,
+    pub name: String,
+    pub created_by: String,
+    pub created_ms: i64,
+}
+
+impl ServicePrincipal {
+    /// How grants, assignments and the audit trail name it.
+    #[must_use]
+    pub fn principal(&self) -> String {
+        format!("sp:{}", self.id)
+    }
+}
+
+/// What a service principal's token starts with, so a request can tell it from a person's.
+pub const TOKEN_PREFIX: &str = "lsp_";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Member {
     pub principal: String,
@@ -68,6 +91,19 @@ pub fn best_role(members: &[Member], principals: &[String]) -> Option<Role> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_service_principal_is_named_sp_and_its_id() {
+        let sp = ServicePrincipal {
+            id: "abc".into(),
+            org_id: "o".into(),
+            workspace_id: "w".into(),
+            name: "bi".into(),
+            created_by: "user:ana".into(),
+            created_ms: 1,
+        };
+        assert_eq!(sp.principal(), "sp:abc");
+    }
 
     #[test]
     fn names_are_plain() {
