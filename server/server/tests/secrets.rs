@@ -35,6 +35,9 @@ fn settings(storage: Storage) -> Settings {
         database_url: String::new(),
         storage,
         issuer: "http://keycloak.test/realms/loamz".into(),
+        storage_allow_private: true,
+        storage_tls_proxy: None,
+        storage_allow_http_dev: true,
         max_upload_bytes: 1,
         max_active_runs: 1,
         web_dir: None,
@@ -217,4 +220,35 @@ async fn openbao_live() {
             .contains("does not let"),
         "deny by default: the role reads only its own path"
     );
+}
+
+#[tokio::test]
+#[ignore = "needs LOAMZ_TEST_OPENBAO_ADDR"]
+async fn openbao_live_versioned_custody() {
+    let addr = std::env::var("LOAMZ_TEST_OPENBAO_ADDR").expect("set LOAMZ_TEST_OPENBAO_ADDR");
+    let vault = OpenBao::new(&addr, "secret", Login::Token("loamz-dev-only".into())).unwrap();
+    let path = format!("test-custody-{}", std::process::id());
+    let first = vault
+        .write_version(&path, &json!({"secret":"first-canary"}))
+        .await
+        .unwrap();
+    let second = vault
+        .write_version(&path, &json!({"secret":"second-canary"}))
+        .await
+        .unwrap();
+    assert_eq!(second, first + 1);
+    assert_eq!(
+        vault.read_version(&path, first).await.unwrap()["secret"],
+        "first-canary"
+    );
+    vault.destroy_versions(&path, &[first]).await.unwrap();
+    vault.destroy_versions(&path, &[first]).await.unwrap();
+    assert!(vault.read_version(&path, first).await.is_err());
+    assert_eq!(
+        vault.read_version(&path, second).await.unwrap()["secret"],
+        "second-canary"
+    );
+    vault.destroy_versions(&path, &[second]).await.unwrap();
+    vault.destroy_path(&path).await.unwrap();
+    assert!(vault.read_version(&path, second).await.is_err());
 }

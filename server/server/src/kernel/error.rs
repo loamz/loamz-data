@@ -25,6 +25,10 @@ pub enum Error {
     Denied(Denied),
     #[error("{0}")]
     Conflict(String),
+    #[error("{0}")]
+    Unsupported(String),
+    #[error("credential generation changed")]
+    Precondition,
     #[error("the file is larger than the limit")]
     TooLarge,
     #[error("{0}")]
@@ -47,6 +51,8 @@ impl Error {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::Denied(_) => StatusCode::FORBIDDEN,
             Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::Unsupported(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::Precondition => StatusCode::PRECONDITION_FAILED,
             Self::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
@@ -115,7 +121,9 @@ impl IntoResponse for Catalog {
     fn into_response(self) -> Response {
         let status = self.0.status();
         let kind = match &self.0 {
-            Error::Invalid(_) | Error::TooLarge => "BadRequestException",
+            Error::Invalid(_) | Error::TooLarge | Error::Precondition | Error::Unsupported(_) => {
+                "BadRequestException"
+            }
             Error::TooManyRequests(_) => "TooManyRequestsException",
             Error::Unauthorized => "NotAuthorizedException",
             Error::NotFound(_) => "NoSuchTableException",

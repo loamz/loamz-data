@@ -28,13 +28,45 @@ pub struct Bucket {
     pub secret: String,
 }
 
+/// How a bucket signs URLs. Customer stores use short-lived scoped credentials.
 #[derive(Clone)]
-pub enum Store {
+pub(crate) enum Signing {
+    Direct,
+    Disabled,
+    Scoped(ScopedSigner),
+}
+
+/// The pinned transport and vendor for a customer store; no credential material is exposed.
+#[derive(Clone)]
+pub(crate) struct ScopedSigner {
+    pub(crate) endpoint: String,
+    pub(crate) region: String,
+    pub(crate) bucket: String,
+    pub(crate) client: reqwest13::Client,
+    pub(crate) vendor: Arc<dyn crate::grants::Issuer>,
+}
+
+/// A store does not expose its underlying credential provider.
+///
+/// ```compile_fail
+/// use loamz_lake::objects::Store;
+/// let store = Store::folder("/tmp/data");
+/// if let Store::Bucket { s3, .. } = store { let _ = s3.credentials(); }
+/// ```
+#[derive(Clone)]
+pub struct Store {
+    inner: StoreInner,
+}
+
+#[derive(Clone)]
+enum StoreInner {
     Folder(Volumes),
     Bucket {
         s3: Arc<AmazonS3>,
         endpoint: String,
         name: String,
+        root_prefix: String,
+        signing: Signing,
     },
 }
 
@@ -50,7 +82,9 @@ pub fn install_tls_provider() {
 impl Store {
     #[must_use]
     pub fn folder(root: impl Into<std::path::PathBuf>) -> Self {
-        Self::Folder(Volumes::new(root))
+        Self {
+            inner: StoreInner::Folder(Volumes::new(root)),
+        }
     }
 
     /// # Errors
@@ -67,17 +101,46 @@ impl Store {
             .with_region("auto")
             .build()
             .map_err(|e| FileError::Io(std::io::Error::other(e.to_string())))?;
-        Ok(Self::Bucket {
-            s3: Arc::new(s3),
-            endpoint: b.endpoint.clone(),
-            name: b.name.clone(),
+        Ok(Self {
+            inner: StoreInner::Bucket {
+                s3: Arc::new(s3),
+                endpoint: b.endpoint.clone(),
+                name: b.name.clone(),
+                root_prefix: String::new(),
+                signing: Signing::Direct,
+            },
         })
+    }
+
+    pub(crate) fn customer_bucket(
+        s3: Arc<AmazonS3>,
+        endpoint: String,
+        name: String,
+        root_prefix: String,
+        signing: Signing,
+    ) -> Self {
+        Self {
+            inner: StoreInner::Bucket {
+                s3,
+                endpoint,
+                name,
+                root_prefix,
+                signing,
+            },
+        }
+    }
+
+    pub(crate) fn s3(&self) -> Option<&Arc<AmazonS3>> {
+        match &self.inner {
+            StoreInner::Bucket { s3, .. } => Some(s3),
+            StoreInner::Folder(_) => None,
+        }
     }
 
     /// Whether machines other than this server can be handed signed addresses.
     #[must_use]
     pub fn is_remote(&self) -> bool {
-        matches!(self, Self::Bucket { .. })
+        matches!(&self.inner, StoreInner::Bucket { .. })
     }
 
     /// The address a client names a volume's folder by: `s3://bucket/<volume>`, or `file://` and the folder.
@@ -86,39 +149,53 @@ impl Store {
     /// The volume id is not allowed.
     pub fn uri(&self, volume: &str) -> Result<String, FileError> {
         check_volume(volume)?;
-        Ok(match self {
-            Self::Folder(v) => format!("file://{}", v.path_of(volume)?.display()),
-            Self::Bucket { name, .. } => format!("s3://{name}/{volume}"),
+        Ok(match &self.inner {
+            StoreInner::Folder(v) => format!("file://{}", v.path_of(volume)?.display()),
+            StoreInner::Bucket {
+                name, root_prefix, ..
+            } => {
+                let prefix = if root_prefix.is_empty() {
+                    String::new()
+                } else {
+                    format!("{root_prefix}/")
+                };
+                format!("s3://{name}/{prefix}{volume}")
+            }
         })
     }
 
     /// For a bucket: its S3 endpoint and name.
     #[must_use]
     pub fn bucket_place(&self) -> Option<(&str, &str)> {
-        match self {
-            Self::Bucket { endpoint, name, .. } => Some((endpoint, name)),
-            Self::Folder(_) => None,
+        match &self.inner {
+            StoreInner::Bucket { endpoint, name, .. } => Some((endpoint, name)),
+            StoreInner::Folder(_) => None,
         }
     }
 
-    fn key(volume: &str, rel: &str) -> Result<Key, FileError> {
+    fn prefix(&self, volume: &str) -> Result<Key, FileError> {
         check_volume(volume)?;
-        let parts = Volumes::components(rel)?;
-        Ok(Key::from(format!("{volume}/{}", parts.join("/"))))
+        match &self.inner {
+            StoreInner::Bucket { root_prefix, .. } if !root_prefix.is_empty() => {
+                Ok(Key::from(format!("{root_prefix}/{volume}")))
+            }
+            _ => Ok(Key::from(volume)),
+        }
     }
 
-    fn prefix(volume: &str) -> Result<Key, FileError> {
-        check_volume(volume)?;
-        Ok(Key::from(volume))
+    fn key(&self, volume: &str, rel: &str) -> Result<Key, FileError> {
+        let root = self.prefix(volume)?;
+        let parts = Volumes::components(rel)?;
+        Ok(Key::from(format!("{root}/{}", parts.join("/"))))
     }
 
     /// Starts an upload. Nothing is visible at `rel` until `commit`.
     pub async fn begin_put(&self, volume: &str, rel: &str, max: u64) -> Result<Upload, FileError> {
-        match self {
-            Self::Folder(v) => Ok(Upload::Folder(v.begin_put(volume, rel, max).await?)),
-            Self::Bucket { s3, .. } => Ok(Upload::Bucket(BucketUpload {
+        match &self.inner {
+            StoreInner::Folder(v) => Ok(Upload::Folder(v.begin_put(volume, rel, max).await?)),
+            StoreInner::Bucket { s3, .. } => Ok(Upload::Bucket(BucketUpload {
                 s3: s3.clone(),
-                key: Self::key(volume, rel)?,
+                key: self.key(volume, rel)?,
                 buffer: Vec::new(),
                 write: None,
                 size: 0,
@@ -129,16 +206,18 @@ impl Store {
 
     /// Opens a file for reading, with its size.
     pub async fn open(&self, volume: &str, rel: &str) -> Result<(Reading, u64), FileError> {
-        match self {
-            Self::Folder(v) => {
+        match &self.inner {
+            StoreInner::Folder(v) => {
                 let (file, size) = v.open(volume, rel).await?;
                 Ok((ReaderStream::new(file).boxed(), size))
             }
-            Self::Bucket { s3, .. } => {
-                let got = s3.get(&Self::key(volume, rel)?).await.map_err(gone)?;
+            StoreInner::Bucket { s3, .. } => {
+                let got = s3.get(&self.key(volume, rel)?).await.map_err(gone)?;
                 let size = got.meta.size;
                 Ok((
-                    got.into_stream().map_err(std::io::Error::other).boxed(),
+                    got.into_stream()
+                        .map_err(|_| std::io::Error::other("storage read failed"))
+                        .boxed(),
                     size,
                 ))
             }
@@ -146,10 +225,10 @@ impl Store {
     }
 
     pub async fn delete(&self, volume: &str, rel: &str) -> Result<(), FileError> {
-        match self {
-            Self::Folder(v) => v.delete(volume, rel).await,
-            Self::Bucket { s3, .. } => {
-                let key = Self::key(volume, rel)?;
+        match &self.inner {
+            StoreInner::Folder(v) => v.delete(volume, rel).await,
+            StoreInner::Bucket { s3, .. } => {
+                let key = self.key(volume, rel)?;
                 // A bucket deletes quietly what is not there; a caller should be told.
                 s3.head(&key).await.map_err(gone)?;
                 s3.delete(&key).await.map_err(io)
@@ -159,13 +238,17 @@ impl Store {
 
     /// Every file in the volume, sorted by path.
     pub async fn list(&self, volume: &str) -> Result<Vec<Entry>, FileError> {
-        match self {
-            Self::Folder(v) => v.list(volume).await,
-            Self::Bucket { s3, .. } => {
-                let prefix = Self::prefix(volume)?;
-                let cut = volume.len() + 1;
+        match &self.inner {
+            StoreInner::Folder(v) => v.list(volume).await,
+            StoreInner::Bucket { s3, .. } => {
+                let prefix = self.prefix(volume)?;
+                let cut = prefix.as_ref().len() + 1;
+                let allowed = format!("{prefix}/");
                 let mut out: Vec<Entry> = s3
                     .list(Some(&prefix))
+                    .try_filter(move |m| {
+                        futures::future::ready(m.location.as_ref().starts_with(&allowed))
+                    })
                     .map_ok(|m| Entry {
                         path: m.location.as_ref()[cut..].to_string(),
                         size: m.size,
@@ -181,11 +264,18 @@ impl Store {
 
     /// Removes the whole volume. Removing one that is already gone is fine: a retried task must be able to run again.
     pub async fn remove_volume(&self, volume: &str) -> Result<(), FileError> {
-        match self {
-            Self::Folder(v) => v.remove_volume(volume).await,
-            Self::Bucket { s3, .. } => {
-                let prefix = Self::prefix(volume)?;
-                let keys = s3.list(Some(&prefix)).map_ok(|m| m.location).boxed();
+        match &self.inner {
+            StoreInner::Folder(v) => v.remove_volume(volume).await,
+            StoreInner::Bucket { s3, .. } => {
+                let prefix = self.prefix(volume)?;
+                let allowed = format!("{prefix}/");
+                let keys = s3
+                    .list(Some(&prefix))
+                    .try_filter(move |m| {
+                        futures::future::ready(m.location.as_ref().starts_with(&allowed))
+                    })
+                    .map_ok(|m| m.location)
+                    .boxed();
                 s3.delete_stream(keys)
                     .try_collect::<Vec<_>>()
                     .await
@@ -197,11 +287,18 @@ impl Store {
 
     /// Whether any bytes of the volume are left.
     pub async fn exists(&self, volume: &str) -> Result<bool, FileError> {
-        match self {
-            Self::Folder(v) => v.exists(volume).await,
-            Self::Bucket { s3, .. } => {
-                let prefix = Self::prefix(volume)?;
-                let first = s3.list(Some(&prefix)).next().await;
+        match &self.inner {
+            StoreInner::Folder(v) => v.exists(volume).await,
+            StoreInner::Bucket { s3, .. } => {
+                let prefix = self.prefix(volume)?;
+                let allowed = format!("{prefix}/");
+                let first = s3
+                    .list(Some(&prefix))
+                    .try_filter(move |m| {
+                        futures::future::ready(m.location.as_ref().starts_with(&allowed))
+                    })
+                    .next()
+                    .await;
                 first.transpose().map(|m| m.is_some()).map_err(io)
             }
         }
@@ -240,14 +337,48 @@ impl Store {
         rel: &str,
         valid: Duration,
     ) -> Result<String, FileError> {
-        let Self::Bucket { s3, .. } = self else {
+        let StoreInner::Bucket { s3, signing, .. } = &self.inner else {
             return Err(FileError::BadPath("this store is not a bucket"));
         };
-        let url = s3
-            .signed_url(method, &Self::key(volume, rel)?, valid)
-            .await
-            .map_err(io)?;
-        Ok(url.into())
+        let key = self.key(volume, rel)?;
+        let url = match signing {
+            Signing::Direct => s3.signed_url(method, &key, valid).await.map_err(io)?,
+            Signing::Disabled => {
+                return Err(FileError::BadPath(
+                    "signed access is unavailable for this store",
+                ));
+            }
+            Signing::Scoped(scoped) => {
+                if valid.is_zero() || valid > Duration::from_mins(15) {
+                    return Err(FileError::BadPath(
+                        "signed access must last at most fifteen minutes",
+                    ));
+                }
+                let write = method == http::Method::PUT;
+                let issued = scoped
+                    .vendor
+                    .issue(&[volume], write, Duration::from_mins(15))
+                    .await
+                    .map_err(|_| {
+                        FileError::Io(std::io::Error::other("storage credentials unavailable"))
+                    })?;
+                let signer = AmazonS3Builder::new()
+                    .with_endpoint(&scoped.endpoint)
+                    .with_allow_http(scoped.endpoint.starts_with("http://"))
+                    .with_bucket_name(&scoped.bucket)
+                    .with_region(&scoped.region)
+                    .with_access_key_id(&issued.key_id)
+                    .with_secret_access_key(&issued.secret)
+                    .with_token(&issued.session_token)
+                    .with_http_connector(crate::location::PinnedConnector(scoped.client.clone()))
+                    .build()
+                    .map_err(|_| {
+                        FileError::Io(std::io::Error::other("storage signer unavailable"))
+                    })?;
+                signer.signed_url(method, &key, valid).await.map_err(io)?
+            }
+        };
+        Ok(url.to_string())
     }
 }
 
@@ -325,13 +456,27 @@ impl Drop for BucketUpload {
 }
 
 #[allow(clippy::needless_pass_by_value)] // used as `map_err(io)`
-fn io(e: object_store::Error) -> FileError {
-    FileError::Io(std::io::Error::other(e.to_string()))
+fn io(_e: object_store::Error) -> FileError {
+    FileError::Io(std::io::Error::other("storage operation failed"))
 }
 
 fn gone(e: object_store::Error) -> FileError {
     match e {
         object_store::Error::NotFound { .. } => FileError::NotFound,
         e => io(e),
+    }
+}
+
+#[cfg(test)]
+mod error_redaction_tests {
+    use super::*;
+
+    #[test]
+    fn provider_errors_do_not_expose_the_response() {
+        let error = object_store::Error::Generic {
+            store: "test",
+            source: Box::new(std::io::Error::other("CANARY_SECRET")),
+        };
+        assert!(!io(error).to_string().contains("CANARY_SECRET"));
     }
 }

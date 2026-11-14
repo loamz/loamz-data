@@ -37,6 +37,9 @@ pub struct App {
     pub finished: tokio::sync::Notify,
     /// One pooled connection to the serverless endpoints, so a statement does not pay for a new TLS handshake each time.
     pub serverless_http: reqwest::Client,
+    pub storage_allow_private: bool,
+    pub storage_tls_proxy: Option<std::net::IpAddr>,
+    pub storage_allow_http_dev: bool,
     pub max_upload: u64,
     pub max_active_runs: i64,
     /// The bearer token serverless endpoints accept, read from a mounted file. None: serverless compute is off.
@@ -72,6 +75,9 @@ impl App {
                 .pool_idle_timeout(std::time::Duration::from_secs(90))
                 .build()
                 .unwrap_or_default(),
+            storage_allow_private: settings.storage_allow_private,
+            storage_tls_proxy: settings.storage_tls_proxy,
+            storage_allow_http_dev: settings.storage_allow_http_dev,
             max_upload: settings.max_upload_bytes,
             max_active_runs: settings.max_active_runs,
             serverless_token: secrets.serverless_token.clone(),

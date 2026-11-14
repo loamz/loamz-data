@@ -225,8 +225,8 @@ async fn all_person_references_are_removed_or_tombstoned(s: Server) {
     .unwrap();
     let credential = new_id();
     sqlx::query(
-        "INSERT INTO storage_credentials (id,org_id,workspace_id,name,endpoint,region,key_id_ref,secret_ref,vending,role_arn,issuer_token_ref,created_by,created_ms) \
-         VALUES ($1,$2,$3,'credential','https://s3.test','auto','vault#key','vault#secret','none','','','bob',1)",
+        "INSERT INTO storage_credentials (id,org_id,workspace_id,name,endpoint,region,provider,secret_path,secret_version,generation,created_by,created_ms) \
+         VALUES ($1,$2,$3,'credential','https://s3.test','auto','rustfs','vault/path',1,1,'bob',1)",
     )
     .bind(&credential)
     .bind(ACME)

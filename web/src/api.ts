@@ -170,10 +170,8 @@ export interface StorageCredential {
   name: string;
   endpoint: string;
   region: string;
-  /** References into the vault, never secrets. */
-  key_id_ref: string;
-  secret_ref: string;
-  vending: { kind: "none" | "sts" | "r2"; role_arn?: string; token_ref?: string };
+  provider: "rustfs";
+  generation: number;
 }
 export interface StorageLocation {
   id: string;
@@ -184,7 +182,7 @@ export interface StorageLocation {
 }
 const S = (ws: string) => `/api/v1/workspaces/${enc(ws)}/storage`;
 export const storageCredentials = async (ws: string) => (await json<{ items: StorageCredential[] }>(send("GET", `${S(ws)}/credentials`))).items;
-export const createStorageCredential = (ws: string, body: Omit<StorageCredential, "id">) => json<StorageCredential>(send("POST", `${S(ws)}/credentials`, body));
+export const createStorageCredential = (ws: string, body: { name: string; endpoint: string; region: string; provider: "rustfs"; secret: { kind: "sts"; access_key_id: string; secret_access_key: string } }) => json<StorageCredential>(send("POST", `${S(ws)}/credentials`, body));
 export const deleteStorageCredential = (ws: string, id: string) => none(send("DELETE", `${S(ws)}/credentials/${enc(id)}`));
 export const storageLocations = async (ws: string) => (await json<{ items: StorageLocation[] }>(send("GET", `${S(ws)}/locations`))).items;
 export const createStorageLocation = (ws: string, body: Omit<StorageLocation, "id">) => json<StorageLocation>(send("POST", `${S(ws)}/locations`, body));

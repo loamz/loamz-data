@@ -109,11 +109,14 @@ async fn resolve(url: &Url) -> Result<(String, Vec<SocketAddr>), String> {
     let found: Vec<SocketAddr> = if let Ok(ip) = literal.parse::<IpAddr>() {
         vec![SocketAddr::new(ip, 443)]
     } else {
-        tokio::time::timeout(Duration::from_secs(10), tokio::net::lookup_host((host.as_str(), 443)))
-            .await
-            .map_err(|_| "looking up the host took too long".to_owned())?
-            .map_err(|_| "the host could not be found".to_owned())?
-            .collect()
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            tokio::net::lookup_host((host.as_str(), 443)),
+        )
+        .await
+        .map_err(|_| "looking up the host took too long".to_owned())?
+        .map_err(|_| "the host could not be found".to_owned())?
+        .collect()
     };
     if found.is_empty() {
         return Err("the host could not be found".into());
@@ -208,7 +211,12 @@ mod tests {
 
     #[test]
     fn only_public_addresses_pass() {
-        for ok in ["8.8.8.8", "1.1.1.1", "93.184.216.34", "2606:4700:4700::1111"] {
+        for ok in [
+            "8.8.8.8",
+            "1.1.1.1",
+            "93.184.216.34",
+            "2606:4700:4700::1111",
+        ] {
             assert!(is_public(ip(ok)), "{ok} should be public");
         }
         for bad in [
@@ -272,7 +280,10 @@ mod tests {
             "https://10.0.0.5/data.csv",
         ] {
             let err = download(bad, &dest).await.unwrap_err();
-            assert!(!err.contains(bad), "the address must not be repeated: {err}");
+            assert!(
+                !err.contains(bad),
+                "the address must not be repeated: {err}"
+            );
             assert!(!dest.exists(), "nothing is left behind for {bad}");
         }
         let _ = std::fs::remove_dir_all(dir);

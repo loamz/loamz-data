@@ -84,14 +84,14 @@ function Section({ title, note, children }: { title: string; note: string; child
 function Storage({ ws }: { ws: string }) {
   const credentials = useLoad(() => api.storageCredentials(ws), ws);
   const locations = useLoad(() => api.storageLocations(ws), ws);
-  const [cred, setCred] = useState({ name: "", endpoint: "", keyId: "", secret: "", vending: "sts" as "none" | "sts" | "r2", token: "" });
+  const [cred, setCred] = useState({ name: "", endpoint: "", keyId: "", secret: "" });
   const [loc, setLoc] = useState({ name: "", credential: "", bucket: "", prefix: "" });
   const names = Object.fromEntries((credentials.data ?? []).map((c) => [c.id, c.name]));
   const fail = (what: string) => (err: unknown) => toast.error(what, (err as Error).message);
   const credentialColumns: Column<api.StorageCredential>[] = [
     { key: "name", header: "Name", width: "fill", cell: (c) => c.name },
     { key: "endpoint", header: "Store", cell: (c) => <span className="font-mono text-xs text-muted">{c.endpoint}</span> },
-    { key: "vending", header: "Access for machines", cell: (c) => c.vending.kind },
+    { key: "vending", header: "Provider", cell: (c) => c.provider },
     {
       key: "remove",
       header: "",
@@ -118,7 +118,7 @@ function Storage({ ws }: { ws: string }) {
   ];
   return (
     <div className="flex flex-col gap-8">
-      <Section title="Credentials" note="How the server reaches a store. The keys are kept in the vault: give references such as loamz-data/bucket#secret, never the keys.">
+      <Section title="Credentials" note="Connect to RustFS. Keys are stored in the vault and cannot be read back.">
         <form
           className="flex flex-wrap items-center gap-2"
           onSubmit={async (e) => {
@@ -128,11 +128,10 @@ function Storage({ ws }: { ws: string }) {
                 name: cred.name.trim(),
                 endpoint: cred.endpoint.trim(),
                 region: "",
-                key_id_ref: cred.keyId.trim(),
-                secret_ref: cred.secret.trim(),
-                vending: cred.vending === "sts" ? { kind: "sts" } : cred.vending === "r2" ? { kind: "r2", token_ref: cred.token.trim() } : { kind: "none" },
+                provider: "rustfs",
+                secret: { kind: "sts", access_key_id: cred.keyId, secret_access_key: cred.secret },
               });
-              setCred({ ...cred, name: "", keyId: "", secret: "", token: "" });
+              setCred({ ...cred, name: "", keyId: "", secret: "" });
               credentials.reload();
             } catch (err) {
               fail("Could not add it")(err);
@@ -141,20 +140,8 @@ function Storage({ ws }: { ws: string }) {
         >
           <Input className="w-40" placeholder="Name" aria-label="Credential name" value={cred.name} onChange={(e) => setCred({ ...cred, name: e.target.value })} />
           <Input className="w-56" placeholder="Endpoint, https://…" aria-label="Endpoint" value={cred.endpoint} onChange={(e) => setCred({ ...cred, endpoint: e.target.value })} />
-          <Input className="w-52" placeholder="Key id reference" aria-label="Key id reference" value={cred.keyId} onChange={(e) => setCred({ ...cred, keyId: e.target.value })} />
-          <Input className="w-52" placeholder="Secret reference" aria-label="Secret reference" value={cred.secret} onChange={(e) => setCred({ ...cred, secret: e.target.value })} />
-          <Select
-            className="w-44"
-            aria-label="Access for machines"
-            value={cred.vending}
-            onValueChange={(v) => setCred({ ...cred, vending: v as "none" | "sts" | "r2" })}
-            options={[
-              { value: "sts", label: "STS (RustFS, S3)" },
-              { value: "r2", label: "Cloudflare R2" },
-              { value: "none", label: "None" },
-            ]}
-          />
-          {cred.vending === "r2" && <Input className="w-52" placeholder="R2 token reference" aria-label="R2 token reference" value={cred.token} onChange={(e) => setCred({ ...cred, token: e.target.value })} />}
+          <Input className="w-52" type="password" autoComplete="off" placeholder="Access key ID" aria-label="Access key ID" value={cred.keyId} onChange={(e) => setCred({ ...cred, keyId: e.target.value })} />
+          <Input className="w-52" type="password" autoComplete="off" placeholder="Secret access key" aria-label="Secret access key" value={cred.secret} onChange={(e) => setCred({ ...cred, secret: e.target.value })} />
           <Button variant="primary" type="submit" disabled={!cred.name.trim() || !cred.endpoint.trim() || !cred.keyId.trim() || !cred.secret.trim()}>
             Add
           </Button>

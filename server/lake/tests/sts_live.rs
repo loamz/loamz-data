@@ -1,7 +1,8 @@
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
-    clippy::duration_suboptimal_units
+    clippy::duration_suboptimal_units,
+    clippy::too_many_lines
 )]
 //! Against a real S3-compatible store that has STS, only when `LOAMZ_TEST_STS_ENDPOINT` is set (`RustFS` from `deploy/dev/compose.yml`
 //! is `http://127.0.0.1:9000`; the bucket `loamz-data` must exist, key `loamz-dev` / `loamz-dev-only`). Proves a machine given
@@ -11,8 +12,8 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use loamz_lake::{
-    grants::{Issuer, StsIssuer},
-    objects::{Bucket, Store, install_tls_provider},
+    location::{LocationCredential, LocationSecret, build_location, check},
+    objects::install_tls_provider,
 };
 use object_store::{ObjectStore, ObjectStoreExt, aws::AmazonS3Builder, path::Path};
 
@@ -22,21 +23,64 @@ async fn issued_credentials_reach_one_volume_only() {
     install_tls_provider();
     let endpoint = std::env::var("LOAMZ_TEST_STS_ENDPOINT").expect("set LOAMZ_TEST_STS_ENDPOINT");
     let (key_id, secret, bucket) = ("loamz-dev", "loamz-dev-only", "loamz-data");
-    let store = Store::bucket(&Bucket {
-        endpoint: endpoint.clone(),
-        name: bucket.into(),
-        key_id: key_id.into(),
-        secret: secret.into(),
-    })
-    .unwrap();
     let id = std::process::id();
+    let root = format!("location{id}");
+    let handle = build_location(
+        &LocationCredential {
+            provider: "rustfs".into(),
+            endpoint: endpoint.clone(),
+            region: "us-east-1".into(),
+            bucket: bucket.into(),
+            prefix: root.clone(),
+            generation: 1,
+            allow_private: true,
+            allow_http: true,
+        },
+        &LocationSecret::new(key_id.into(), secret.into(), None),
+    )
+    .await
+    .unwrap();
+    check(&handle).await.unwrap();
+    let store = handle.store.clone();
     let (a, b) = (format!("sts{id}a"), format!("sts{id}b"));
+    assert_eq!(store.uri(&a).unwrap(), format!("s3://{bucket}/{root}/{a}"));
     for v in [&a, &b] {
         let mut up = store.begin_put(v, "f.txt", 100).await.unwrap();
         up.write(b"hello").await.unwrap();
         up.commit().await.unwrap();
     }
-    let issuer = StsIssuer::new(&endpoint, "us-east-1", bucket, key_id, secret, None).unwrap();
+    let signed = store
+        .sign_get(&a, "f.txt", Duration::from_secs(60))
+        .await
+        .unwrap();
+    assert!(
+        !signed.contains(key_id),
+        "the parent key ID must never appear in a signed URL"
+    );
+    let response = reqwest::Client::new()
+        .get(&signed)
+        .send()
+        .await
+        .map_err(|_| "signed GET failed")
+        .unwrap();
+    assert!(response.status().is_success());
+    let signed_put = store
+        .sign_put(&a, "signed.txt", Duration::from_secs(60))
+        .await
+        .unwrap();
+    assert!(
+        !signed_put.contains(key_id),
+        "the parent key ID must never appear in a signed URL"
+    );
+    let response = reqwest::Client::new()
+        .put(&signed_put)
+        .body("signed upload")
+        .send()
+        .await
+        .map_err(|_| "signed PUT failed")
+        .unwrap();
+    assert!(response.status().is_success());
+    let issuer = handle.vendor.as_ref().unwrap();
     let theirs = |c: &loamz_lake::grants::Credentials| {
         AmazonS3Builder::new()
             .with_endpoint(&endpoint)
@@ -57,18 +101,24 @@ async fn issued_credentials_reach_one_volume_only() {
             .unwrap(),
     );
     let own = read
-        .get(&Path::from(format!("{a}/f.txt")))
+        .get(&Path::from(format!("{root}/{a}/f.txt")))
         .await
         .unwrap()
         .bytes()
         .await
         .unwrap();
-    let other = read.get(&Path::from(format!("{b}/f.txt"))).await;
+    let other = read.get(&Path::from(format!("{root}/{b}/f.txt"))).await;
     let refused_write = read
-        .put(&Path::from(format!("{a}/g.txt")), "x".into())
+        .put(&Path::from(format!("{root}/{a}/g.txt")), "x".into())
         .await;
-    let list_own: Vec<_> = read.list(Some(&Path::from(a.as_str()))).collect().await;
-    let list_other: Vec<_> = read.list(Some(&Path::from(b.as_str()))).collect().await;
+    let list_own: Vec<_> = read
+        .list(Some(&Path::from(format!("{root}/{a}"))))
+        .collect()
+        .await;
+    let list_other: Vec<_> = read
+        .list(Some(&Path::from(format!("{root}/{b}"))))
+        .collect()
+        .await;
 
     let rw = theirs(
         &issuer
@@ -76,8 +126,12 @@ async fn issued_credentials_reach_one_volume_only() {
             .await
             .unwrap(),
     );
-    let written = rw.put(&Path::from(format!("{a}/g.txt")), "x".into()).await;
-    let wrote_other = rw.put(&Path::from(format!("{b}/g.txt")), "x".into()).await;
+    let written = rw
+        .put(&Path::from(format!("{root}/{a}/g.txt")), "x".into())
+        .await;
+    let wrote_other = rw
+        .put(&Path::from(format!("{root}/{b}/g.txt")), "x".into())
+        .await;
 
     store.remove_volume(&a).await.unwrap();
     store.remove_volume(&b).await.unwrap();

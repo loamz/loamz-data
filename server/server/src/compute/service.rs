@@ -932,7 +932,10 @@ enum Source<'a> {
 
 impl<'a> Source<'a> {
     fn of(req: &'a ImportRequest) -> Result<Self> {
-        match (req.volume.is_empty() && req.path.is_empty(), req.url.is_empty()) {
+        match (
+            req.volume.is_empty() && req.path.is_empty(),
+            req.url.is_empty(),
+        ) {
             (false, true) if !req.volume.is_empty() && !req.path.is_empty() => {
                 Ok(Self::Volume(checked_file_path(&req.path)?))
             }
@@ -985,7 +988,10 @@ pub async fn submit_import(app: &App, ctx: &Ctx<'_>, req: ImportRequest) -> Resu
     let source = Source::of(&req)?;
     let name = source.name();
     let format = if req.format.is_empty() {
-        name.rsplit('.').next().unwrap_or_default().to_ascii_lowercase()
+        name.rsplit('.')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase()
     } else {
         req.format.to_ascii_lowercase()
     };

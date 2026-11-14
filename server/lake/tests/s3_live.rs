@@ -3,11 +3,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::sync::Arc;
-
 use futures::TryStreamExt;
-use loamz_lake::objects::{Store, install_tls_provider};
-use object_store::aws::AmazonS3Builder;
+use loamz_lake::objects::{Bucket, Store, install_tls_provider};
 
 #[tokio::test]
 #[ignore = "requires an isolated S3-compatible test service"]
@@ -15,20 +12,13 @@ async fn files_and_multipart_uploads_work_on_s3() {
     let endpoint = std::env::var("LOAMZ_TEST_S3_ENDPOINT").expect("set LOAMZ_TEST_S3_ENDPOINT");
     install_tls_provider();
     let bucket = "loamz-test";
-    let s3 = AmazonS3Builder::new()
-        .with_endpoint(&endpoint)
-        .with_allow_http(true)
-        .with_bucket_name(bucket)
-        .with_access_key_id("test")
-        .with_secret_access_key("test")
-        .with_region("auto")
-        .build()
-        .unwrap();
-    let store = Store::Bucket {
-        s3: Arc::new(s3),
+    let store = Store::bucket(&Bucket {
         endpoint,
         name: bucket.into(),
-    };
+        key_id: "test".into(),
+        secret: "test".into(),
+    })
+    .unwrap();
     let a = format!("s3test{}a", std::process::id());
     let b = format!("s3test{}b", std::process::id());
     let mut upload = store.begin_put(&a, "nested/small.txt", 100).await.unwrap();
