@@ -54,6 +54,18 @@ async fn run(command: &str) -> Result<(), String> {
     tokio::spawn(lifecycle::work_forever(app.clone()));
     tokio::spawn(compute::service::work_forever(app.clone()));
     tokio::spawn(compute::serverless::serve_forever(app.clone()));
+    // The BI connection (Arrow Flight SQL) is off unless an address is given.
+    if let Ok(addr) = std::env::var("LOAMZ_DATA_FLIGHT_LISTEN") {
+        let addr: std::net::SocketAddr = addr
+            .parse()
+            .map_err(|_| "LOAMZ_DATA_FLIGHT_LISTEN must be an address like 127.0.0.1:18041")?;
+        let app = app.clone();
+        tokio::spawn(async move {
+            if let Err(e) = loamz_data_server::bi::flight::serve(app, addr).await {
+                tracing::error!(error = e, "the BI connection stopped");
+            }
+        });
+    }
     let (router, _) = router(app);
     let listener = tokio::net::TcpListener::bind(settings.listen)
         .await

@@ -26,6 +26,47 @@ use crate::{
     },
 };
 
+/// Who a bearer token stands for: a person or a client by their `OpenID Connect` token, or a service principal by its own token.
+/// What every door (the HTTP API, the BI connection) uses, so a token means the same everywhere.
+///
+/// # Errors
+/// The token is not one this server accepts.
+pub async fn identity_of(app: &Shared, token: &str) -> Result<Identity, Error> {
+    if token.starts_with(TOKEN_PREFIX) {
+        let sp = principals::authenticate(app, token)
+            .await?
+            .ok_or(Error::Unauthorized)?;
+        return Ok(Identity {
+            subject: sp.id,
+            kind: Kind::Service,
+            client: "service-principal".into(),
+            name: sp.name,
+            email: String::new(),
+            groups: vec![],
+            // For an organization the id is its name.
+            orgs: vec![OrgRef {
+                id: sp.org_id.clone(),
+                alias: sp.org_id,
+            }],
+            roles: vec![],
+            actor: None,
+            scope: None,
+            confined_to: Some(sp.workspace_id),
+        });
+    }
+    match app.verifier.verify(token) {
+        Ok(caller) => Ok(caller),
+        Err(AuthError::UnknownKey) => {
+            // The provider may have rotated its keys: look once more, then decide.
+            if let Err(e) = app.verifier.refresh().await {
+                tracing::warn!(error = e, "could not refresh the signing keys");
+            }
+            app.verifier.verify(token).map_err(|_| Error::Unauthorized)
+        }
+        Err(_) => Err(Error::Unauthorized),
+    }
+}
+
 /// Who is calling: a person or a client by their `OpenID Connect` token, or a service principal by its own token.
 impl FromRequestParts<Shared> for Identity {
     type Rejection = Error;
@@ -37,39 +78,7 @@ impl FromRequestParts<Shared> for Identity {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
             .ok_or(Error::Unauthorized)?;
-        if token.starts_with(TOKEN_PREFIX) {
-            let sp = principals::authenticate(app, token)
-                .await?
-                .ok_or(Error::Unauthorized)?;
-            return Ok(Identity {
-                subject: sp.id,
-                kind: Kind::Service,
-                client: "service-principal".into(),
-                name: sp.name,
-                email: String::new(),
-                groups: vec![],
-                // For an organization the id is its name.
-                orgs: vec![OrgRef {
-                    id: sp.org_id.clone(),
-                    alias: sp.org_id,
-                }],
-                roles: vec![],
-                actor: None,
-                scope: None,
-                confined_to: Some(sp.workspace_id),
-            });
-        }
-        match app.verifier.verify(token) {
-            Ok(caller) => Ok(caller),
-            Err(AuthError::UnknownKey) => {
-                // The provider may have rotated its keys: look once more, then decide.
-                if let Err(e) = app.verifier.refresh().await {
-                    tracing::warn!(error = e, "could not refresh the signing keys");
-                }
-                app.verifier.verify(token).map_err(|_| Error::Unauthorized)
-            }
-            Err(_) => Err(Error::Unauthorized),
-        }
+        identity_of(app, token).await
     }
 }
 
@@ -125,20 +134,29 @@ impl WsCtx {
         &self.workspace.org_id
     }
 
-    async fn build(parts: &mut Parts, app: &Shared, identity: Identity) -> Result<Self, Error> {
-        let Path(params) = Path::<HashMap<String, String>>::from_request_parts(parts, app)
-            .await
-            .map_err(|e| Error::Invalid(e.to_string()))?;
-        let (workspace, standing) =
-            workspaces::open(app, &identity, &param(&params, "ws")?).await?;
+    /// The context of a workspace for a caller already known: who they are in it, and what they speak as.
+    ///
+    /// # Errors
+    /// No such workspace, or the caller may not see it.
+    pub async fn open(app: &Shared, identity: Identity, workspace: &str) -> Result<Self, Error> {
+        let (workspace, standing) = workspaces::open(app, &identity, workspace).await?;
         let sides = orgs::sides(app, &identity, &workspace.org_id).await?;
         Ok(Self {
             identity,
             workspace,
             standing,
             sides,
-            params,
+            params: HashMap::new(),
         })
+    }
+
+    async fn build(parts: &mut Parts, app: &Shared, identity: Identity) -> Result<Self, Error> {
+        let Path(params) = Path::<HashMap<String, String>>::from_request_parts(parts, app)
+            .await
+            .map_err(|e| Error::Invalid(e.to_string()))?;
+        let mut ctx = Self::open(app, identity, &param(&params, "ws")?).await?;
+        ctx.params = params;
+        Ok(ctx)
     }
 }
 

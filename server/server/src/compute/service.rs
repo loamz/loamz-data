@@ -2568,6 +2568,30 @@ pub async fn result_link(app: &App, ctx: &Ctx<'_>, id: &str) -> Result<(String, 
     Ok((url, bytes))
 }
 
+/// A statement's whole result as a stream of its bytes (an Arrow IPC stream), for someone who may see the run's detail. For a door
+/// that serves the result itself (the BI connection) where a person's own client would fetch the signed address.
+///
+/// # Errors
+/// No such run, no right to its detail, or it kept no file.
+pub async fn open_result(
+    app: &App,
+    ctx: &Ctx<'_>,
+    id: &str,
+) -> Result<(loamz_lake::objects::Reading, u64)> {
+    let run = get(app, ctx, id).await?;
+    require_detail(app, ctx, &run).await?;
+    let missing = || Error::NotFound("this run has no result file".into());
+    let (folder, bytes) = store::result_folder(app.db.pool(), id)
+        .await?
+        .ok_or_else(missing)?;
+    let (stream, _) = app
+        .places
+        .open(&folder, &result_name(id))
+        .await
+        .map_err(|_| missing())?;
+    Ok((stream, u64::try_from(bytes).unwrap_or(0)))
+}
+
 /// Removes the result files that are a day old or belong to an erased run.
 ///
 /// # Errors

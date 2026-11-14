@@ -371,7 +371,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(target);
     }
 
-    /// Against a real store (RustFS in `deploy/dev`): a second upload to the same key is refused, and the first file is kept.
+    /// Against a real store (`RustFS` in `deploy/dev`): a second upload to the same key is refused, and the first file is kept.
     #[tokio::test]
     #[ignore = "needs the dev stack: RustFS on 127.0.0.1:9000 with the dev key"]
     async fn the_store_refuses_a_second_upload_to_the_same_key() {

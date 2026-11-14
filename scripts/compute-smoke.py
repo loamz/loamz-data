@@ -60,7 +60,7 @@ def stop():
 try:
     env = {**os.environ, "LOAMZ_DATA_LISTEN": "127.0.0.1:18040", "LOAMZ_DATA_DATABASE_URL": f"sqlite:{work}/d.db?mode=rwc",
            "LOAMZ_DATA_BUCKET": "loamz-data", "LOAMZ_DATA_BUCKET_ENDPOINT": S3, "LOAMZ_DATA_BUCKET_KEY_ID_REF": "loamz-data/bucket#key_id", "LOAMZ_DATA_BUCKET_SECRET_REF": "loamz-data/bucket#secret", "LOAMZ_DATA_BUCKET_STS_ENDPOINT": S3,
-           "LOAMZ_DATA_STORAGE_ALLOW_PRIVATE": "true", "LOAMZ_DATA_STORAGE_ALLOW_HTTP_DEV": "true", "LOAMZ_DATA_OPENBAO_ADDR": BAO, "LOAMZ_DATA_OPENBAO_TOKEN_FILE": work + "/bao/token", "LOAMZ_DATA_OIDC_ISSUER": "http://127.0.0.1:8082/realms/loamz"}
+           "LOAMZ_DATA_FLIGHT_LISTEN": "127.0.0.1:18041", "LOAMZ_DATA_STORAGE_ALLOW_PRIVATE": "true", "LOAMZ_DATA_STORAGE_ALLOW_HTTP_DEV": "true", "LOAMZ_DATA_OPENBAO_ADDR": BAO, "LOAMZ_DATA_OPENBAO_TOKEN_FILE": work + "/bao/token", "LOAMZ_DATA_OIDC_ISSUER": "http://127.0.0.1:8082/realms/loamz"}
     procs.append(subprocess.Popen([os.path.join(ROOT, "target/release/loamz-data"), "serve"], env=env, stdout=open(f"{work}/server.log", "w"), stderr=subprocess.STDOUT))
     for _ in range(100):
         try:
@@ -75,6 +75,7 @@ try:
     _, w = call("POST", f"/api/v1/orgs/{org}/workspaces", ana, {"name": "Smoke"}, ok=(201, 409))
     ws = next(x["id"] for x in call("GET", f"/api/v1/orgs/{org}/workspaces", ana)[1]["items"] if x["name"] == "Smoke")
     S = f"/api/v1/workspaces/{ws}"
+    WSID = ws
     mk = lambda kind, parent, name: call("POST", f"{S}/securables", ana, {"kind": kind, "parent_id": parent, "name": name})[1]["id"]
     cat = mk("catalog", "", "shop"); sch = mk("schema", cat, "main")
     out = mk("volume", sch, "results")
@@ -303,6 +304,30 @@ try:
     assert not any(f["path"].startswith("threads/t1/") for f in left["items"]), left
     code, _ = call("POST", f"{S}/runs", ana, {"script": writer, "commit": {"volume": home, "thread": "t1"}, "timeout_s": 60}, ok=(409,))
     step(f"deleting the thread removed its files, and new work on it is refused for now ({code})")
+
+    # The BI connection: an Arrow Flight SQL client (ADBC, as a BI tool's driver would be) signs in with the workspace id and a token,
+    # runs a statement, lists what it may see, and is refused with a wrong token. The rows are the same as the HTTP API's.
+    flight = subprocess.run(
+        [os.path.expanduser("~/.cache/loamz/spike-venv/bin/python"), "-c", (
+            "import sys, json\nimport adbc_driver_flightsql.dbapi as fl\n"
+            "ws, tok, good = sys.argv[1:4]\n"
+            "con = fl.connect('grpc://127.0.0.1:18041', db_kwargs={'username': ws, 'password': tok})\n"
+            "cur = con.cursor()\n"
+            "cur.execute('SELECT region, count(*) AS n, sum(amount) AS total FROM shop.main.orders GROUP BY region ORDER BY region')\n"
+            "t = cur.fetch_arrow_table()\n"
+            "objs = con.adbc_get_objects(depth='tables').read_all().to_pylist()\n"
+            "names = sorted(f\"{c['catalog_name']}.{s['db_schema_name']}.{x['table_name']}\" for c in objs for s in (c['catalog_db_schemas'] or []) for x in (s['db_schema_tables'] or []))\n"
+            "bad = None\n"
+            "try:\n    fl.connect('grpc://127.0.0.1:18041', db_kwargs={'username': ws, 'password': 'not-a-token'})\n    c2 = fl.connect('grpc://127.0.0.1:18041', db_kwargs={'username': ws, 'password': 'not-a-token'}); c2.cursor().execute('SELECT 1')\nexcept Exception as e:\n    bad = type(e).__name__\n"
+            "print(json.dumps({'rows': t.to_pylist(), 'types': [str(f.type) for f in t.schema], 'tables': names, 'bad': bad}))\n"),
+         WSID, ana, "x"], capture_output=True, text=True)
+    if flight.returncode:
+        sys.exit("the BI connection failed: " + flight.stderr[-800:])
+    seen = json.loads(flight.stdout.strip().splitlines()[-1])
+    assert [r["region"] for r in seen["rows"]] == ["east", "north", "south"] and [r["n"] for r in seen["rows"]] == [1, 2, 2], seen
+    assert "shop.main.orders" in seen["tables"] and "shop.main.people" in seen["tables"], seen["tables"]
+    assert seen["bad"], "a wrong token must be refused"
+    step(f"a BI client (ADBC over Arrow Flight SQL) signed in, ran a statement ({len(seen['rows'])} groups, types {seen['types']}), listed {len(seen['tables'])} tables it may see, and a wrong token was refused ({seen['bad']})")
 
     # A catalog on a customer's storage location: its bytes are read and written with the location's own credential, in its own
     # folder of the bucket (here the same RustFS, a folder of its own), and nothing of it is in the installation's default storage.

@@ -26,7 +26,7 @@ sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "any", "sqlite", "postgres", "migrate", "macros"] }
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time", "fs", "io-util"] }
-tokio-util = { version = "0.7", features = ["io"] }
+tokio-util = { version = "0.7", features = ["io", "io-util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
@@ -34,6 +34,13 @@ sqlparser = { version = "0.63.0", features = ["visitor"] }
 apache-avro = "0.20"
 chrono = "0.4"
 cron = "0.15"
+arrow-ipc = "60"
+tonic = "0.14"
+prost = "0.14.6"
+arrow-flight = { version = "60", features = ["flight-sql"] }
+arrow-array = "60"
+arrow-schema = "60"
+base64 = "0.22"
 
 [dev-dependencies]
 base64 = "0.22"

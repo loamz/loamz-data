@@ -1,5 +1,6 @@
 //! Loamz Data server. `kernel` is what everything shares; `governance` is the only door; `storage` is what it opens.
 
+pub mod bi;
 pub mod compute;
 pub mod governance;
 pub mod kernel;
