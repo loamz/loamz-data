@@ -55,6 +55,10 @@ fn public_v6(ip: Ipv6Addr) -> bool {
         return public_v4(v4);
     }
     let s = ip.segments();
+    // IPv4-compatible addresses are obsolete and can be interpreted as IPv4 by older network stacks.
+    if s[..6] == [0; 6] {
+        return false;
+    }
     // NAT64 (64:ff9b::/96) and 6to4 (2002::/16) carry an IPv4 address inside; judge that one.
     if s[0] == 0x0064 && s[1] == 0xff9b && s[2..6] == [0; 4] {
         return public_v4(Ipv4Addr::new(
@@ -64,6 +68,10 @@ fn public_v6(ip: Ipv6Addr) -> bool {
             (s[7] & 0xff) as u8,
         ));
     }
+    // Local-use NAT64 (64:ff9b:1::/48) is not globally reachable and may route to private IPv4.
+    if s[0] == 0x0064 && s[1] == 0xff9b && s[2] == 1 {
+        return false;
+    }
     if s[0] == 0x2002 {
         return public_v4(Ipv4Addr::new(
             (s[1] >> 8) as u8,
@@ -71,6 +79,10 @@ fn public_v6(ip: Ipv6Addr) -> bool {
             (s[2] >> 8) as u8,
             (s[2] & 0xff) as u8,
         ));
+    }
+    // Teredo (2001:0000::/32) can carry an IPv4 destination through a relay.
+    if s[0] == 0x2001 && s[1] == 0 {
+        return false;
     }
     !(ip.is_loopback()
         || ip.is_unspecified()
@@ -244,7 +256,10 @@ mod tests {
             "::ffff:127.0.0.1",
             "::ffff:169.254.169.254",
             "64:ff9b::7f00:1",
+            "64:ff9b:1::a9fe:a9fe",
             "2002:7f00:1::",
+            "2001:0::",
+            "::a9fe:a9fe",
         ] {
             assert!(!is_public(ip(bad)), "{bad} should be refused");
         }
