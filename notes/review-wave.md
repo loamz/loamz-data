@@ -53,9 +53,9 @@ before the corresponding production changes.
 
 | Attack | Test | Result before fix | Fix |
 |---|---|---|---|
-| An S3 `POST /bucket?%64elete` contains a key in a read-only input prefix; raw query matching skips the bulk-delete body check. | `encoded_bulk_delete_cannot_delete_a_read_only_input` (`runner/src/door.rs`) | **Broke**: forwarded to the mock storage and returned 204 instead of 403. | Pending. |
+| An S3 `POST /bucket?%64elete` contains a key in a read-only input prefix; raw query matching skips the bulk-delete body check. | `encoded_bulk_delete_cannot_delete_a_read_only_input` (`runner/src/door.rs`) | **Broke**: forwarded to the mock storage and returned 204 instead of 403. | The door now recognizes decoded query keys; the request is refused before reaching storage. |
 | Two runs that export results from the same table receive credentials rooted at the same shared `results/` folder. | `result_folders_are_private_to_each_run` (`kernel/places.rs`) | **Broke**: the test initially failed to compile because the helper had no run-scoped input. | Added run-scoped result paths; focused unit test passes. |
-| A result upload succeeds but no completion report is recorded; `result_bytes = 0` causes expiry to skip the object. | `expiry_removes_an_unreported_result_file` (`server/tests/compute.rs`) | **Broke**: the expired run's uploaded file remained. | Pending. |
+| A result upload succeeds but no completion report is recorded; `result_bytes = 0` causes expiry to skip the object. | `expiry_removes_an_unreported_result_file` (`server/tests/compute.rs`); `insert_run_records_result_folder_before_upload` (`compute/store.rs`) | **Broke**: the expired run's uploaded file remained, and new result folders were not recorded at queue time. | Run folders are recorded atomically with the run; expiry considers any tracked folder, not only reported bytes. The focused SQLite tests pass. |
 
 Other requested attack classes to verify: fetch redirects and private address
 forms, DNS rebinding, credentials/userinfo, body size and time limits, result

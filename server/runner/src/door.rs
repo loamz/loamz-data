@@ -710,10 +710,9 @@ async fn forward_storage(
 ) -> Answer {
     let made = learned.read().await.clone();
     let bulk_delete = asked.method == "POST"
-        && asked
-            .query
-            .split('&')
-            .any(|p| p == "delete" || p.starts_with("delete="));
+        && parse_query(&asked.query)
+            .iter()
+            .any(|(key, _)| key == "delete");
     if bulk_delete && !delete_keys_allowed(grant, &made, &asked.path, &asked.body) {
         tracing::warn!(
             path = asked.path,
@@ -1257,5 +1256,45 @@ mod tests {
         // A bulk delete is allowed to start only on the bucket itself.
         assert!(storage_allows(&g, &[], "POST", "/lake", "delete").is_ok());
         assert!(storage_allows(&g, &[], "POST", "/lake/ws/cat/tbl/x", "delete").is_err());
+    }
+
+    #[tokio::test]
+    async fn encoded_bulk_delete_cannot_delete_a_read_only_input() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let upstream = tokio::spawn(async move {
+            let Ok(Ok((mut stream, _))) =
+                tokio::time::timeout(Duration::from_millis(250), listener.accept()).await
+            else {
+                return false;
+            };
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request).await;
+            let _ = stream
+                .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await;
+            true
+        });
+        let mut grant = storage();
+        grant.endpoint = endpoint;
+        let body = b"<Delete><Object><Key>ws/cat/in/secret</Key></Object></Delete>".to_vec();
+        let answer = forward_storage(
+            &reqwest::Client::new(),
+            &grant,
+            &RwLock::new(Vec::new()),
+            Asked {
+                method: "POST".into(),
+                path: "/lake".into(),
+                query: "%64elete".into(),
+                content_type: Some("application/xml".into()),
+                range: None,
+                md5: None,
+                body,
+                close: true,
+            },
+        )
+        .await;
+        assert_eq!(answer.status, 403);
+        assert!(!upstream.await.unwrap(), "the refused request reached storage");
     }
 }
