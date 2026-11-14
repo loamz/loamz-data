@@ -816,20 +816,20 @@ async fn run_output_folder(
 async fn erase_run_files(app: &App, run: &store::RunForErase, folder: &str) -> Result<()> {
     let prefix = format!("runs/{}/", run.id);
     for entry in app
-        .stores
+        .places
         .list(folder)
         .await
         .map_err(|e| Error::Internal(e.to_string()))?
         .into_iter()
         .filter(|entry| entry.path.starts_with(&prefix))
     {
-        app.stores
+        app.places
             .delete(folder, &entry.path)
             .await
             .map_err(|e| Error::Internal(e.to_string()))?;
     }
     if app
-        .stores
+        .places
         .list(folder)
         .await
         .map_err(|e| Error::Internal(e.to_string()))?

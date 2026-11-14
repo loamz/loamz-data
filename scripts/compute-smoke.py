@@ -60,7 +60,7 @@ def stop():
 try:
     env = {**os.environ, "LOAMZ_DATA_LISTEN": "127.0.0.1:18040", "LOAMZ_DATA_DATABASE_URL": f"sqlite:{work}/d.db?mode=rwc",
            "LOAMZ_DATA_BUCKET": "loamz-data", "LOAMZ_DATA_BUCKET_ENDPOINT": S3, "LOAMZ_DATA_BUCKET_KEY_ID_REF": "loamz-data/bucket#key_id", "LOAMZ_DATA_BUCKET_SECRET_REF": "loamz-data/bucket#secret", "LOAMZ_DATA_BUCKET_STS_ENDPOINT": S3,
-           "LOAMZ_DATA_OPENBAO_ADDR": BAO, "LOAMZ_DATA_OPENBAO_TOKEN_FILE": work + "/bao/token", "LOAMZ_DATA_OIDC_ISSUER": "http://127.0.0.1:8082/realms/loamz"}
+           "LOAMZ_DATA_STORAGE_ALLOW_PRIVATE": "true", "LOAMZ_DATA_STORAGE_ALLOW_HTTP_DEV": "true", "LOAMZ_DATA_OPENBAO_ADDR": BAO, "LOAMZ_DATA_OPENBAO_TOKEN_FILE": work + "/bao/token", "LOAMZ_DATA_OIDC_ISSUER": "http://127.0.0.1:8082/realms/loamz"}
     procs.append(subprocess.Popen([os.path.join(ROOT, "target/release/loamz-data"), "serve"], env=env, stdout=open(f"{work}/server.log", "w"), stderr=subprocess.STDOUT))
     for _ in range(100):
         try:
@@ -176,6 +176,29 @@ try:
     step(f"an address on the machine's own network was refused: {refused['state']}, {refused['error'] or refused['stderr']!r}"[:200])
     assert refused["state"] == "failed" and "x.csv" not in json.dumps(refused), refused
     _, http = call("POST", f"{S}/imports", ana, {"target": "shop.main.fetched", "url": "http://example.com/x.csv"}, ok=(400,))
+
+    # A catalog on a customer's storage location: its bytes are read and written with the location's own credential, in its own
+    # folder of the bucket (here the same RustFS, a folder of its own), and nothing of it is in the installation's default storage.
+    _, cred = call("POST", f"{S}/storage/credentials", ana, {"name": "rustfs", "provider": "rustfs", "endpoint": S3,
+                                                              "secret": {"kind": "sts", "access_key_id": "loamz-dev", "secret_access_key": "loamz-dev-only"}})
+    folder = f"smoke-{int(time.time())}"
+    _, loc = call("POST", f"{S}/storage/locations", ana, {"name": "cust", "credential_id": cred["id"], "bucket": "loamz-data", "prefix": folder})
+    ccat = call("POST", f"{S}/securables", ana, {"kind": "catalog", "name": "cust", "location": "cust"})[1]["id"]
+    csch = mk("schema", ccat, "main")
+    cvol = mk("volume", csch, "inbox")
+    call("PUT", f"{S}/volumes/{cvol}/files/p.csv", ana, raw=b"id,name\n1,Ana\n2,Bo\n3,Cy\n4,Di\n")
+    _, imp4 = call("POST", f"{S}/imports", ana, {"target": "cust.main.people", "volume": cvol, "path": "p.csv"})
+    onloc = wait_run(imp4["id"])
+    if onloc["state"] != "succeeded":
+        print(open(f"{work}/agent.log").read()[-1500:])
+        sys.exit("the import into a table on a customer location failed: " + json.dumps({k: onloc[k] for k in ("state", "error", "stderr", "stdout")})[:1500])
+    _, cnt4 = call("POST", f"{S}/sql/statements", ana, {"sql": "SELECT count(*) FROM cust.main.people", "wait_s": 60})
+    assert cnt4["state"] == "succeeded" and cnt4["result"]["rows"] == [[4]], cnt4
+    step(f"a table on the customer's location was written through its credential and read back: {cnt4['result']['rows']}")
+    listing = subprocess.run([DUCK, "-c", "import duckdb; c=duckdb.connect(); c.execute('INSTALL httpfs'); c.execute('LOAD httpfs'); "
+                              f"c.execute(\"CREATE SECRET (TYPE s3, KEY_ID 'loamz-dev', SECRET 'loamz-dev-only', ENDPOINT '127.0.0.1:9000', URL_STYLE 'path', USE_SSL false)\"); "
+                              f"print(c.execute(\"SELECT count(*) FROM glob('s3://loamz-data/{folder}/**')\").fetchone()[0])"], capture_output=True, text=True)
+    step(f"and its files are under the location's own folder {folder}/ in the bucket: {listing.stdout.strip() or listing.stderr[-160:]} files")
 
     # The doors refuse what the run did not declare, from inside the sandbox.
     probe = (

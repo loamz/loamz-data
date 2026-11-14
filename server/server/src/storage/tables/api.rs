@@ -50,14 +50,15 @@ fn param(c: &WsCtx, name: &str) -> Result<String> {
     Ok(v)
 }
 
-fn loaded(l: &Loaded, endpoint: Option<(&str, &str)>) -> Value {
+fn loaded(l: &Loaded) -> Value {
     let mut config = serde_json::Map::new();
-    if let (Some((c, _write)), Some((endpoint, _))) = (&l.credentials, endpoint) {
+    if let (Some((c, _write)), Some(place)) = (&l.credentials, &l.place) {
+        let (endpoint, region) = (&place.endpoint, &place.region);
         config.insert("s3.access-key-id".into(), json!(c.key_id));
         config.insert("s3.secret-access-key".into(), json!(c.secret));
         config.insert("s3.session-token".into(), json!(c.session_token));
         config.insert("s3.endpoint".into(), json!(endpoint));
-        config.insert("s3.region".into(), json!("auto"));
+        config.insert("s3.region".into(), json!(region));
         config.insert("s3.path-style-access".into(), json!("true"));
     }
     json!({"metadata-location": l.metadata_location, "metadata": l.metadata, "config": config})
@@ -154,7 +155,7 @@ async fn create_table(
         },
     )
     .await?;
-    Ok(Json(loaded(&made, app.stores.bucket_place())))
+    Ok(Json(loaded(&made)))
 }
 
 async fn load_table(State(app): State<Shared>, FileCtx(c): FileCtx) -> Out<Json<Value>> {
@@ -166,7 +167,7 @@ async fn load_table(State(app): State<Shared>, FileCtx(c): FileCtx) -> Out<Json<
         &param(&c, "t")?,
     )
     .await?;
-    Ok(Json(loaded(&l, app.stores.bucket_place())))
+    Ok(Json(loaded(&l)))
 }
 
 #[derive(Deserialize)]

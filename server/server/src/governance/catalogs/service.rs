@@ -163,7 +163,7 @@ pub async fn create(
         .as_ref()
         .map_or_else(String::new, |p| p.folder.clone());
     let catalog_root = match &draft.location {
-        Some(name) => locations::managed_prefix(app, identity, workspace, name).await?,
+        Some(name) => locations::managed_root(app, identity, workspace, name).await?,
         None => workspace.to_owned(),
     };
     let folder = match draft.kind {

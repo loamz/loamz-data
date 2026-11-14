@@ -263,7 +263,7 @@ async fn fetch_table(storage: &Value, id: &str, folder: &Path) -> Result<(), Str
         .with_access_key_id(text("key_id")?)
         .with_secret_access_key(text("secret")?)
         .with_token(text("session_token")?)
-        .with_region("auto")
+        .with_region(storage["region"].as_str().unwrap_or("auto"))
         .build()
         .map_err(|e| e.to_string())?;
     let at = &storage["tables"][id];

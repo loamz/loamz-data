@@ -254,6 +254,20 @@ pub async fn catalogs_under<'e, E: Executor<'e, Database = Any>>(
     .is_some())
 }
 
+/// A location by its id alone: for the server's own use when it reaches the bytes of a folder that is on one.
+pub async fn location_any<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    id: &str,
+) -> Result<Option<Location>> {
+    let row = sqlx::query(&format!(
+        "SELECT {LOCATION} FROM storage_locations WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(e)
+    .await?;
+    row.as_ref().map(location).transpose()
+}
+
 /// A location of the workspace, by name.
 pub async fn location_by_name<'e, E: Executor<'e, Database = Any>>(
     e: E,

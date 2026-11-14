@@ -444,7 +444,13 @@ async fn build_with(
     let mut app = App::new(&settings, &Secrets::default(), db).unwrap();
     let vault = Arc::new(FakeVault::default());
     app.vault = Some(vault.clone());
-    app.issuer = issuer;
+    if issuer.is_some() {
+        app.places = loamz_data_server::kernel::places::Places::new(
+            loamz_lake::objects::Store::folder(dir.clone()),
+            issuer,
+        );
+    }
+    loamz_data_server::storage::locations::service::attach(&app);
     app.metrics_token = Some("m".repeat(40));
     if directory {
         app.directory = Some(fake.clone());

@@ -1635,11 +1635,14 @@ async fn a_catalog_keeps_its_data_where_its_location_says(s: Server) {
         .await;
     assert_eq!(on.status, 201, "{}", on.text());
     let on = on.json()["id"].as_str().unwrap().to_owned();
-    assert_eq!(folder(on.clone()).await, format!("acme/lake/{on}"));
+    // Its folders begin with the location's marker: the bytes are then reached through the location's own credential, in its own
+    // bucket and folder (the server never opens that store in this test: nothing here reads or writes a file).
+    let root = format!("loc-{location}/{on}");
+    assert_eq!(folder(on.clone()).await, root);
     let schema = s.make(&ws, &ana(), "schema", &on, "raw").await;
-    let table = s.make(&ws, &ana(), "table", &schema, "orders").await;
-    assert_eq!(folder(schema).await, format!("acme/lake/{on}"));
-    assert!(folder(table).await.starts_with(&format!("acme/lake/{on}/")));
+    let volume = s.make(&ws, &ana(), "volume", &schema, "files").await;
+    assert_eq!(folder(schema).await, root);
+    assert!(folder(volume).await.starts_with(&format!("{root}/")));
 
     // Only a catalog is put on a location, only the workspace's admins may, and only one that exists.
     let parent = json!({"kind": "schema", "parent_id": on, "name": "x", "location": "lake"});
@@ -1669,9 +1672,11 @@ async fn a_catalog_keeps_its_data_where_its_location_says(s: Server) {
     // A location that holds a catalog cannot be removed until the catalog is gone.
     let del = format!("{base}/locations/{location}");
     assert_eq!(s.delete(&del, &ana()).await.status, 409);
+    // Dropping the catalog removes its files through the location's own store, which this test does not have: the drop stays
+    // pending (and the location stays), which is the right thing for a location that cannot be reached. The live test covers it.
     assert_eq!(s.delete(&format!("{url}/{on}"), &ana()).await.status, 202);
     s.work().await;
-    assert_eq!(s.delete(&del, &ana()).await.status, 204);
+    assert_eq!(s.delete(&del, &ana()).await.status, 409);
 }
 both!(a_catalog_keeps_its_data_where_its_location_says);
 

@@ -89,7 +89,7 @@ pub async fn put(app: &App, ask: &Ask<'_>, id: &str, path: &str, body: Body) -> 
     let (entry, target) = holder(app, ask, id, Access::Write).await?;
     run_output_path(app, ask, &target, id, path, "file.write").await?;
     let mut upload = app
-        .stores
+        .places
         .begin_put(&entry.folder, path, app.max_upload)
         .await
         .map_err(file_error)?;
@@ -117,7 +117,7 @@ pub async fn put(app: &App, ask: &Ask<'_>, id: &str, path: &str, body: Body) -> 
 pub async fn get(app: &App, ask: &Ask<'_>, id: &str, path: &str) -> Result<(Body, u64)> {
     let (entry, target) = holder(app, ask, id, Access::Read).await?;
     let (file, size) = app
-        .stores
+        .places
         .open(&entry.folder, path)
         .await
         .map_err(file_error)?;
@@ -137,7 +137,7 @@ pub async fn get(app: &App, ask: &Ask<'_>, id: &str, path: &str) -> Result<(Body
 /// Not allowed.
 pub async fn list(app: &App, ask: &Ask<'_>, id: &str) -> Result<Vec<Entry>> {
     let (entry, _) = holder(app, ask, id, Access::Read).await?;
-    Ok(app.stores.list(&entry.folder).await?)
+    Ok(app.places.list(&entry.folder).await?)
 }
 
 /// # Errors
@@ -145,7 +145,7 @@ pub async fn list(app: &App, ask: &Ask<'_>, id: &str) -> Result<Vec<Entry>> {
 pub async fn delete(app: &App, ask: &Ask<'_>, id: &str, path: &str) -> Result<()> {
     let (entry, target) = holder(app, ask, id, Access::Write).await?;
     run_output_path(app, ask, &target, id, path, "file.delete").await?;
-    app.stores
+    app.places
         .delete(&entry.folder, path)
         .await
         .map_err(file_error)?;
@@ -165,7 +165,7 @@ pub async fn delete(app: &App, ask: &Ask<'_>, id: &str, path: &str) -> Result<()
 /// # Errors
 /// The disk could not be written.
 pub async fn erase_files(app: &App, folder: &str) -> Result<()> {
-    Ok(app.stores.remove_volume(folder).await?)
+    Ok(app.places.remove_volume(folder).await?)
 }
 
 /// Whether any bytes of the volume or table folder are left (the erase check).
@@ -173,5 +173,5 @@ pub async fn erase_files(app: &App, folder: &str) -> Result<()> {
 /// # Errors
 /// The disk could not be read.
 pub async fn has_files(app: &App, folder: &str) -> Result<bool> {
-    Ok(app.stores.exists(folder).await?)
+    Ok(app.places.exists(folder).await?)
 }

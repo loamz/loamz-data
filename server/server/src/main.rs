@@ -45,6 +45,7 @@ async fn run(command: &str) -> Result<(), String> {
     let secrets = settings.resolve(vault.as_deref()).await?;
     let mut app = App::new(&settings, &secrets, db)?;
     app.vault = vault;
+    loamz_data_server::storage::locations::service::attach(&app);
     let app = shared(app);
     app.verifier
         .refresh()

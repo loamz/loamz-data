@@ -7,6 +7,7 @@ pub mod cache;
 pub mod directory;
 pub mod error;
 pub mod http;
+pub mod places;
 pub mod secrets;
 pub mod settings;
 pub mod state;

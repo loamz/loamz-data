@@ -17,6 +17,8 @@ use crate::{
         auth::Identity,
         error::{Error, Result},
         new_id, now_ms,
+        places::{self, LocationSource, Opened},
+        secrets::SecretStore,
         settings::valid_issuer,
         state::App,
     },
@@ -70,7 +72,8 @@ pub(super) async fn authorize_credential(
 
 /// Whether a credential and bucket are the ones this server itself writes to. A folder store (tests only) accepts any.
 fn is_own_store(app: &App, endpoint: &str, bucket: &str) -> bool {
-    app.stores
+    app.places
+        .own()
         .bucket_place()
         .is_none_or(|(own_endpoint, own_bucket)| {
             own_endpoint.trim_end_matches('/') == endpoint.trim_end_matches('/')
@@ -295,6 +298,135 @@ pub async fn rotate_credential(
     Ok(())
 }
 
+fn location_error(e: &loamz_lake::location::LocationError) -> Error {
+    match e {
+        loamz_lake::location::LocationError::Rejected => {
+            Error::Invalid("the store rejected the credential".into())
+        }
+        loamz_lake::location::LocationError::Unavailable => {
+            Error::Unavailable("the store is unavailable".into())
+        }
+        loamz_lake::location::LocationError::Unsupported => {
+            Error::Unsupported("the provider or endpoint is unsupported".into())
+        }
+    }
+}
+
+/// Builds the store of a location from its credential at the version the database pins. The secret is read, used and dropped here.
+async fn build_handle(
+    app: &App,
+    c: &Credential,
+    l: &Location,
+) -> Result<loamz_lake::location::LocationHandle> {
+    let vault = app
+        .vault
+        .as_ref()
+        .ok_or_else(|| Error::Unavailable("vault unavailable".into()))?;
+    open_with(
+        &**vault,
+        app.storage_allow_private,
+        app.storage_allow_http_dev,
+        c,
+        l,
+    )
+    .await
+}
+
+async fn open_with(
+    vault: &dyn SecretStore,
+    allow_private: bool,
+    allow_http: bool,
+    c: &Credential,
+    l: &Location,
+) -> Result<loamz_lake::location::LocationHandle> {
+    let mut data = vault
+        .read_version(&c.secret_path, c.secret_version)
+        .await
+        .map_err(|_| Error::Unavailable("vault unavailable".into()))?;
+    let mut field = |name: &str| match data.get_mut(name) {
+        Some(serde_json::Value::String(value)) => Ok(std::mem::take(value)),
+        _ => Err(Error::Unavailable("vault credential is invalid".into())),
+    };
+    let key_id = field("access_key_id")?;
+    let key_secret = field("secret_access_key")?;
+    let token = if c.provider == "r2" {
+        Some(field("api_token")?)
+    } else {
+        None
+    };
+    let secret = loamz_lake::location::LocationSecret::new(key_id, key_secret, token);
+    drop(data);
+    let config = loamz_lake::location::LocationCredential {
+        provider: c.provider.clone(),
+        endpoint: c.endpoint.clone(),
+        region: c.region.clone(),
+        bucket: l.bucket.clone(),
+        prefix: l.prefix.clone(),
+        generation: c.generation,
+        allow_private,
+        allow_http,
+    };
+    loamz_lake::location::build_location(&config, &secret)
+        .await
+        .map_err(|e| location_error(&e))
+}
+
+/// Where the kernel finds a location's store: it reads the location and its credential, and builds the store.
+struct Source {
+    db: loamz_lake::sql::Db,
+    vault: std::sync::Arc<dyn SecretStore>,
+    allow_private: bool,
+    allow_http: bool,
+}
+
+#[async_trait::async_trait]
+impl LocationSource for Source {
+    async fn generation(&self, location: &str) -> std::result::Result<Option<i64>, String> {
+        let Some(l) = store::location_any(self.db.pool(), location)
+            .await
+            .map_err(|e| e.to_string())?
+        else {
+            return Ok(None);
+        };
+        Ok(
+            store::get_credential(self.db.pool(), &l.workspace_id, &l.credential_id)
+                .await
+                .map_err(|e| e.to_string())?
+                .map(|c| c.generation),
+        )
+    }
+
+    async fn open(&self, location: &str) -> std::result::Result<Opened, String> {
+        let l = store::location_any(self.db.pool(), location)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("no such location")?;
+        let c = store::get_credential(self.db.pool(), &l.workspace_id, &l.credential_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or("no such credential")?;
+        let handle = open_with(&*self.vault, self.allow_private, self.allow_http, &c, &l)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(Opened {
+            handle,
+            prefix: l.prefix,
+        })
+    }
+}
+
+/// Lets the kernel reach the storage locations of customers. Done once at start, when the vault is known.
+pub fn attach(app: &App) {
+    if let Some(vault) = &app.vault {
+        app.places.attach(std::sync::Arc::new(Source {
+            db: app.db.clone(),
+            vault: vault.clone(),
+            allow_private: app.storage_allow_private,
+            allow_http: app.storage_allow_http_dev,
+        }));
+    }
+}
+
 /// Checks a location using its current pinned vault version without returning credential material.
 ///
 /// # Errors
@@ -313,54 +445,10 @@ pub async fn check_credential(
         .ok_or_else(|| Error::NotFound("not found".into()))?;
     let generation = c.generation;
     let outcome: Result<()> = async {
-        let vault = app
-            .vault
-            .as_ref()
-            .ok_or_else(|| Error::Unavailable("vault unavailable".into()))?;
-        let mut data = vault
-            .read_version(&c.secret_path, c.secret_version)
-            .await
-            .map_err(|_| Error::Unavailable("vault unavailable".into()))?;
-        let mut field = |name: &str| match data.get_mut(name) {
-            Some(serde_json::Value::String(value)) => Ok(std::mem::take(value)),
-            _ => Err(Error::Unavailable("vault credential is invalid".into())),
-        };
-        let key_id = field("access_key_id")?;
-        let key_secret = field("secret_access_key")?;
-        let token = if c.provider == "r2" {
-            Some(field("api_token")?)
-        } else {
-            None
-        };
-        let secret = loamz_lake::location::LocationSecret::new(key_id, key_secret, token);
-        drop(data);
-        let config = loamz_lake::location::LocationCredential {
-            provider: c.provider,
-            endpoint: c.endpoint,
-            region: c.region,
-            bucket: l.bucket,
-            prefix: l.prefix,
-            generation: c.generation,
-            allow_private: app.storage_allow_private,
-            allow_http: app.storage_allow_http_dev,
-        };
-        let map_error = |e| match e {
-            loamz_lake::location::LocationError::Rejected => {
-                Error::Invalid("the store rejected the credential".into())
-            }
-            loamz_lake::location::LocationError::Unavailable => {
-                Error::Unavailable("the store is unavailable".into())
-            }
-            loamz_lake::location::LocationError::Unsupported => {
-                Error::Unsupported("the provider or endpoint is unsupported".into())
-            }
-        };
-        let handle = loamz_lake::location::build_location(&config, &secret)
-            .await
-            .map_err(map_error)?;
+        let handle = build_handle(app, &c, &l).await?;
         loamz_lake::location::check(&handle)
             .await
-            .map_err(map_error)
+            .map_err(|e| location_error(&e))
     }
     .await;
     match outcome {
@@ -460,7 +548,7 @@ pub async fn create_location(
     };
     // The server's own bucket also holds every workspace's default storage, one folder per workspace id: a location may not take
     // the whole bucket, or sit in or over someone else's.
-    if app.stores.bucket_place().is_some()
+    if app.places.own().bucket_place().is_some()
         && is_own_store(app, &credential.endpoint, &l.bucket)
         && (l.prefix.is_empty()
             || store::other_workspace(
@@ -526,7 +614,7 @@ pub async fn delete_location(
 ) -> Result<()> {
     let org = manage(app, identity, workspace, "delete a storage location").await?;
     if let Some(l) = store::location_by_id(app.db.pool(), workspace, id).await?
-        && store::catalogs_under(app.db.pool(), workspace, &l.prefix).await?
+        && store::catalogs_under(app.db.pool(), workspace, &places::root_of(&l.id)).await?
     {
         return Err(Error::Conflict(
             "a catalog keeps its data in this location: remove the catalog first".into(),
@@ -547,12 +635,12 @@ pub async fn delete_location(
     uow.commit().await
 }
 
-/// Where a new catalog's bytes go when it is put on a registered location: the location's folder. The server can only write to its
-/// own store, so a location elsewhere cannot hold catalogs yet (a store per location is not built).
+/// What a new catalog's folders begin with when it is put on a registered location: the location's marker. The catalog's bytes are
+/// then read and written through the location's own credential, in the location's own bucket and folder.
 ///
 /// # Errors
-/// Not an admin of the workspace, no such location, or it is in a store this server does not write to.
-pub async fn managed_prefix(
+/// Not an admin of the workspace, or no such location.
+pub async fn managed_root(
     app: &App,
     identity: &Identity,
     workspace: &str,
@@ -568,20 +656,7 @@ pub async fn managed_prefix(
     let l = store::location_by_name(app.db.pool(), workspace, name)
         .await?
         .ok_or_else(|| Error::NotFound("no such storage location in this workspace".into()))?;
-    let credential = store::get_credential(app.db.pool(), workspace, &l.credential_id)
-        .await?
-        .ok_or_else(|| Error::Internal("a location's credential is missing".into()))?;
-    if !is_own_store(app, &credential.endpoint, &l.bucket) {
-        return Err(Error::Invalid(
-            "this location is in a store this server does not write to yet: only a location in the installation's own bucket can hold a catalog".into(),
-        ));
-    }
-    if l.prefix.is_empty() {
-        return Err(Error::Invalid(
-            "a location that holds catalogs needs a folder".into(),
-        ));
-    }
-    Ok(l.prefix)
+    Ok(places::root_of(&l.id))
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use loamz_lake::grants::Credentials;
+use loamz_lake::{grants::Credentials, location::Place};
 use serde_json::{Value, json};
 
 use super::{manifests, model};
@@ -195,7 +195,7 @@ async fn read_bytes(app: &App, id: &str, rel: &str) -> Result<std::sync::Arc<Vec
     if let Some(hit) = app.metadata_cache.lock().ok().and_then(|c| c.get(&key)) {
         return Ok(hit);
     }
-    let (mut stream, size) = app.stores.open(id, rel).await?;
+    let (mut stream, size) = app.places.open(id, rel).await?;
     if size > MAX_METADATA {
         return Err(Error::Internal("a metadata file is too large".into()));
     }
@@ -219,7 +219,7 @@ async fn read_metadata(app: &App, id: &str, rel: &str) -> Result<Value> {
 
 async fn write_metadata(app: &App, id: &str, rel: &str, meta: &Value) -> Result<()> {
     let bytes = serde_json::to_vec(meta).map_err(|e| Error::Internal(e.to_string()))?;
-    let mut up = app.stores.begin_put(id, rel, MAX_METADATA).await?;
+    let mut up = app.places.begin_put(id, rel, MAX_METADATA).await?;
     up.write(&bytes).await?;
     up.commit().await?;
     Ok(())
@@ -232,7 +232,7 @@ async fn publish_hint(app: &App, id: &str, rel: &str) {
     let hint = model::version_hint(rel);
     let put = async {
         let mut up = app
-            .stores
+            .places
             .begin_put(id, model::VERSION_HINT, MAX_METADATA)
             .await?;
         up.write(hint.as_bytes()).await?;
@@ -250,29 +250,66 @@ pub struct Loaded {
     pub metadata: Value,
     /// Short-lived credentials for the table's folder, if this storage can issue them; and whether they may write.
     pub credentials: Option<(Credentials, bool)>,
+    /// Where the store is, for a client given credentials.
+    pub place: Option<Place>,
 }
 
-/// Credentials for some tables' folders, for machines that read (or write) the data themselves.
+/// Credentials for some folders, and where the store they are in is.
+pub struct Vended {
+    pub credentials: Credentials,
+    /// None where the store is not a bucket (only a test's folder).
+    pub place: Option<Place>,
+}
+
+/// The folder's real prefix in its bucket: what a door's grant is written in.
 ///
 /// # Errors
-/// The storage has no issuer, or the provider refused.
-pub async fn vend(app: &App, ids: &[&str], write: bool, ttl: Duration) -> Result<Credentials> {
-    let issuer = app.issuer.as_ref().ok_or_else(|| {
-        Error::Unavailable("this server's storage cannot give other machines access to data".into())
-    })?;
+/// The folder is on a storage location that cannot be reached.
+pub async fn key_of(app: &App, folder: &str) -> Result<String> {
+    Ok(app.places.spot(folder).await?.key)
+}
+
+/// Credentials for some tables' folders, for machines that read (or write) the data themselves. The folders must be in one store.
+///
+/// # Errors
+/// The storage has no issuer, the folders are in more than one store, or the provider refused.
+pub async fn vend(app: &App, folders: &[&str], write: bool, ttl: Duration) -> Result<Vended> {
+    let mut spots = Vec::with_capacity(folders.len());
+    for folder in folders {
+        spots.push(app.places.spot(folder).await?);
+    }
+    let first = spots
+        .first()
+        .ok_or_else(|| Error::Invalid("there is nothing to give access to".into()))?;
+    if spots.iter().any(|s| s.location != first.location) {
+        return Err(Error::Invalid(
+            "a run reads and writes in one storage location at a time".into(),
+        ));
+    }
+    let unavailable =
+        || Error::Unavailable("this storage cannot give other machines access to data".into());
+    let issuer = first.issuer.clone().ok_or_else(unavailable)?;
+    let place = first.place.clone();
+    let mut rests: Vec<&str> = spots.iter().map(|s| s.rest.as_str()).collect();
     // The same folders and access, asked for again while the credentials still last nearly as long as wanted (within a minute): reuse
     // them. A run asks for its time limit plus five minutes, so reused credentials still outlast the run.
-    let mut key: Vec<&str> = ids.to_vec();
-    key.sort_unstable();
-    let key = format!("{}|{write}", key.join(","));
+    rests.sort_unstable();
+    let key = format!(
+        "{}|{}|{write}",
+        first.location.as_deref().unwrap_or_default(),
+        rests.join(",")
+    );
     let now = std::time::Instant::now();
     if let Ok(cache) = app.credential_cache.lock()
         && let Some((c, until)) = cache.get(&key)
         && until.saturating_duration_since(now) >= ttl.saturating_sub(Duration::from_mins(1))
     {
-        return Ok(c.clone());
+        return Ok(Vended {
+            credentials: c.clone(),
+            place,
+        });
     }
-    let fresh = issuer.issue(ids, write, ttl).await?;
+    let fresh = issuer.issue(&rests, write, ttl).await?;
     if let Ok(mut cache) = app.credential_cache.lock() {
         // What the store honours is at least a minute and at most an hour; count on the least it can be.
         cache.retain(|_, (_, until)| *until > now);
@@ -284,14 +321,22 @@ pub async fn vend(app: &App, ids: &[&str], write: bool, ttl: Duration) -> Result
             ),
         );
     }
-    Ok(fresh)
+    Ok(Vended {
+        credentials: fresh,
+        place,
+    })
 }
 
-async fn vend_for_client(app: &App, id: &str, write: bool) -> Result<Option<(Credentials, bool)>> {
-    if app.issuer.is_none() {
+async fn vend_for_client(
+    app: &App,
+    id: &str,
+    write: bool,
+) -> Result<Option<((Credentials, bool), Option<Place>)>> {
+    if app.places.spot(id).await?.issuer.is_none() {
         return Ok(None);
     }
-    Ok(Some((vend(app, &[id], write, CLIENT_TTL).await?, write)))
+    let v = vend(app, &[id], write, CLIENT_TTL).await?;
+    Ok(Some(((v.credentials, write), v.place)))
 }
 
 /// Loads a table for a client: its metadata, and credentials for its folder. Needs `SELECT`; the credentials may write only if
@@ -333,14 +378,9 @@ pub async fn load(
     )
     .await?;
     let metadata = read_metadata(app, &entry.folder, &entry.metadata).await?;
-    let credentials = if app.issuer.is_some() {
-        Some((
-            vend(app, &[&entry.folder], may_write, CLIENT_TTL).await?,
-            may_write,
-        ))
-    } else {
-        None
-    };
+    let (credentials, place) = vend_for_client(app, &entry.folder, may_write)
+        .await?
+        .map_or((None, None), |(c, p)| (Some(c), p));
     audit::record(
         app,
         ask.org,
@@ -351,10 +391,15 @@ pub async fn load(
     )
     .await?;
     Ok(Loaded {
-        metadata_location: format!("{}/{}", app.stores.uri(&entry.folder)?, entry.metadata),
+        metadata_location: format!(
+            "{}/{}",
+            app.places.uri(&entry.folder).await?,
+            entry.metadata
+        ),
         id: entry.id,
         metadata,
         credentials,
+        place,
     })
 }
 
@@ -414,7 +459,7 @@ async fn create_in(app: &App, ask: &Ask<'_>, parent: Securable, new: NewTable) -
     let id = new_id();
     // The table's folder is under its catalog's root, in the workspace's own prefix.
     let folder = join_folder(&parent.folder, &id);
-    let location = app.stores.uri(&folder)?;
+    let location = app.places.uri(&folder).await?;
     let meta = model::new_metadata(
         &location,
         &new_id(),
@@ -426,12 +471,15 @@ async fn create_in(app: &App, ask: &Ask<'_>, parent: Securable, new: NewTable) -
     )
     .map_err(Error::Invalid)?;
     if new.stage {
-        let credentials = vend_for_client(app, &folder, true).await?;
+        let (credentials, place) = vend_for_client(app, &folder, true)
+            .await?
+            .map_or((None, None), |(c, p)| (Some(c), p));
         return Ok(Loaded {
             metadata_location: String::new(),
             id,
             metadata: meta,
             credentials,
+            place,
         });
     }
     let rel = model::next_metadata_path("", &new_id());
@@ -456,16 +504,19 @@ async fn create_in(app: &App, ask: &Ask<'_>, parent: Securable, new: NewTable) -
     .await;
     if let Err(e) = made {
         // Nothing points at the file; take it away so a refused name leaves nothing behind.
-        let _ = app.stores.remove_volume(&folder).await;
+        let _ = app.places.remove_volume(&folder).await;
         return Err(e);
     }
     publish_hint(app, &folder, &rel).await;
-    let credentials = vend_for_client(app, &folder, true).await?;
+    let (credentials, place) = vend_for_client(app, &folder, true)
+        .await?
+        .map_or((None, None), |(c, p)| (Some(c), p));
     Ok(Loaded {
         metadata_location: format!("{location}/{rel}"),
         id,
         metadata: meta,
         credentials,
+        place,
     })
 }
 
@@ -501,7 +552,11 @@ pub async fn commit(
     let mut next = model::apply(&current, updates, now_ms()).map_err(Error::Invalid)?;
     model::log_previous(
         &mut next,
-        &format!("{}/{}", app.stores.uri(&entry.folder)?, entry.metadata),
+        &format!(
+            "{}/{}",
+            app.places.uri(&entry.folder).await?,
+            entry.metadata
+        ),
         current["last-updated-ms"].as_i64().unwrap_or(0),
     );
     let rel = model::next_metadata_path(&entry.metadata, &new_id());
@@ -509,7 +564,7 @@ pub async fn commit(
     let mut uow = Uow::begin(app).await?;
     if !catalogs::advance(&mut uow, ask.org, &entry.id, &entry.metadata, &rel).await? {
         drop(uow);
-        let _ = app.stores.delete(&entry.folder, &rel).await;
+        let _ = app.places.delete(&entry.folder, &rel).await;
         return Err(Error::Conflict(
             "the table changed while this was committed".into(),
         ));
@@ -524,7 +579,10 @@ pub async fn commit(
     .await?;
     uow.commit().await?;
     publish_hint(app, &entry.folder, &rel).await;
-    Ok((format!("{}/{rel}", app.stores.uri(&entry.folder)?), next))
+    Ok((
+        format!("{}/{rel}", app.places.uri(&entry.folder).await?),
+        next,
+    ))
 }
 
 /// The second step of making a table: it must not exist yet, and the updates are everything that makes it. Needs `CREATE TABLE`.
@@ -542,10 +600,9 @@ async fn commit_new(
     }
     let meta = model::apply(&model::empty_metadata(), updates, now_ms()).map_err(Error::Invalid)?;
     model::check_schema(&meta["schemas"][0]).map_err(Error::Invalid)?;
-    let base = app.stores.uri("x")?;
-    let base = base.strip_suffix("/x").unwrap_or(&base);
+    let root_uri = app.places.uri(&parent.folder).await?;
     let location = meta["location"].as_str().unwrap_or_default();
-    let (folder, id) = model::folder_in_location(location, base, &parent.folder)
+    let (folder, id) = model::folder_in_location(location, &root_uri, &parent.folder)
         .ok_or_else(|| Error::Invalid("the table's location is not one this server gave".into()))?;
     if catalogs::exists(app, ask.org, &id).await? {
         return Err(Error::Conflict("that location is already a table".into()));
@@ -571,7 +628,7 @@ async fn commit_new(
     )
     .await;
     if let Err(e) = made {
-        let _ = app.stores.delete(&folder, &rel).await;
+        let _ = app.places.delete(&folder, &rel).await;
         return Err(e);
     }
     publish_hint(app, &folder, &rel).await;
@@ -604,7 +661,7 @@ pub async fn describe(app: &App, ask: &Ask<'_>, id: &str) -> Result<Value> {
         .collect();
     Ok(json!({
         "format": "iceberg",
-        "location": app.stores.uri(&entry.folder)?,
+        "location": app.places.uri(&entry.folder).await?,
         "stats": model::table_stats(&meta),
         "columns": model::columns(&meta),
         "snapshots": snapshots,
@@ -622,7 +679,11 @@ pub async fn locate(app: &App, org: &str, id: &str) -> Result<(String, String, S
     if entry.kind != Kind::Table {
         return Err(nope());
     }
-    Ok((app.stores.uri(&entry.folder)?, entry.metadata, entry.folder))
+    Ok((
+        app.places.uri(&entry.folder).await?,
+        entry.metadata,
+        entry.folder,
+    ))
 }
 
 /// Per-column counts and ranges of a table, from what its files recorded about themselves: no data is read and no compute is
@@ -658,7 +719,7 @@ pub async fn column_stats(app: &App, ask: &Ask<'_>, id: &str) -> Result<Value> {
         .flatten()
         .find(|s| &s["snapshot-id"] == current)
         .and_then(|s| s["manifest-list"].as_str());
-    let base = format!("{}/", app.stores.uri(&entry.folder)?);
+    let base = format!("{}/", app.places.uri(&entry.folder).await?);
     let rel = |path: &str| {
         path.strip_prefix(&base)
             .map(str::to_owned)

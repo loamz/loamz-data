@@ -1,5 +1,6 @@
 # Proposal 0004: their storage
 
+- **Built 14 Nov 2026:** credential custody, `build_location`, and the per-location router (`kernel/places.rs`); proven against RustFS by `scripts/compute-smoke.py` (a table on a registered location, written with its own credential). Storage grants and the console's rotate and check are not built.
 - **Status:** approved with the lead amendments in section 5. Those amendments replace conflicting earlier decisions; implementation is not a security certification.
 - **Scope:** W2 and the W3 interfaces it needs in [the beta proposal](0003-beta.md). The lead agrees these contracts before code.
 - **Starting point:** [storage](../design/storage.md), [governance](../design/governance.md), and the current credential and location APIs. This proposal replaces the storage design's post-beta timing for customer buckets: they are in the beta.

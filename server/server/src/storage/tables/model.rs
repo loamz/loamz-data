@@ -202,14 +202,13 @@ pub fn empty_metadata() -> Value {
     })
 }
 
-/// The folder and the table id a staged location names: `<store address>/<root>/<id>`, where the address is this server's own and
-/// the root is the table's catalog's.
+/// The folder and the table id a staged location names: `<address of the catalog's root>/<id>`. `root_uri` is the address the store
+/// gives the catalog's root folder (`root`), whichever store it is in.
 #[must_use]
-pub fn folder_in_location(location: &str, base: &str, root: &str) -> Option<(String, String)> {
-    let folder = location.strip_prefix(base)?.strip_prefix('/')?;
-    let id = folder.strip_prefix(root)?.strip_prefix('/')?;
+pub fn folder_in_location(location: &str, root_uri: &str, root: &str) -> Option<(String, String)> {
+    let id = location.strip_prefix(root_uri)?.strip_prefix('/')?;
     (!id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
-        .then(|| (folder.to_owned(), id.to_owned()))
+        .then(|| (format!("{root}/{id}"), id.to_owned()))
 }
 
 /// Checks what a commit assumed about the table still holds.
@@ -761,7 +760,7 @@ mod tests {
 
     #[test]
     fn a_staged_location_must_be_ours() {
-        let found = |l, r| folder_in_location(l, "s3://b", r);
+        let found = |l, r: &str| folder_in_location(l, &format!("s3://b/{r}"), r);
         assert_eq!(
             found("s3://b/ws/cat/abc-1", "ws/cat"),
             Some(("ws/cat/abc-1".into(), "abc-1".into()))
@@ -775,8 +774,13 @@ mod tests {
         assert_eq!(found("s3://b/ws/cat/", "ws/cat"), None);
         assert_eq!(found("s3://b/abc", "ws/cat"), None, "not under the root");
         assert_eq!(
-            folder_in_location("s3://other/ws/cat/abc", "s3://b", "ws/cat"),
+            folder_in_location("s3://other/ws/cat/abc", "s3://b/ws/cat", "ws/cat"),
             None
+        );
+        // On a customer's location the address has the location's own folder, and the folder the marker.
+        assert_eq!(
+            folder_in_location("s3://b/pre/cat/abc", "s3://b/pre/cat", "loc-1/cat"),
+            Some(("loc-1/cat/abc".into(), "abc".into()))
         );
     }
 

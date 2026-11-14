@@ -171,7 +171,7 @@ async fn iceberg_tables_are_governed(s: Server) {
         .unwrap();
     let (mut hint, _) = s
         .app
-        .stores
+        .places
         .open(&folder, "metadata/version-hint.text")
         .await
         .unwrap();

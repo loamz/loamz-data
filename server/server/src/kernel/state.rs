@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use loamz_lake::{grants::Issuer, objects::Store, sql::Db};
+use loamz_lake::sql::Db;
 use tokio::sync::Mutex;
 
 use super::{
@@ -12,11 +12,9 @@ use super::{
 
 pub struct App {
     pub db: Db,
-    /// The bytes of volumes and tables: one prefix per securable, named by its id.
-    pub stores: Store,
+    /// The bytes of volumes and tables: one prefix per securable, in this installation's own store or on a customer's location.
+    pub places: super::places::Places,
     pub verifier: Verifier,
-    /// Issues short-lived credentials for some folders of the bucket, for machines that read data themselves.
-    pub issuer: Option<Arc<dyn Issuer>>,
     /// Where the secrets are, for the settings people make while it runs (a storage credential names its secrets). None: no vault.
     pub vault: Option<Arc<dyn SecretStore>>,
     pub metrics: crate::metrics::Metrics,
@@ -59,10 +57,12 @@ impl App {
     pub fn new(settings: &Settings, secrets: &Secrets, db: Db) -> Result<Self, String> {
         Ok(Self {
             db,
-            stores: settings.storage.open(secrets)?,
+            places: super::places::Places::new(
+                settings.storage.open(secrets)?,
+                settings.storage.issuer(secrets)?,
+            ),
             verifier: Verifier::new(&settings.issuer)
                 .with_agent_clients(settings.agent_clients.clone()),
-            issuer: settings.storage.issuer(secrets)?,
             vault: None,
             metrics: crate::metrics::Metrics::default(),
             metrics_token: secrets.metrics_token.clone(),

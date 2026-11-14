@@ -1499,7 +1499,7 @@ async fn storage_for(
     ids: &[String],
     spec: &Value,
     timeout_s: i64,
-) -> Result<Value> {
+) -> Result<Option<Value>> {
     let ttl = Duration::from_secs(u64::try_from(timeout_s).unwrap_or(120) + 300);
     let mut located = serde_json::Map::new();
     let mut folders = Vec::with_capacity(ids.len());
@@ -1507,11 +1507,14 @@ async fn storage_for(
         let (uri, rel, folder) = tables::locate(app, org, id).await?;
         located.insert(
             id.clone(),
-            json!({"uri": uri, "metadata": rel, "folder": folder}),
+            json!({"uri": uri, "metadata": rel, "folder": tables::key_of(app, &folder).await?}),
         );
         folders.push(folder);
     }
-    let read_prefixes: Vec<String> = folders.iter().map(|f| format!("{f}/")).collect();
+    let mut read_prefixes: Vec<String> = Vec::with_capacity(folders.len());
+    for f in &folders {
+        read_prefixes.push(format!("{}/", tables::key_of(app, f).await?));
+    }
     // A job that writes tables is also given the folders it may write: an existing table's own, and for a table it will create, its
     // catalog's root (the new table's folder is not known yet; the storage door narrows it to the folder the catalog gives).
     let mut write_prefixes: Vec<String> = Vec::new();
@@ -1521,32 +1524,38 @@ async fn storage_for(
             let (uri, rel, folder) = tables::locate(app, org, id).await?;
             located.insert(
                 id.to_owned(),
-                json!({"uri": uri, "metadata": rel, "folder": folder}),
+                json!({"uri": uri, "metadata": rel, "folder": tables::key_of(app, &folder).await?}),
             );
-            write_prefixes.push(format!("{folder}/"));
+            write_prefixes.push(format!("{}/", tables::key_of(app, &folder).await?));
             folders.push(folder);
         } else {
             let catalog = w["catalog_id"]
                 .as_str()
                 .ok_or_else(|| Error::Internal("a write has no catalog".into()))?;
             let (root, _) = catalogs::target(app, org, catalog).await?;
-            create_roots.push(format!("{}/", root.folder));
+            create_roots.push(format!("{}/", tables::key_of(app, &root.folder).await?));
             folders.push(root.folder);
         }
     }
     let writing = !write_prefixes.is_empty() || !create_roots.is_empty();
+    // A store that cannot give other machines access (a folder, in tests): the machine says so when it needs data.
+    if let Some(first) = folders.first()
+        && app.places.spot(first).await?.issuer.is_none()
+    {
+        return Ok(None);
+    }
     let refs: Vec<&str> = folders.iter().map(String::as_str).collect();
-    let creds = tables::vend(app, &refs, writing, ttl).await?;
-    let (endpoint, bucket) = app
-        .stores
-        .bucket_place()
+    let vended = tables::vend(app, &refs, writing, ttl).await?;
+    let creds = vended.credentials;
+    let place = vended
+        .place
         .ok_or_else(|| Error::Unavailable("this server's storage is not a bucket".into()))?;
-    Ok(json!({
-        "endpoint": endpoint, "bucket": bucket, "key_id": creds.key_id, "secret": creds.secret,
+    Ok(Some(json!({
+        "endpoint": place.endpoint, "region": place.region, "bucket": place.bucket, "key_id": creds.key_id, "secret": creds.secret,
         "session_token": creds.session_token, "tables": located,
         "mode": if writing { "write" } else { "read" },
         "read_prefixes": read_prefixes, "write_prefixes": write_prefixes, "create_roots": create_roots,
-    }))
+    })))
 }
 
 /// Check the current workspace, entitlements, object grants and table rules before handing a run to a worker.
@@ -1848,7 +1857,7 @@ pub async fn lease(app: &App, target: &Target) -> Result<Option<Lease>> {
     let writing = spec["table_writes"]
         .as_array()
         .is_some_and(|a| !a.is_empty());
-    let storage = if (ids.is_empty() && !writing) || app.issuer.is_none() {
+    let storage = if ids.is_empty() && !writing {
         None
     } else {
         // The credentials come from the storage provider over the network: one more try before giving up on a slow answer.
@@ -1857,7 +1866,7 @@ pub async fn lease(app: &App, target: &Target) -> Result<Option<Lease>> {
             got = storage_for(app, &run.org_id, &ids, &spec, limits.timeout_s).await;
         }
         match got {
-            Ok(s) => Some(s),
+            Ok(s) => s,
             Err(e) => {
                 // The run cannot be given its data; say so now, and why, rather than let it time out.
                 tracing::warn!(run = %run.id, error = ?e, "could not prepare a run's data access");
