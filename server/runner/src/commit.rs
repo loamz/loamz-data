@@ -370,4 +370,33 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(target);
     }
+
+    /// Against a real store (RustFS in `deploy/dev`): a second upload to the same key is refused, and the first file is kept.
+    #[tokio::test]
+    #[ignore = "needs the dev stack: RustFS on 127.0.0.1:9000 with the dev key"]
+    async fn the_store_refuses_a_second_upload_to_the_same_key() {
+        let key = format!("spike-create-only-{}/a.txt", std::process::id());
+        let grant = serde_json::json!({
+            "endpoint": "http://127.0.0.1:9000", "bucket": "loamz-data", "key_id": "loamz-dev", "secret": "loamz-dev-only",
+            "session_token": "", "region": "auto",
+            "key_prefix": key.rsplit_once('/').unwrap().0, "path_prefix": "threads/t/runs/r",
+        });
+        let out = temp("live");
+        std::fs::write(out.join("a.txt"), "first").unwrap();
+        let first = commit(&grant, &out).await;
+        assert_eq!(first.committed.len(), 1, "{:?}", first.failed);
+        // The same name again, from another run's folder, to the same key: refused, and the first content stays.
+        std::fs::write(out.join("a.txt"), "second").unwrap();
+        let again = commit(&grant, &out).await;
+        assert!(
+            again.committed.is_empty(),
+            "a second upload must not overwrite"
+        );
+        assert!(
+            again.failed.iter().any(|f| f.contains("already committed")),
+            "{:?}",
+            again.failed
+        );
+        let _ = std::fs::remove_dir_all(out);
+    }
 }
