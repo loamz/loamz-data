@@ -36,15 +36,17 @@ Cloud, behind `Entitlements` and `UsageSink`).
 | # | Milestone | Done when | State |
 |---|---|---|---|
 | M1 | Merge what exists | isolation tests, SDK and CLI, security (CI, SBOM, threat model) and the docs site are in `main`, `make check` green | done |
-| M2 | Fast | `bench/run.py 3` shows the machine column under 0.5 s with the same answers | in progress: sandboxed warm worker written, release build and benchmark to do |
-| M3 | Data in | a CSV or Parquet file becomes a table with `loamz import` (written straight to storage, not through the server) | CLI and SDK written; an upload from the console needs a write path on compute, after beta |
-| M4 | Governed | storage roots, row filters and column masks, erase with a provable audit chain | roots and rules done; erase in review |
-| M5 | Production | deployed from `loamz-deploy`, backups and WAL archiving running, restore check passes | in progress: roles written, being run on a throwaway machine |
-| M6 | Ready to show | docs site live, console screens for every feature, end-to-end browser tests, a hostile security review | to do |
+| M2 | Fast | `bench/run.py 3` shows the machine column under 0.5 s with the same answers | done (14 Nov): 0.19 to 0.29 s warm in gVisor; Arrow results and file pruning still to do |
+| M3 | Data in | a CSV or Parquet file becomes a table with `loamz import` (straight to storage), or from the console, a volume file or an https address, on compute | done (14 Nov): create, append and replace proven in gVisor on RustFS; S3 source not built |
+| M4 | Governed | storage roots, row filters and column masks, erase with a provable audit chain | done; storage grants and one `Principal` type still to do |
+| M5 | Production | deployed from `loamz-deploy`, backups and WAL archiving running, restore check passes | in progress: roles written, OpenBao unseal and root revoke proven, agent install proven on a clean machine; the end-to-end deploy proof is not done |
+| M6 | Ready to show | docs site live, console screens for every feature, end-to-end browser tests, a hostile security review | in progress: import dialog and docs pages written; a first hostile review round is running |
 
 **New for the beta (13 Nov decisions):** a store per storage location (the customer's own bucket: S3, R2, MinIO), a write-only API for
 their storage keys into OpenBao, external objects and storage grants, an installer for a customer's machine (runner, gVisor, worker),
 and a guide for pointing a Modal account at us.
+
+**Built since 13 Nov:** a store per storage location (a catalog on a customer's bucket is read and written with that location's own credential, proven on RustFS), write-only credential custody in OpenBao, the write path on compute (import from a volume file or an https address, replace, compaction and snapshot expiry, all through two narrow doors in gVisor), job schedules and failure alerts, a statement's whole result as an Arrow file read by a signed address, a Parquet result saved in a person's volume with an idempotency key, and the console's import dialog. **Written but not yet merged:** abuse limits and organization suspension, the agent installer, and the docs pages for schedules, maintenance and storage. **Next:** agent sandboxes that read data through the storage broker (proposal 0006), the BI connection, search, and the AI phase once its scope is confirmed.
 
 **Scope still to confirm with the owner:** which of functions, MLflow, agent sandboxes, job schedules and alerts, BI connectors,
 search, network isolation and traces are in the beta.
@@ -80,9 +82,11 @@ search, network isolation and traces are in the beta.
 | Catalogs, schemas, tables, views, volumes | data | ✅ | | | | | |
 | Iceberg REST catalog: read, write, commit | data | ✅ | | | | | |
 | Bring data in from a file: `loamz import` (CSV, Parquet), written straight to storage | data | ✅ | | | | | |
-| Bring data in from the console, from S3 or a URL, database connectors | data | | | | | | 📅 |
+| Bring data in from the console, from a volume file or an https address (create, append, replace) | data | ✅ | | | | | |
+| Bring data in from an S3 location, database connectors | data | | | | | | 📅 |
 | File index at commit, pruning before reads | data | | | 📅 | | | |
-| Compaction, sort on write, snapshot expiry | data | | | 📅 | | | |
+| Compaction and snapshot expiry, on demand or on a schedule | data | ✅ | | | | | |
+| Sort on write | data | | | 📅 | | | |
 | Functions (SQL, Python) as agent tools, run in sandboxes | data | | | | 📅 | | |
 | MLflow ML: experiments and models | data | | | | 📅 | | |
 | MLflow GenAI: traces, evals, prompts | data | | | | 📅 | | |
@@ -95,19 +99,23 @@ search, network isolation and traces are in the beta.
 | Active-run cap per organization | compute | ✅ | | | | | |
 | Benchmark of the query path (`bench/run.py`) | compute | ✅ | | | | | |
 | Warm engine (Rust, DuckDB, all cores), on machines (built, being measured); on serverless | compute | | | 🛠️ | | | |
-| Arrow results, streamed | compute | | | 📅 | | | |
+| A statement's whole result as an Arrow file read by a signed address, or as Parquet saved in the person's volume | compute | ✅ | | | | | |
+| Arrow results streamed while the statement runs | compute | | | 📅 | | | |
 | Ranged reads instead of downloading tables (through the broker, being measured) | compute | | | 🛠️ | | | |
 | Credential cache: the same table read twice asks the store once | compute | ✅ | | | | | |
 | Notifications instead of polling | compute | | | 📅 | | | |
-| Sandboxes for agents: a workspace folder per thread, a query path | compute | | | | 📅 | | |
+| Sandboxes for agents: a thread's results and files in the person's volume, read through the storage broker (proposal 0006) | compute | | | | 🛠️ | | |
 | Run cap per workspace (below the organization's), set by account admins | compute | ✅ | | | | | |
 | Sandbox lifecycle (create, idle, stop, delete) | compute | | | | | 📅 | |
-| Schedules, triggers and failure alerts for jobs | compute | | | | | ❓ | |
+| Job schedules (cron and interval) and failure alerts to a webhook | compute | ✅ | | | | | |
+| Triggers (on a table change) | compute | | | | | | ❓ |
 | **Storage** | | | | | | | |
 | S3-compatible store; short-lived credentials scoped to one folder (R2) | storage | ✅ | | | | | |
 | Credentials and locations per workspace; paths never overlap | storage | ✅ | |
 | A catalog on a registered location (its root is the location's folder) | storage | ✅ | | | | | |
-| External objects, a store per location (a customer's own bucket), storage grants | storage | | | | | | 📅 |
+| A store per location: a customer's own bucket (RustFS proven; MinIO and R2 gated on conformance tests; AWS needs our own AWS identity) | storage | ✅ | | | | | |
+| Write-only storage credentials in OpenBao: rotate, check, delete | storage | ✅ | | | | | |
+| External objects and storage grants | storage | | | | | | 📅 |
 | Credentials through STS (RustFS; S3 untested) | storage | ✅ | | | | | |
 | Default storage on RustFS, nothing to set up (development) | storage | ✅ | | | | | |
 | Defined behavior when access is revoked | storage | | | | | 📅 | |
@@ -135,7 +143,8 @@ search, network isolation and traces are in the beta.
 | Sharing data across organizations | platform | | | | | | ❓ |
 | Access tokens, a command-line tool and a Python SDK | platform | ✅ | | | | | |
 | SQL connection for BI tools (Arrow Flight SQL, JDBC) | platform | | | | | ❓ | |
-| Abuse protection: invite-only start, prepaid or spend cap, API rate limits, suspend an organization | platform | | | | | ❓ | |
+| Abuse protection: invite-only start, API rate limits, request-size limits, suspend an organization | platform | | | | | 🛠️ | |
+| Prepaid or spend cap | platform | | | | | | ❓ |
 | Safe upgrades: forward-only migrations, neighbouring versions work together | platform | | | | | ❓ | |
 | Dependency checks in CI, releases with an SBOM, a threat model (signing is not done) | platform | ✅ | | | | | |
 | User documentation site (private, at `data.loamz.com/docs`; built, not yet published) | platform | ✅ | | | | | |
