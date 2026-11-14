@@ -78,6 +78,12 @@ pub async fn rename<'e, E: Executor<'e, Database = Any>>(e: E, id: &str, name: &
     Ok(())
 }
 
+/// A workspace with storage settings must retain its custody and location records.
+pub async fn has_storage(c: &mut sqlx::AnyConnection, workspace: &str) -> Result<bool> {
+    Ok(sqlx::query("SELECT id FROM storage_credentials WHERE workspace_id = $1 UNION ALL SELECT id FROM storage_locations WHERE workspace_id = $1 LIMIT 1")
+        .bind(workspace).fetch_optional(&mut *c).await?.is_some())
+}
+
 /// Removes a workspace and everything that hangs on it (members, entitlements, saved queries).
 pub async fn delete(c: &mut sqlx::AnyConnection, id: &str) -> Result<()> {
     for table in [

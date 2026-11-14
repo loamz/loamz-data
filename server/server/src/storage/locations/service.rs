@@ -165,6 +165,9 @@ pub async fn create_credential(
     let id = new_id();
     let path = format!("customer-storage/{id}");
     let mut uow = Uow::begin(app).await?;
+    if !crate::governance::workspaces::service::exists_in(&mut uow.tx, workspace).await? {
+        return Err(Error::NotFound("not found".into()));
+    }
     if store::credential_name_taken(&mut *uow.tx, workspace, &new.name).await? {
         return Err(Error::Conflict("credential name already exists".into()));
     }

@@ -2378,3 +2378,45 @@ async fn failed_vault_cleanup_after_deletion_is_reported_without_secrets(s: Serv
     );
 }
 both!(failed_vault_cleanup_after_deletion_is_reported_without_secrets);
+
+async fn workspace_cannot_be_deleted_while_it_owns_storage_credentials(s: Server) {
+    let _ = s.acme().await;
+    let ws = s.workspace(&ana(), ACME, "Storage guard").await;
+    let base = format!("/api/v1/workspaces/{ws}/storage/credentials");
+    let made = s.post(&base, &ana(), json!({"name":"guard", "provider":"rustfs", "endpoint":"http://127.0.0.1:9000", "secret":{"kind":"sts", "access_key_id":"guard-key", "secret_access_key":"guard-secret"}})).await;
+    assert_eq!(made.status, 201);
+    let id = made.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        s.delete(&format!("/api/v1/workspaces/{ws}"), &ana())
+            .await
+            .status,
+        409
+    );
+    assert_eq!(s.delete(&format!("{base}/{id}"), &ana()).await.status, 204);
+    assert_eq!(
+        s.delete(&format!("/api/v1/workspaces/{ws}"), &ana())
+            .await
+            .status,
+        204
+    );
+}
+both!(workspace_cannot_be_deleted_while_it_owns_storage_credentials);
+
+async fn workspace_deletion_and_credential_creation_cannot_leave_orphans(s: Server) {
+    let _ = s.acme().await;
+    let ws = s.workspace(&ana(), ACME, "Storage race").await;
+    let base = format!("/api/v1/workspaces/{ws}/storage/credentials");
+    let workspace = format!("/api/v1/workspaces/{ws}");
+    let admin = ana();
+    let create = s.post(&base, &admin, json!({"name":"race", "provider":"rustfs", "endpoint":"http://127.0.0.1:9000", "secret":{"kind":"sts", "access_key_id":"race-key", "secret_access_key":"race-secret"}}));
+    let delete = s.delete(&workspace, &admin);
+    let (created, deleted) = tokio::join!(create, delete);
+    assert!(matches!(
+        (created.status, deleted.status),
+        (201, 409) | (404, 204)
+    ));
+    let orphans: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM storage_credentials c LEFT JOIN workspaces w ON w.id = c.workspace_id WHERE w.id IS NULL")
+        .fetch_one(s.app.db.pool()).await.unwrap();
+    assert_eq!(orphans, 0);
+}
+both!(workspace_deletion_and_credential_creation_cannot_leave_orphans);

@@ -259,7 +259,7 @@ paths:
             schema:
               $ref: '#/components/schemas/Name'
     delete:
-      summary: Delete a workspace and its assignments. A workspace that still owns catalogs cannot be deleted.
+      summary: Delete a workspace and its assignments. Remove its catalogs, compute and storage settings first.
       parameters:
       - *id002
       responses:

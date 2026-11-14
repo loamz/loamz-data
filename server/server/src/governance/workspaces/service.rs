@@ -191,12 +191,15 @@ pub async fn rename(app: &App, identity: &Identity, id: &str, name: &str) -> Res
     })
 }
 
-/// Removes a workspace and its assignments. The organization's catalogs are not touched: they belong to the account.
-///
-/// `catalogs` is how many catalogs and compute targets the workspace owns: it cannot be deleted while it owns any.
+/// Whether the workspace still exists inside the caller's write transaction.
+pub(crate) async fn exists_in(c: &mut sqlx::AnyConnection, id: &str) -> Result<bool> {
+    Ok(store::get(c, id).await?.is_some())
+}
+
+/// Removes a workspace and its assignments after its owned resources are removed.
 ///
 /// # Errors
-/// Not an account admin, or the workspace still owns catalogs.
+/// Not an account admin, or the workspace still owns resources.
 pub async fn delete(app: &App, identity: &Identity, id: &str, catalogs: i64) -> Result<()> {
     let (w, standing) = open(app, identity, id).await?;
     if standing != Standing::Account {
@@ -208,6 +211,11 @@ pub async fn delete(app: &App, identity: &Identity, id: &str, catalogs: i64) -> 
         ));
     }
     let mut uow = Uow::begin(app).await?;
+    if store::has_storage(&mut uow.tx, id).await? {
+        return Err(Error::Conflict(
+            "this workspace still has storage credentials or locations: remove them first".into(),
+        ));
+    }
     store::delete(&mut uow.tx, id).await?;
     uow.audit(
         &w.org_id,
