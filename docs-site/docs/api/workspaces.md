@@ -1344,6 +1344,33 @@ Needs the `sql-access` entitlement and `SELECT` on every table it reads. The sta
 
 ---
 
+## `POST` /api/v1/workspaces/{ws}/imports
+
+**Bring a file in as a table. A job the server writes runs on the workspace's compute, reads the file from a volume and writes the table through the catalog. Needs READ on the volume and CREATE TABLE on the schema (MODIFY for an append). Answers 202 with the run.**
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+
+### Request Body
+
+- **Content-Type**: `application/json` (`object`)
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `202` | The run that does the import |
+| `400` | An RFC 9457 problem document. |
+| `401` | An RFC 9457 problem document. |
+| `403` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+| `409` | An RFC 9457 problem document. |
+
+---
+
 ## `GET` /api/v1/workspaces/{ws}/runs
 
 **The workspace's runs, newest first: your own, or everyone's for a workspace admin.**
@@ -1393,7 +1420,8 @@ Needs the `compute-create` entitlement, `SELECT` or `READ VOLUME` on each input 
   - `title` (`string`): 
   - `script` (`string`): 
   - `inputs` (`array`): Table or volume ids, mounted read-only under /inputs/<name>.
-  - `output` (`string`): A volume id: what the script leaves in /workspace is saved there under runs/<run id>/.
+  - `output` (`string`): A volume id: what the script leaves in /workspace is saved there under runs/<run id>/. Leave it out when the job only writes tables.
+  - `table_writes` (`array`): Tables the script may write, as catalog.schema.table: one that exists (needs MODIFY) or one to create (needs CREATE TABLE on its schema). The sandbox has no network; it reaches the catalog's routes for these tables and storage for their folders through two narrow doors (see proposal 0005). A table with row or column rules cannot be written.
   - `target` (`string`): 
   - `memory_mb` (`integer`): 
   - `cpu_millis` (`integer`): 

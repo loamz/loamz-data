@@ -1,4 +1,4 @@
-import { Copy, Database, RefreshCw, MoreHorizontal, Plus, TerminalSquare, Trash2, UserCog } from "lucide-react";
+import { Copy, Database, RefreshCw, MoreHorizontal, Plus, TerminalSquare, Trash2, Upload, UserCog } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Body, Button, DataTable, DetailBlock, DetailRow, Dialog, DialogContent, DialogFooter, Menu, MenuContent, MenuItem, MenuTrigger, ObjectHeader, Page, PageEmpty, Tabs, TabsContent, TabsList, TabsTrigger, TreePane, WithRail, confirmAction, toast, type Column } from "@/design";
 import * as api from "@/api";
@@ -9,6 +9,7 @@ import { CatalogCompute } from "@/components/CatalogCompute";
 import { TableRules } from "@/components/TableRules";
 import { FilesTab } from "@/components/FilesTab";
 import { SampleData, TableHistory, TableOverview } from "@/components/TableTab";
+import { ImportDialog } from "@/components/ImportDialog";
 import { NewDialog } from "@/components/NewDialog";
 import { PrincipalField } from "@/components/PrincipalField";
 import { Tree, TreeRow } from "@/components/Tree";
@@ -193,6 +194,7 @@ function Detail({ ws, item, children, load, onOpen, onNew, onDropped, onChanged 
   const [handing, setHanding] = useState(false);
   const [heir, setHeir] = useState("");
   const [childFilter, setChildFilter] = useState("");
+  const [importing, setImporting] = useState(false);
   const trail = useLoad(async () => {
     const up: { id: string; name: string }[] = [];
     let at = item.parent_id;
@@ -258,9 +260,14 @@ function Detail({ ws, item, children, load, onOpen, onNew, onDropped, onChanged 
         actions={
           <>
             {isTable && fullName && (
-              <Button variant="primary" onClick={() => openInEditor(ws, `SELECT * FROM ${fullName} LIMIT 100`, item.name)}>
-                <TerminalSquare /> Query
-              </Button>
+              <>
+                <Button variant="secondary" onClick={() => setImporting(true)}>
+                  <Upload /> Import from a file
+                </Button>
+                <Button variant="primary" onClick={() => openInEditor(ws, `SELECT * FROM ${fullName} LIMIT 100`, item.name)}>
+                  <TerminalSquare /> Query
+                </Button>
+              </>
             )}
             {isContainer && (
               <Button variant="primary" onClick={onNew}>
@@ -380,6 +387,12 @@ function Detail({ ws, item, children, load, onOpen, onNew, onDropped, onChanged 
           </div>
         </DialogContent>
       </Dialog>
+      <ImportDialog
+        ws={ws}
+        open={importing}
+        onOpenChange={setImporting}
+        initialTarget={fullName ?? undefined}
+      />
     </Body>
   );
 }

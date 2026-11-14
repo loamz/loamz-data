@@ -302,6 +302,15 @@ export const isRunning = (r: Pick<Run, "state">) => r.state === "queued" || r.st
 export const computeTargets = async (ws: string) => (await json<{ items: Compute[] }>(send("GET", `${W(ws)}/compute/targets`))).items;
 export const runStatement = (ws: string, sql: string, limit: number, waitS = 30, target?: string) => json<Run>(send("POST", `${W(ws)}/sql/statements`, { sql, limit, wait_s: waitS, ...(target ? { target } : {}) }));
 export const submitJob = (ws: string, b: { title: string; script: string; inputs: string[]; output: string; timeout_s?: number }) => json<Run>(send("POST", `${W(ws)}/runs`, b));
+export interface ImportFileRequest {
+  target: string;
+  volume: string;
+  path: string;
+  mode?: "create" | "append";
+  format?: "csv" | "parquet";
+  target_compute?: string;
+}
+export const importFile = (ws: string, b: ImportFileRequest) => json<Run>(send("POST", `${W(ws)}/imports`, b));
 export interface RunFilter {
   kind?: "sql" | "job";
   /** A person's subject (an admin's narrowing). */
