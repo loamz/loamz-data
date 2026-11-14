@@ -97,6 +97,17 @@ def main(argv: list[str] | None = None) -> int:
     sub_import.add_argument("table", help="Where it goes, as catalog.schema.table")
     sub_import.add_argument("--append", action="store_true", help="Add the rows to a table that exists")
 
+    # import-volume <volume> <path> <table>
+    sub_vol = subparsers.add_parser(
+        "import-volume",
+        parents=[common_parser],
+        help="Bring a file that is already in a volume in as a table (run on the workspace's compute)",
+    )
+    sub_vol.add_argument("volume", help="The volume, as catalog.schema.volume (or its id)")
+    sub_vol.add_argument("path", help="The file's path inside the volume")
+    sub_vol.add_argument("table", help="Where it goes, as catalog.schema.table")
+    sub_vol.add_argument("--append", action="store_true", help="Add the rows to a table that exists")
+
     args = parser.parse_args(argv)
 
     try:
@@ -186,6 +197,11 @@ def main(argv: list[str] | None = None) -> int:
                     rows = [[t.name, t.id, t.owner] for t in tables]
                     print(_format_table(headers, rows))
                 return 0
+
+        if args.command == "import-volume":
+            run = ws.import_from_volume(args.table, args.volume, args.path, mode="append" if args.append else "create")
+            print((run.get("stdout") or "").strip() or f"imported into {args.table}")
+            return 0
 
         if args.command == "import":
             if len(args.table.split(".")) != 3:

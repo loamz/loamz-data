@@ -133,6 +133,54 @@ try:
     files = call("GET", f"{S}/volumes/{out}/files", ana)[1]["items"]
     summary = call("GET", f"{S}/volumes/{out}/files/{files[0]['path']}", ana)[1]
     step(f"and its file reached the results volume through the API: {files[0]['path'].split('/')[-1]} = {summary.decode()}")
+    # ---- the write path (proposal 0005): a file is imported as a table through the two doors ----
+    def wait_run(run_id, seconds=150):
+        for _ in range(seconds * 2):
+            time.sleep(0.5)
+            r = call("GET", f"{S}/runs/{run_id}", ana)[1]
+            if r["state"] not in ("queued", "running"):
+                return r
+        sys.exit("the run did not end")
+
+    call("PUT", f"{S}/volumes/{out}/files/people.csv", ana, raw=b"id,name,age\n1,Ana,31\n2,Bo,45\n3,Cy,27\n")
+    _, imp = call("POST", f"{S}/imports", ana, {"target": "shop.main.people", "volume": out, "path": "people.csv"})
+    done = wait_run(imp["id"])
+    if done["state"] != "succeeded":
+        print(json.dumps({k: done[k] for k in ("state", "error", "stderr", "stdout")}))
+        print(open(f"{work}/agent.log").read()[-2000:])
+        sys.exit("the import failed")
+    step(f"a CSV in a volume was imported as shop.main.people through the doors: {done['stdout'].strip()}")
+    _, cnt = call("POST", f"{S}/sql/statements", ana, {"sql": "SELECT count(*) AS n, sum(age) AS ages FROM shop.main.people", "wait_s": 60})
+    step(f"and a statement reads it back: {cnt['result']['rows']}")
+    assert cnt["result"]["rows"] == [[3, "103"]], cnt
+    call("PUT", f"{S}/volumes/{out}/files/more.csv", ana, raw=b"id,name,age\n4,Di,52\n")
+    _, imp2 = call("POST", f"{S}/imports", ana, {"target": "shop.main.people", "volume": out, "path": "more.csv", "mode": "append"})
+    appended = wait_run(imp2["id"])
+    if appended["state"] != "succeeded":
+        sys.exit("the append failed: " + json.dumps({k: appended[k] for k in ("state", "error", "stderr", "stdout")})[:1500])
+    _, cnt2 = call("POST", f"{S}/sql/statements", ana, {"sql": "SELECT count(*) FROM shop.main.people", "wait_s": 60})
+    step(f"an append added a row: {cnt2['result']['rows']}")
+    assert cnt2["result"]["rows"] == [[4]], cnt2
+
+    # The doors refuse what the run did not declare, from inside the sandbox.
+    probe = (
+        "import sys, json, urllib.request, urllib.error\nsys.path.insert(0, '/inputs/job')\nimport loamz_doors\n"
+        f"cat, s3 = loamz_doors.start('{ws}')\nseen = {{}}\n"
+        "def code(url, method='GET', data=None):\n"
+        "    try:\n        return urllib.request.urlopen(urllib.request.Request(url, data=data, method=method), timeout=20).status\n"
+        "    except urllib.error.HTTPError as e:\n        return e.code\n    except Exception as e:\n        return type(e).__name__\n"
+        f"seen['securables'] = code(f'http://127.0.0.1:{{cat.split(\":\")[2].split(\"/\")[0]}}/api/v1/workspaces/{ws}/securables')\n"
+        "seen['other bucket'] = code(f'http://{s3}/other-bucket/x')\n"
+        "seen['elsewhere in the bucket'] = code(f'http://{s3}/loamz-data/nowhere/x')\n"
+        "seen['delete'] = code(f'http://{s3}/loamz-data/nowhere/x', 'DELETE')\n"
+        "print(json.dumps(seen))\n"
+    )
+    _, j3 = call("POST", f"{S}/runs", ana, {"script": probe, "table_writes": ["shop.main.people"], "timeout_s": 60})
+    r3 = wait_run(j3["id"])
+    seen = json.loads(r3["stdout"].strip().splitlines()[-1]) if r3["state"] == "succeeded" else None
+    step(f"inside a write lease, the doors answer: {seen}")
+    assert seen and all(v == 403 for v in seen.values()), (r3["state"], r3["error"], r3["stderr"][-400:], seen)
+
     if remote:
         # As root, gVisor holds a run to its limits. 1 CPU of two, and 2 GB of the machine's twelve.
         busy = "import os, time\nt0=time.time()\nkids=[]\nfor _ in range(2):\n    p=os.fork()\n    if p==0:\n        end=t0+5\n        while time.time()<end: pass\n        os._exit(0)\n    kids.append(p)\n[os.waitpid(k,0) for k in kids]\nwall=time.time()-t0\nc=os.times()\nprint('cpus worth', round((c.children_user+c.children_system)/wall,2), 'of', os.cpu_count(), 'visible')\n"

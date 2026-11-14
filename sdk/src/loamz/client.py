@@ -151,6 +151,53 @@ class WorkspaceHandle:
             token=self.client.token,
         )
 
+    def volume_id(self, name_or_id: str) -> str:
+        """The id of a volume, from its id or its full name `catalog.schema.volume`."""
+        parts = name_or_id.split(".")
+        if len(parts) != 3:
+            return name_or_id
+        parent = ""
+        found: dict | None = None
+        for name in parts:
+            items = self.client._send("GET", f"/api/v1/workspaces/{self.id}/securables?parent_id={parent}").get("items", [])
+            found = next((i for i in items if i["name"] == name), None)
+            if found is None:
+                raise LoamzError(status=404, title="Not Found", detail=f"{name_or_id} was not found")
+            parent = found["id"]
+        return parent
+
+    def import_from_volume(
+        self,
+        target: str,
+        volume: str,
+        path: str,
+        *,
+        mode: str = "create",
+        format: str | None = None,
+        wait: bool = True,
+    ) -> dict:
+        """Bring a CSV or Parquet file that is already in a volume in as a table, run on this workspace's compute.
+
+        ``target`` is ``catalog.schema.table``; ``mode`` is ``create`` (a new table) or ``append``. The server runs a program it
+        wrote in a sandbox with no network, which reads the file and writes the table through the catalog. Returns the run (with
+        ``rows`` in its output once it succeeded); with ``wait=False`` it returns at once with the run's id.
+        """
+        body = {"target": target, "volume": self.volume_id(volume), "path": path, "mode": mode}
+        if format:
+            body["format"] = format
+        run = self.client._send("POST", f"/api/v1/workspaces/{self.id}/imports", json=body)
+        if not wait:
+            return run
+        start = time.time()
+        while run.get("state") in ("queued", "running"):
+            if time.time() - start > 900:
+                raise LoamzError(status=504, title="Gateway Timeout", detail="the import did not finish in 15 minutes")
+            time.sleep(0.5)
+            run = self.client._send("GET", f"/api/v1/workspaces/{self.id}/runs/{run['id']}")
+        if run.get("state") != "succeeded":
+            raise LoamzError(status=400, title="Import Failed", detail=run.get("error") or run.get("stderr") or "the import failed")
+        return run
+
     def sql(
         self,
         statement: str,
