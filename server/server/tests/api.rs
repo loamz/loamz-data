@@ -2446,3 +2446,69 @@ async fn workspace_deletion_and_credential_creation_cannot_leave_orphans(s: Serv
     assert_eq!(orphans, 0);
 }
 both!(workspace_deletion_and_credential_creation_cannot_leave_orphans);
+
+async fn ai_objects_are_catalog_objects_with_their_own_create_privileges(s: Server) {
+    let ws = s.acme().await;
+    s.assign(&ws, &[&bob()]).await;
+    let catalog = s.make(&ws, &ana(), "catalog", "", "ai").await;
+    let schema = s.make(&ws, &ana(), "schema", &catalog, "main").await;
+    let url = format!("/api/v1/workspaces/{ws}/securables");
+    // Each kind is made inside a schema, by someone with its own create privilege, and listed like a table.
+    for (kind, name) in [
+        ("experiment", "churn"),
+        ("model", "forecast"),
+        ("prompt", "greeting"),
+        ("function", "top_n"),
+    ] {
+        let id = s.make(&ws, &ana(), kind, &schema, name).await;
+        let shown = s.get(&format!("{url}/{id}"), &ana()).await;
+        assert_eq!(shown.status, 200, "{kind}: {}", shown.text());
+        assert_eq!(shown.json()["kind"], kind);
+        // Bob sees none of it until he is given something; then he sees it, and may not make another without CREATE.
+        assert_eq!(
+            s.get(&format!("{url}/{id}"), &bob()).await.status,
+            404,
+            "{kind}"
+        );
+        let denied = s
+            .post(
+                &url,
+                &bob(),
+                json!({"kind": kind, "parent_id": schema, "name": format!("{name}_2")}),
+            )
+            .await;
+        assert!(
+            [403, 404].contains(&denied.status),
+            "{kind}: {}",
+            denied.text()
+        );
+        s.grant(&ws, &ana(), &id, "user:bob", "reader").await;
+        assert_eq!(
+            s.get(&format!("{url}/{id}"), &bob()).await.status,
+            200,
+            "{kind}"
+        );
+        // A name is unique in its schema across kinds.
+        let again = s
+            .post(
+                &url,
+                &ana(),
+                json!({"kind": "view", "parent_id": schema, "name": name}),
+            )
+            .await;
+        assert_eq!(again.status, 409, "{kind}: {}", again.text());
+    }
+    // They sit only in a schema.
+    let bad = s
+        .post(
+            &url,
+            &ana(),
+            json!({"kind": "model", "parent_id": catalog, "name": "loose"}),
+        )
+        .await;
+    assert_eq!(bad.status, 400, "{}", bad.text());
+    // And they drop with the schema's own durable task like anything else.
+    let listed = s.get(&format!("{url}?parent_id={schema}"), &ana()).await;
+    assert_eq!(listed.json()["items"].as_array().unwrap().len(), 4);
+}
+both!(ai_objects_are_catalog_objects_with_their_own_create_privileges);

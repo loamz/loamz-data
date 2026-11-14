@@ -143,6 +143,10 @@ pub async fn create(
         Kind::Table => Privilege::CreateTable,
         Kind::Volume => Privilege::CreateVolume,
         Kind::View => Privilege::CreateView,
+        Kind::Experiment => Privilege::CreateExperiment,
+        Kind::Model => Privilege::CreateModel,
+        Kind::Prompt => Privilege::CreatePrompt,
+        Kind::Function => Privilege::CreateFunction,
     };
     iam::require(app, identity, org, sides, need, &parent).await?;
     // A table exists only with its Iceberg metadata (made by the tables service); nothing else has any.
@@ -170,7 +174,9 @@ pub async fn create(
         Kind::Catalog => join_folder(&catalog_root, &id),
         Kind::Schema => root,
         Kind::Table | Kind::Volume => join_folder(&root, &id),
-        Kind::View => String::new(),
+        Kind::View | Kind::Experiment | Kind::Model | Kind::Prompt | Kind::Function => {
+            String::new()
+        }
     };
     let entry = Securable {
         id,

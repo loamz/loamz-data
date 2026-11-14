@@ -7,6 +7,12 @@ pub enum Kind {
     Table,
     Volume,
     View,
+    /// An `MLflow` experiment, a registered model, a prompt and a function (proposal 0008): named like a table, granted like one, and
+    /// dropped and erased with the same durable tasks. What they hold is kept by the AI gateway, not as files of their own here.
+    Experiment,
+    Model,
+    Prompt,
+    Function,
 }
 
 impl Kind {
@@ -18,6 +24,10 @@ impl Kind {
             Self::Table => "table",
             Self::Volume => "volume",
             Self::View => "view",
+            Self::Experiment => "experiment",
+            Self::Model => "model",
+            Self::Prompt => "prompt",
+            Self::Function => "function",
         }
     }
 
@@ -29,6 +39,10 @@ impl Kind {
             "table" => Self::Table,
             "volume" => Self::Volume,
             "view" => Self::View,
+            "experiment" => Self::Experiment,
+            "model" => Self::Model,
+            "prompt" => Self::Prompt,
+            "function" => Self::Function,
             _ => return None,
         })
     }
@@ -45,7 +59,13 @@ impl Kind {
         match self {
             Self::Catalog => None,
             Self::Schema => Some(Self::Catalog),
-            Self::Table | Self::Volume | Self::View => Some(Self::Schema),
+            Self::Table
+            | Self::Volume
+            | Self::View
+            | Self::Experiment
+            | Self::Model
+            | Self::Prompt
+            | Self::Function => Some(Self::Schema),
         }
     }
 }

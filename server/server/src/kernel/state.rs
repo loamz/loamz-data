@@ -35,6 +35,8 @@ pub struct App {
     pub finished: tokio::sync::Notify,
     /// One pooled connection to the serverless endpoints, so a statement does not pay for a new TLS handshake each time.
     pub serverless_http: reqwest::Client,
+    /// Where the upstream `MLflow` server is (loopback), reached only by the AI gateway. None: the gateway answers that `MLflow` is not set up.
+    pub mlflow_url: Option<String>,
     pub storage_allow_private: bool,
     pub storage_tls_proxy: Option<std::net::IpAddr>,
     pub storage_allow_http_dev: bool,
@@ -75,6 +77,7 @@ impl App {
                 .pool_idle_timeout(std::time::Duration::from_secs(90))
                 .build()
                 .unwrap_or_default(),
+            mlflow_url: settings.mlflow_url.clone(),
             storage_allow_private: settings.storage_allow_private,
             storage_tls_proxy: settings.storage_tls_proxy,
             storage_allow_http_dev: settings.storage_allow_http_dev,

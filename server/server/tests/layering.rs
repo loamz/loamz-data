@@ -98,6 +98,7 @@ fn services_form_one_line_with_no_loop() {
         "tables",
         "compute",
         "queries",
+        "mlflow",
         "lifecycle",
     ];
     let mut checked = 0;

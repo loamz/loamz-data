@@ -24,6 +24,11 @@ pub enum Privilege {
     CreateTable,
     CreateVolume,
     CreateView,
+    /// Create an `MLflow` experiment, a registered model, a prompt or a function in a schema (proposal 0008).
+    CreateExperiment,
+    CreateModel,
+    CreatePrompt,
+    CreateFunction,
     Select,
     Modify,
     ReadVolume,
@@ -35,11 +40,12 @@ pub enum Privilege {
 }
 
 use Privilege::{
-    AllPrivileges, Browse, CreateCatalog, CreateSchema, CreateTable, CreateView, CreateVolume,
-    Execute, Manage, Modify, ReadVolume, Select, UseCatalog, UseSchema, WriteVolume,
+    AllPrivileges, Browse, CreateCatalog, CreateExperiment, CreateFunction, CreateModel,
+    CreatePrompt, CreateSchema, CreateTable, CreateView, CreateVolume, Execute, Manage, Modify,
+    ReadVolume, Select, UseCatalog, UseSchema, WriteVolume,
 };
 
-const ALL: [Privilege; 15] = [
+const ALL: [Privilege; 19] = [
     CreateCatalog,
     UseCatalog,
     UseSchema,
@@ -48,6 +54,10 @@ const ALL: [Privilege; 15] = [
     CreateTable,
     CreateVolume,
     CreateView,
+    CreateExperiment,
+    CreateModel,
+    CreatePrompt,
+    CreateFunction,
     Select,
     Modify,
     ReadVolume,
@@ -70,6 +80,10 @@ impl Privilege {
             CreateTable => "CREATE_TABLE",
             CreateVolume => "CREATE_VOLUME",
             CreateView => "CREATE_VIEW",
+            CreateExperiment => "CREATE_EXPERIMENT",
+            CreateModel => "CREATE_MODEL",
+            CreatePrompt => "CREATE_PROMPT",
+            CreateFunction => "CREATE_FUNCTION",
             Select => "SELECT",
             Modify => "MODIFY",
             ReadVolume => "READ_VOLUME",
@@ -118,6 +132,10 @@ impl Role {
                 CreateTable,
                 CreateVolume,
                 CreateView,
+                CreateExperiment,
+                CreateModel,
+                CreatePrompt,
+                CreateFunction,
             ],
             Self::Owner => &[
                 UseCatalog,
@@ -132,6 +150,10 @@ impl Role {
                 CreateTable,
                 CreateVolume,
                 CreateView,
+                CreateExperiment,
+                CreateModel,
+                CreatePrompt,
+                CreateFunction,
                 Manage,
             ],
         }

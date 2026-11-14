@@ -1971,6 +1971,63 @@ paths:
           $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/mlflow/{path}:
+    get:
+      summary: The MLflow tracking address of a workspace (read calls).
+      description: >-
+        Point the standard `mlflow` client at `<server>/api/v1/workspaces/{ws}/mlflow` (`MLFLOW_TRACKING_URI`) with a Loamz access token
+        (`MLFLOW_TRACKING_TOKEN`). Below it only the requests listed in docs/design/mlflow-contract.md exist, and only those marked as built:
+        experiments (`api/2.0/mlflow/experiments/get`, `get-by-name`), runs (`runs/get`) and `metrics/get-history`, plus `version`. An
+        experiment is named `catalog.schema.name` and is a catalog object: reading needs SELECT, writing MODIFY, creating CREATE_EXPERIMENT on
+        the schema. Anything else answers 404. Errors are in MLflow's shape (`error_code`, `message`).
+      parameters:
+      - *id002
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: MLflow's own answer, narrowed to what the caller may see
+        '400':
+          description: MLflow error document
+        '401':
+          description: MLflow error document
+        '404':
+          description: MLflow error document (also for what the caller may not see)
+        '503':
+          description: MLflow is not set up or did not answer
+    post:
+      summary: The MLflow tracking address of a workspace (write and search calls).
+      description: >-
+        As the read calls: `experiments/create`, `search`, `update` (refused), `delete`, `restore`, `set-experiment-tag`,
+        `delete-experiment-tag`; `runs/create`, `search`, `update`, `delete`, `restore`, `log-metric`, `log-parameter`, `log-batch`,
+        `log-inputs`, `set-tag`, `delete-tag`. Searches return only what the caller may see, with no total and no next-page token for experiments.
+      parameters:
+      - *id002
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: MLflow's own answer, narrowed to what the caller may see
+        '400':
+          description: MLflow error document
+        '401':
+          description: MLflow error document
+        '404':
+          description: MLflow error document (also for what the caller may not see)
+        '503':
+          description: MLflow is not set up or did not answer
   /api/v1/workspaces/{ws}/runs/{id}/result:
     get:
       summary: Get a short-lived address for a run's complete Arrow result.

@@ -401,7 +401,12 @@ pub async fn server_with_limits(db: Db, max_upload: u64, max_active_runs: i64) -
 /// A server whose directory of people is not connected.
 /// A server that asks this issuer for storage credentials.
 pub async fn server_with_issuer(db: Db, issuer: Arc<dyn loamz_lake::grants::Issuer>) -> Server {
-    build_with(db, 1024 * 1024, 32, true, Some(issuer)).await
+    build_with(db, 1024 * 1024, 32, true, Some(issuer), None).await
+}
+
+/// A server whose AI gateway talks to the `MLflow` at this address.
+pub async fn server_with_mlflow(db: Db, url: String) -> Server {
+    build_with(db, 1024 * 1024, 32, true, None, Some(url)).await
 }
 
 pub async fn server_without_directory(db: Db) -> Server {
@@ -409,7 +414,7 @@ pub async fn server_without_directory(db: Db) -> Server {
 }
 
 async fn build(db: Db, max_upload: u64, max_active_runs: i64, directory: bool) -> Server {
-    build_with(db, max_upload, max_active_runs, directory, None).await
+    build_with(db, max_upload, max_active_runs, directory, None, None).await
 }
 
 async fn build_with(
@@ -418,6 +423,7 @@ async fn build_with(
     max_active_runs: i64,
     directory: bool,
     issuer: Option<Arc<dyn loamz_lake::grants::Issuer>>,
+    mlflow_url: Option<String>,
 ) -> Server {
     let dir = std::env::temp_dir().join(format!("loamz-data-stores-{}", new_id()));
     let settings = Settings {
@@ -433,6 +439,7 @@ async fn build_with(
         web_dir: None,
         serverless_token: None,
         serverless_endpoint: Some("https://sql.example.test/run".into()),
+        mlflow_url,
         agent_clients: vec!["loamz-agents".into()],
         directory_client: "loamz-data-directory".into(),
         directory_secret: None,

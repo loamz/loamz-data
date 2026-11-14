@@ -36,6 +36,8 @@ pub struct Settings {
     pub serverless_token: Option<SecretRef>,
     /// The https address of the deployed serverless SQL endpoint (Modal), so compute can be created without typing it.
     pub serverless_endpoint: Option<String>,
+    /// The upstream `MLflow` server's address (`LOAMZ_DATA_MLFLOW_URL`), which must be reachable only from this server.
+    pub mlflow_url: Option<String>,
     /// Keycloak clients that act for people (the agents server): a person's token issued to one is that agent acting for them.
     pub agent_clients: Vec<String>,
     /// The Keycloak service-account client the server uses to create organizations and people, and its secret by reference.
@@ -407,6 +409,7 @@ impl Settings {
             web_dir: var("LOAMZ_DATA_WEB_DIR").map(Into::into),
             serverless_token: reference("LOAMZ_DATA_SERVERLESS_TOKEN_REF")?,
             serverless_endpoint: var("LOAMZ_DATA_SERVERLESS_ENDPOINT"),
+            mlflow_url: var("LOAMZ_DATA_MLFLOW_URL"),
             directory_client: var("LOAMZ_DATA_DIRECTORY_CLIENT")
                 .unwrap_or_else(|| "loamz-data-directory".into()),
             directory_secret: reference("LOAMZ_DATA_DIRECTORY_SECRET_REF")?,

@@ -43,6 +43,7 @@ fn settings(storage: Storage) -> Settings {
         web_dir: None,
         serverless_token: Some("loamz-data/serverless#token".parse().unwrap()),
         serverless_endpoint: None,
+        mlflow_url: None,
         agent_clients: vec![],
         directory_client: "loamz-data-directory".into(),
         directory_secret: Some("loamz-data/directory#secret".parse().unwrap()),

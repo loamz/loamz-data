@@ -1720,6 +1720,56 @@ Needs WRITE on the volume. In this order: the thread is closed to new saved resu
 
 ---
 
+## `GET` /api/v1/workspaces/{ws}/mlflow/{path}
+
+**The MLflow tracking address of a workspace (read calls).**
+
+Point the standard `mlflow` client at `<server>/api/v1/workspaces/{ws}/mlflow` (`MLFLOW_TRACKING_URI`) with a Loamz access token (`MLFLOW_TRACKING_TOKEN`). An experiment is named `catalog.schema.name` and is a catalog object: reading needs SELECT, writing MODIFY, creating CREATE_EXPERIMENT on the schema. Anything not built answers 404. Errors are in MLflow's shape.
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+| `path` | `path` | Yes | `string` | The MLflow request below the tracking address, such as `api/2.0/mlflow/experiments/get`. |
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `200` | MLflow's own answer, narrowed to what the caller may see |
+| `400` | MLflow error document |
+| `401` | MLflow error document |
+| `404` | MLflow error document (also for what the caller may not see) |
+| `503` | MLflow is not set up or did not answer |
+
+---
+
+## `POST` /api/v1/workspaces/{ws}/mlflow/{path}
+
+**The MLflow tracking address of a workspace (write and search calls).**
+
+Experiments: `create`, `search` (only what the caller may read, no total and no next-page token), `delete`, `restore`, `set-experiment-tag`, `delete-experiment-tag`. Runs: `create`, `search`, `update`, `delete`, `restore`, `log-metric`, `log-parameter`, `log-batch`, `log-inputs`, `set-tag`, `delete-tag`. Renaming an experiment is refused.
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+| `path` | `path` | Yes | `string` | The MLflow request below the tracking address, such as `api/2.0/mlflow/runs/create`. |
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `200` | MLflow's own answer, narrowed to what the caller may see |
+| `400` | MLflow error document |
+| `401` | MLflow error document |
+| `404` | MLflow error document (also for what the caller may not see) |
+| `503` | MLflow is not set up or did not answer |
+
+---
+
 ## `GET` /api/v1/workspaces/{ws}/runs/{id}/result
 
 **The whole result of a statement that was run with `export`, as a short-lived signed address.**

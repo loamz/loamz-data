@@ -318,3 +318,16 @@ CREATE TABLE schedule_alerts (
     last_error      TEXT NOT NULL
 );
 CREATE INDEX schedule_alerts_due ON schedule_alerts (state, next_try_ms);
+
+-- MLflow objects (proposal 0008). MLflow's own ids are only ever trusted through this table: an experiment maps to its securable, and a
+-- run to the securable of the experiment it is in. A guessed id from another workspace is not here, so it finds nothing.
+CREATE TABLE mlflow_objects (
+    workspace_id TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    upstream_id  TEXT NOT NULL,
+    securable_id TEXT NOT NULL,
+    created_by   TEXT NOT NULL,
+    PRIMARY KEY (workspace_id, kind, upstream_id)
+);
+CREATE INDEX mlflow_objects_securable ON mlflow_objects (workspace_id, kind, securable_id);
+

@@ -57,8 +57,15 @@ def stop():
             p.kill()
 
 
+MLFLOW_PY = os.path.expanduser("~/.cache/loamz/mlflow-venv/bin/python")
+MLFLOW_PORT = 18051
+if os.path.exists(MLFLOW_PY):
+    # A stock MLflow server, reachable only on loopback: the Loamz server is its only client.
+    procs.append(subprocess.Popen([MLFLOW_PY, "-m", "mlflow", "server", "--host", "127.0.0.1", "--port", str(MLFLOW_PORT), "--backend-store-uri", f"sqlite:///{work}/mlflow.db",
+                                   "--workers", "1"], env={**os.environ, "MLFLOW_DISABLE_AGENT_HINT": "1"}, stdout=open(f"{work}/mlflow.log", "w"), stderr=subprocess.STDOUT))
+
 try:
-    env = {**os.environ, "LOAMZ_DATA_LISTEN": "127.0.0.1:18040", "LOAMZ_DATA_DATABASE_URL": f"sqlite:{work}/d.db?mode=rwc",
+    env = {**os.environ, "LOAMZ_DATA_MLFLOW_URL": f"http://127.0.0.1:{MLFLOW_PORT}", "LOAMZ_DATA_LISTEN": "127.0.0.1:18040", "LOAMZ_DATA_DATABASE_URL": f"sqlite:{work}/d.db?mode=rwc",
            "LOAMZ_DATA_BUCKET": "loamz-data", "LOAMZ_DATA_BUCKET_ENDPOINT": S3, "LOAMZ_DATA_BUCKET_KEY_ID_REF": "loamz-data/bucket#key_id", "LOAMZ_DATA_BUCKET_SECRET_REF": "loamz-data/bucket#secret", "LOAMZ_DATA_BUCKET_STS_ENDPOINT": S3,
            "LOAMZ_DATA_FLIGHT_LISTEN": "127.0.0.1:18041", "LOAMZ_DATA_STORAGE_ALLOW_PRIVATE": "true", "LOAMZ_DATA_STORAGE_ALLOW_HTTP_DEV": "true", "LOAMZ_DATA_OPENBAO_ADDR": BAO, "LOAMZ_DATA_OPENBAO_TOKEN_FILE": work + "/bao/token", "LOAMZ_DATA_OIDC_ISSUER": "http://127.0.0.1:8082/realms/loamz"}
     procs.append(subprocess.Popen([os.path.join(ROOT, "target/release/loamz-data"), "serve"], env=env, stdout=open(f"{work}/server.log", "w"), stderr=subprocess.STDOUT))
@@ -328,6 +335,41 @@ try:
     assert "shop.main.orders" in seen["tables"] and "shop.main.people" in seen["tables"], seen["tables"]
     assert seen["bad"], "a wrong token must be refused"
     step(f"a BI client (ADBC over Arrow Flight SQL) signed in, ran a statement ({len(seen['rows'])} groups, types {seen['types']}), listed {len(seen['tables'])} tables it may see, and a wrong token was refused ({seen['bad']})")
+
+    # The standard MLflow client, pointed at the workspace's tracking address with a Loamz token: an experiment is a catalog object, a run
+    # is logged and found again, and a person who was given nothing sees none of it.
+    if os.path.exists(MLFLOW_PY):
+        for _ in range(60):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{MLFLOW_PORT}/version", timeout=1)
+                break
+            except OSError:
+                time.sleep(1)
+        client = (
+            "import json, os, mlflow\nfrom mlflow import MlflowClient\n"
+            "mlflow.set_experiment('shop.main.churn')\n"
+            "with mlflow.start_run(run_name='r1') as run:\n    mlflow.log_param('depth', 4)\n    mlflow.log_metric('auc', 0.91, step=1)\n    mlflow.set_tag('who', 'ana')\n    rid = run.info.run_id\n"
+            "c = MlflowClient()\n"
+            "got = c.get_run(rid)\n"
+            "found = mlflow.search_runs(experiment_names=['shop.main.churn'])\n"
+            "exps = [e.name for e in c.search_experiments()]\n"
+            "hist = [m.value for m in c.get_metric_history(rid, 'auc')]\n"
+            "print(json.dumps({'param': got.data.params, 'metric': got.data.metrics, 'runs': len(found), 'experiments': exps, 'history': hist, 'user': got.info.user_id}))\n")
+        mlflow_env = {**os.environ, "MLFLOW_DISABLE_AGENT_HINT": "1", "MLFLOW_TRACKING_URI": f"{API}/api/v1/workspaces/{WSID}/mlflow", "MLFLOW_TRACKING_TOKEN": ana}
+        done = subprocess.run([MLFLOW_PY, "-c", client], env=mlflow_env, capture_output=True, text=True)
+        if done.returncode:
+            print(open(f"{work}/server.log").read()[-800:])
+            sys.exit("the MLflow client failed: " + done.stderr[-1200:])
+        got = json.loads(done.stdout.strip().splitlines()[-1])
+        assert got["param"] == {"depth": "4"} and got["metric"] == {"auc": 0.91} and got["runs"] == 1 and got["experiments"] == ["shop.main.churn"] and got["history"] == [0.91], got
+        _, listing = call("GET", f"{S}/securables?parent_id={sch}", ana)
+        assert any(i["kind"] == "experiment" and i["name"] == "churn" for i in listing["items"]), listing
+        step(f"the stock MLflow client logged a run through the gateway and read it back ({got['param']}, {got['metric']}); the experiment shop.main.churn is a catalog object; user_id is {got['user']}")
+        # Someone who is not in the workspace gets nothing, with a token that is valid.
+        other = subprocess.run([MLFLOW_PY, "-c", "import mlflow\ntry:\n    print(mlflow.get_experiment_by_name('shop.main.churn'))\nexcept Exception as e:\n    print('refused', type(e).__name__)\n"],
+                               env={**mlflow_env, "MLFLOW_TRACKING_TOKEN": token("bob")}, capture_output=True, text=True)
+        assert "None" in other.stdout or "refused" in other.stdout, other.stdout + other.stderr[-300:]
+        step(f"a person outside the workspace sees nothing of it: {other.stdout.strip().splitlines()[-1]}")
 
     # A catalog on a customer's storage location: its bytes are read and written with the location's own credential, in its own
     # folder of the bucket (here the same RustFS, a folder of its own), and nothing of it is in the installation's default storage.
