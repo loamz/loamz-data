@@ -108,6 +108,7 @@ and a guide for pointing a Modal account at us.
 | Run cap per workspace (below the organization's), set by account admins | compute | ✅ | | | | | |
 | Sandbox lifecycle (create, idle, stop, delete) | compute | | | | | 📅 | |
 | Job schedules (cron and interval) and failure alerts to a webhook | compute | ✅ | | | | | |
+| Workflows: Apache Airflow behind a governing gateway; a pipeline is a catalog object whose steps are Loamz jobs (0009) | compute | | | | | 📅 | |
 | Triggers (on a table change) | compute | | | | | | ❓ |
 | **Storage** | | | | | | | |
 | S3-compatible store; short-lived credentials scoped to one folder (R2) | storage | ✅ | | | | | |
