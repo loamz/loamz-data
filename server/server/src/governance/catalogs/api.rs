@@ -71,8 +71,16 @@ async fn create(
 ) -> Result<(StatusCode, Json<Value>)> {
     let req: Create = body_json(&body)?;
     let kind = Kind::parse(&req.kind).ok_or_else(|| {
-        Error::Invalid("kind must be catalog, schema, table, volume or view".into())
+        Error::Invalid("kind must be catalog, schema, table, volume, view or function".into())
     })?;
+    // An experiment, a model and a prompt exist in MLflow as well: they are made through the MLflow address, never here, so there is
+    // never a catalog entry with nothing behind it.
+    if matches!(kind, Kind::Experiment | Kind::Model | Kind::Prompt) {
+        return Err(Error::Invalid(format!(
+            "a {} is made with the MLflow client, at the workspace's MLflow address",
+            kind.as_str()
+        )));
+    }
     let draft = Draft {
         kind,
         parent_id: req.parent_id,
