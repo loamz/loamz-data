@@ -11,13 +11,14 @@ use super::{
     store,
 };
 use crate::{
+    ai::mlflow::service as mlflow,
     compute::service as compute,
     governance::{
         audit::{
             model::{Who, tombstone},
             service::Uow,
         },
-        catalogs::service as catalogs,
+        catalogs::{model::Kind, service as catalogs},
         context::WsCtx,
         iam::service as iam,
         orgs::{model::valid_principal, service as orgs},
@@ -514,6 +515,10 @@ async fn remove_subtree(app: &App, org: &str, id: &str) -> Result<()> {
         if entry.kind.holds_files() {
             volumes::erase_files(app, &entry.folder).await?;
         }
+        // An experiment, a model or a prompt also exists in MLflow: it goes there first, so the catalog never forgets what MLflow keeps.
+        if matches!(entry.kind, Kind::Experiment | Kind::Model | Kind::Prompt) {
+            mlflow::forget(app, &entry.id).await?;
+        }
         let mut uow = Uow::begin(app).await?;
         iam::forget_securable(&mut uow, org, &entry.id).await?;
         catalogs::remove_row(&mut uow, org, &entry.id).await?;
@@ -913,6 +918,9 @@ async fn erase(app: &App, task: &Task) -> Result<()> {
     for entry in entries.iter().rev() {
         if entry.kind.holds_files() {
             volumes::erase_files(app, &entry.folder).await?;
+        }
+        if matches!(entry.kind, Kind::Experiment | Kind::Model | Kind::Prompt) {
+            mlflow::forget(app, &entry.id).await?;
         }
     }
     for entry in &entries {

@@ -49,7 +49,7 @@ fn missing() -> Error {
 
 /// One request to the upstream server, which only this module can reach. Nothing of the caller's is passed on: not their headers,
 /// not their token. A refusal from `MLflow` is turned into one of ours; its own message is passed on only for a plain 4xx.
-async fn send(
+pub(super) async fn send(
     app: &App,
     method: Method,
     path: &str,
@@ -136,7 +136,12 @@ async fn secure(app: &App, ctx: &WsCtx, securable: &str, need: Privilege) -> Res
     Ok(entry)
 }
 
-async fn quietly_may(app: &App, ctx: &WsCtx, need: Privilege, target: &Target) -> Result<bool> {
+pub(super) async fn quietly_may(
+    app: &App,
+    ctx: &WsCtx,
+    need: Privilege,
+    target: &Target,
+) -> Result<bool> {
     iam::may(
         app,
         &ctx.identity,
@@ -148,11 +153,11 @@ async fn quietly_may(app: &App, ctx: &WsCtx, need: Privilege, target: &Target) -
     .await
 }
 
-fn text<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
+pub(super) fn text<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
     v[key].as_str().filter(|s| !s.is_empty())
 }
 
-fn query_of<'a>(query: &'a [(String, String)], key: &str) -> Option<&'a str> {
+pub(super) fn query_of<'a>(query: &'a [(String, String)], key: &str) -> Option<&'a str> {
     query
         .iter()
         .find(|(k, _)| k == key)
@@ -346,6 +351,7 @@ pub async fn handle(
             send(app, Method::POST, &tracking(name), &[], Some(body)).await
         }
         Op::RunSearch => run_search(app, ctx, body).await,
+        _ => super::registry::handle(app, ctx, op, query, body).await,
     }
 }
 
@@ -480,7 +486,7 @@ async fn experiment_search(app: &App, ctx: &WsCtx, body: &Value) -> Result<Value
     for _ in 0..MAX_PAGES {
         let mut page = json!({
             "max_results": PAGE, "view_type": view,
-            "filter": format!("name LIKE '{}:%'", ctx.workspace.id),
+            "filter": format!("name LIKE '{}.%'", ctx.workspace.id),
         });
         if let Some(t) = &token {
             page["page_token"] = json!(t);
@@ -591,4 +597,36 @@ async fn run_search(app: &App, ctx: &WsCtx, body: &Value) -> Result<Value> {
         Some(&upstream),
     )
     .await
+}
+
+/// Takes away what `MLflow` holds for a securable that has been dropped or erased: its experiment or model upstream, and the map rows. Safe to
+/// run again (a durable task retries it): what is already gone is not an error.
+///
+/// # Errors
+/// `MLflow` is needed and cannot be reached, or the database could not be written.
+pub async fn forget(app: &App, securable_id: &str) -> Result<()> {
+    let held = store::of_securable(app.db.pool(), securable_id).await?;
+    for (kind, upstream) in &held {
+        let (path, body) = match kind.as_str() {
+            "experiment" => (
+                "api/2.0/mlflow/experiments/delete",
+                json!({"experiment_id": upstream}),
+            ),
+            "model" => (
+                "api/2.0/mlflow/registered-models/delete",
+                json!({"name": upstream}),
+            ),
+            _ => continue,
+        };
+        let method = if kind == "model" {
+            Method::DELETE
+        } else {
+            Method::POST
+        };
+        match send(app, method, path, &[], Some(&body)).await {
+            Ok(_) | Err(Error::NotFound(_)) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    store::forget_securable(app.db.pool(), securable_id).await
 }

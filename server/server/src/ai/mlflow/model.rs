@@ -29,6 +29,20 @@ pub enum Op {
     RunDeleteTag,
     RunSearch,
     MetricHistory,
+    RegisteredModelCreate,
+    RegisteredModelGet,
+    RegisteredModelUpdate,
+    RegisteredModelDelete,
+    RegisteredModelSearch,
+    RegisteredModelSetTag,
+    AliasGet,
+    AliasSet,
+    AliasDelete,
+    ModelVersionCreate,
+    ModelVersionGet,
+    ModelVersionSearch,
+    ModelVersionDelete,
+    ModelVersionSetTag,
 }
 
 /// The request a method and a path (below the gateway's own address) stand for, if it is one the gateway serves.
@@ -68,6 +82,20 @@ pub fn route(method: &str, path: &str) -> Option<Op> {
         ("POST", _, Some("runs/delete-tag")) => Op::RunDeleteTag,
         ("POST", _, Some("runs/search")) => Op::RunSearch,
         ("GET", _, Some("metrics/get-history")) => Op::MetricHistory,
+        ("POST", _, Some("registered-models/create")) => Op::RegisteredModelCreate,
+        ("GET", _, Some("registered-models/get")) => Op::RegisteredModelGet,
+        ("PATCH", _, Some("registered-models/update")) => Op::RegisteredModelUpdate,
+        ("DELETE", _, Some("registered-models/delete")) => Op::RegisteredModelDelete,
+        ("GET", _, Some("registered-models/search")) => Op::RegisteredModelSearch,
+        ("POST", _, Some("registered-models/set-tag")) => Op::RegisteredModelSetTag,
+        ("GET", _, Some("registered-models/alias")) => Op::AliasGet,
+        ("POST", _, Some("registered-models/alias")) => Op::AliasSet,
+        ("DELETE", _, Some("registered-models/alias")) => Op::AliasDelete,
+        ("POST", _, Some("model-versions/create")) => Op::ModelVersionCreate,
+        ("GET", _, Some("model-versions/get")) => Op::ModelVersionGet,
+        ("GET", _, Some("model-versions/search")) => Op::ModelVersionSearch,
+        ("DELETE", _, Some("model-versions/delete")) => Op::ModelVersionDelete,
+        ("POST", _, Some("model-versions/set-tag")) => Op::ModelVersionSetTag,
         _ => return None,
     })
 }
@@ -83,10 +111,11 @@ pub fn parse_full_name(name: &str) -> Option<[String; 3]> {
     Some([a.to_owned(), b.to_owned(), c.to_owned()])
 }
 
-/// The name `MLflow` keeps: made unique per workspace, so two workspaces can each have `main.ml.churn`.
+/// The name `MLflow` keeps: made unique per workspace, so two workspaces can each have `main.ml.churn`. A dot separates them, because
+/// `MLflow` refuses `:` and `/` in a registered model's name.
 #[must_use]
 pub fn upstream_name(workspace: &str, full: &str) -> String {
-    format!("{workspace}:{full}")
+    format!("{workspace}.{full}")
 }
 
 /// The name a person sees, from the name `MLflow` keeps. None: it is another workspace's.
@@ -94,8 +123,20 @@ pub fn upstream_name(workspace: &str, full: &str) -> String {
 pub fn public_name(workspace: &str, upstream: &str) -> Option<String> {
     upstream
         .strip_prefix(workspace)
-        .and_then(|rest| rest.strip_prefix(':'))
+        .and_then(|rest| rest.strip_prefix('.'))
         .map(str::to_owned)
+}
+
+/// A prompt is a registered model that `MLflow` marks with this tag; it is its own kind of catalog object here.
+pub const PROMPT_TAG: &str = "mlflow.prompt.is_prompt";
+
+/// Whether tags in `MLflow`'s list form (`[{"key", "value"}]`) mark a prompt.
+#[must_use]
+pub fn is_prompt(tags: &serde_json::Value) -> bool {
+    tags.as_array().is_some_and(|all| {
+        all.iter()
+            .any(|t| t["key"] == PROMPT_TAG && t["value"] == "true")
+    })
 }
 
 /// The most experiments one search returns, and how many upstream pages it may read to fill that.
@@ -115,12 +156,23 @@ mod tests {
         );
         assert_eq!(route("GET", "api/2.0/mlflow/runs/get"), Some(Op::RunGet));
         assert_eq!(route("GET", "/version/"), Some(Op::Version));
+        assert_eq!(
+            route("PATCH", "api/2.0/mlflow/registered-models/update"),
+            Some(Op::RegisteredModelUpdate)
+        );
+        assert_eq!(
+            route("DELETE", "api/2.0/mlflow/registered-models/alias"),
+            Some(Op::AliasDelete)
+        );
         // The right path with the wrong method, anything MLflow also has, and anything that tries a trick.
         for (m, p) in [
             ("GET", "api/2.0/mlflow/experiments/create"),
             ("POST", "api/2.0/mlflow/runs/get"),
             ("DELETE", "api/2.0/mlflow/runs/get"),
-            ("POST", "api/2.0/mlflow/registered-models/create"),
+            ("GET", "api/2.0/mlflow/registered-models/create"),
+            ("POST", "api/2.0/mlflow/registered-models/rename"),
+            ("POST", "api/2.0/mlflow/model-versions/get-download-uri"),
+            ("POST", "api/2.0/mlflow/logged-models"),
             ("GET", "ajax-api/2.0/mlflow/experiments/get"),
             ("POST", "api/2.0/mlflow/experiments/create/../delete"),
             ("POST", "api/2.0/mlflow/experiments//create"),
@@ -131,6 +183,17 @@ mod tests {
         ] {
             assert_eq!(route(m, p), None, "{m} {p}");
         }
+    }
+
+    #[test]
+    fn a_prompt_is_a_registered_model_with_the_prompt_tag() {
+        assert!(is_prompt(
+            &serde_json::json!([{"key": "a", "value": "b"}, {"key": PROMPT_TAG, "value": "true"}])
+        ));
+        assert!(!is_prompt(
+            &serde_json::json!([{"key": PROMPT_TAG, "value": "false"}])
+        ));
+        assert!(!is_prompt(&serde_json::json!(null)));
     }
 
     #[test]
@@ -151,7 +214,7 @@ mod tests {
             assert_eq!(parse_full_name(bad), None, "{bad}");
         }
         let kept = upstream_name("w1", "main.ml.churn");
-        assert_eq!(kept, "w1:main.ml.churn");
+        assert_eq!(kept, "w1.main.ml.churn");
         assert_eq!(public_name("w1", &kept).as_deref(), Some("main.ml.churn"));
         assert_eq!(
             public_name("w2", &kept),

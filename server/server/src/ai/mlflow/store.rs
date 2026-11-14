@@ -68,3 +68,34 @@ pub async fn upstream_of<'e, E: Executor<'e, Database = Any>>(
         None => None,
     })
 }
+
+/// Everything `MLflow`-side that belongs to a securable: its experiment or model, and the runs inside an experiment.
+pub async fn of_securable<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    securable_id: &str,
+) -> Result<Vec<(String, String)>> {
+    let rows = sqlx::query("SELECT kind, upstream_id FROM mlflow_objects WHERE securable_id = $1")
+        .bind(securable_id)
+        .fetch_all(e)
+        .await?;
+    rows.iter()
+        .map(|r| {
+            Ok((
+                r.try_get::<String, _>("kind")?,
+                r.try_get::<String, _>("upstream_id")?,
+            ))
+        })
+        .collect()
+}
+
+/// Forgets them.
+pub async fn forget_securable<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    securable_id: &str,
+) -> Result<()> {
+    sqlx::query("DELETE FROM mlflow_objects WHERE securable_id = $1")
+        .bind(securable_id)
+        .execute(e)
+        .await?;
+    Ok(())
+}

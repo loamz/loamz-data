@@ -4,7 +4,7 @@
 use axum::{
     Router,
     handler::Handler,
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
 };
 
 use super::{error::Error, state::Shared};
@@ -39,6 +39,13 @@ impl Routes {
     pub fn put<H: Handler<T, Shared>, T: 'static>(mut self, path: &str, h: H) -> Self {
         self.router = self.router.route(path, put(h));
         self.seen.push(("PUT", path.to_owned()));
+        self
+    }
+
+    #[must_use]
+    pub fn patch<H: Handler<T, Shared>, T: 'static>(mut self, path: &str, h: H) -> Self {
+        self.router = self.router.route(path, patch(h));
+        self.seen.push(("PATCH", path.to_owned()));
         self
     }
 

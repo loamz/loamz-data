@@ -167,7 +167,7 @@ async fn the_gateway_decides_for_every_request(s: Server, fake: Shared) {
     assert_eq!(made.status, 200, "{}", made.text());
     let exp = made.json()["experiment_id"].as_str().unwrap().to_owned();
     let upstream = &calls(&fake, "experiments/create")[0];
-    assert_eq!(upstream["name"], format!("{}:ai.main.churn", l.ws));
+    assert_eq!(upstream["name"], format!("{}.ai.main.churn", l.ws));
     assert!(upstream.get("artifact_location").is_none());
     // It is a catalog object now, in its schema.
     let listed = s
@@ -438,11 +438,11 @@ async fn experiments_are_not_shared_between_workspaces_or_found_by_a_guessed_id(
     fake.lock()
         .unwrap()
         .experiments
-        .push(("900".into(), format!("{}:ai.main.hidden", l.ws), true));
+        .push(("900".into(), format!("{}.ai.main.hidden", l.ws), true));
     fake.lock()
         .unwrap()
         .experiments
-        .push(("901".into(), "other-ws:ai.main.churn".into(), true));
+        .push(("901".into(), "other-ws.ai.main.churn".into(), true));
     let search = s
         .post(
             &l.url("api/2.0/mlflow/experiments/search"),

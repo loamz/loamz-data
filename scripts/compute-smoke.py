@@ -365,6 +365,39 @@ try:
         _, listing = call("GET", f"{S}/securables?parent_id={sch}", ana)
         assert any(i["kind"] == "experiment" and i["name"] == "churn" for i in listing["items"]), listing
         step(f"the stock MLflow client logged a run through the gateway and read it back ({got['param']}, {got['metric']}); the experiment shop.main.churn is a catalog object; user_id is {got['user']}")
+        # Prompts are registered models with a tag: here they are catalog objects, versioned and aliased, found by search, and gone from
+        # MLflow when the catalog drops them.
+        prompts = (
+            "import json, mlflow\nfrom mlflow import genai\n"
+            "genai.register_prompt(name='shop.main.greeting', template='Hello {{name}}', commit_message='first')\n"
+            "genai.register_prompt(name='shop.main.greeting', template='Hi {{name}}!', commit_message='second')\n"
+            "genai.set_prompt_alias('shop.main.greeting', alias='prod', version=2)\n"
+            "a = genai.load_prompt('prompts:/shop.main.greeting/1').template\n"
+            "b = genai.load_prompt('prompts:/shop.main.greeting@prod').template\n"
+            "found = [p.name for p in genai.search_prompts()]\n"
+            "print(json.dumps({'v1': a, 'prod': b, 'found': found}))\n")
+        done = subprocess.run([MLFLOW_PY, "-c", prompts], env=mlflow_env, capture_output=True, text=True)
+        if done.returncode:
+            print(open(f"{work}/server.log").read()[-800:])
+            sys.exit("the MLflow prompts failed: " + done.stderr[-1200:])
+        seen = json.loads(done.stdout.strip().splitlines()[-1])
+        assert seen == {"v1": "Hello {{name}}", "prod": "Hi {{name}}!", "found": ["shop.main.greeting"]}, seen
+        _, listing = call("GET", f"{S}/securables?parent_id={sch}", ana)
+        prompt = next(i for i in listing["items"] if i["name"] == "greeting")
+        assert prompt["kind"] == "prompt", prompt
+        step(f"prompts through the gateway: two versions, an alias, loaded by version and by alias, found by search; shop.main.greeting is a catalog {prompt['kind']}")
+        call("DELETE", f"{S}/securables/{prompt['id']}", ana)
+        for _ in range(40):
+            time.sleep(0.5)
+            _, listing = call("GET", f"{S}/securables?parent_id={sch}", ana)
+            if not any(i["name"] == "greeting" for i in listing["items"]):
+                break
+        gone = subprocess.run([MLFLOW_PY, "-c", "import mlflow\nfrom mlflow import genai\ntry:\n    genai.load_prompt('prompts:/shop.main.greeting/1'); print('STILL THERE')\nexcept Exception as e:\n    print('gone', type(e).__name__)\n"],
+                              env=mlflow_env, capture_output=True, text=True)
+        direct = urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{MLFLOW_PORT}/api/2.0/mlflow/registered-models/search?max_results=100")).read().decode()
+        assert "gone" in gone.stdout and "greeting" not in direct, (gone.stdout, direct[:300])
+        step("dropping the prompt in the catalog removed it from MLflow itself: the client cannot load it and MLflow's own list does not hold it")
+
         # Someone who is not in the workspace gets nothing, with a token that is valid.
         other = subprocess.run([MLFLOW_PY, "-c", "import mlflow\ntry:\n    print(mlflow.get_experiment_by_name('shop.main.churn'))\nexcept Exception as e:\n    print('refused', type(e).__name__)\n"],
                                env={**mlflow_env, "MLFLOW_TRACKING_TOKEN": token("bob")}, capture_output=True, text=True)
