@@ -13,4 +13,4 @@ Loamz Data exposes a versioned REST API at `/api/v1` adhering strictly to RFC 94
 | [Metrics](metrics.md) | 1 | Endpoints for `metrics` |
 | [Orgs](orgs.md) | 12 | Endpoints for `orgs` |
 | [Readyz](readyz.md) | 1 | Endpoints for `readyz` |
-| [Workspaces](workspaces.md) | 66 | Endpoints for `workspaces` |
+| [Workspaces](workspaces.md) | 67 | Endpoints for `workspaces` |

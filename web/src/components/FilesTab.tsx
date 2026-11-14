@@ -1,9 +1,11 @@
-import { Download, File, Trash2, Upload } from "lucide-react";
+import { Download, File, Table2, Trash2, Upload } from "lucide-react";
 import { useState } from "react";
 import { Button, FilePicker, PageEmpty, confirmAction, toast } from "@/design";
 import * as api from "@/api";
 import { bytes } from "@/format";
 import { useLoad } from "@/hooks";
+import { ImportDialog } from "./ImportDialog";
+import { inferFormat } from "./importUtils";
 
 function save(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -18,6 +20,7 @@ export function FilesTab({ ws, id }: { ws: string; id: string }) {
   const list = useLoad(() => api.files(ws, id), `${ws}/${id}`);
   const [uploading, setUploading] = useState(0);
   const [over, setOver] = useState(false);
+  const [importingPath, setImportingPath] = useState<string | null>(null);
 
   async function send(chosen: File[]) {
     setUploading((n) => n + chosen.length);
@@ -73,6 +76,16 @@ export function FilesTab({ ws, id }: { ws: string; id: string }) {
                 {f.path}
               </span>
               <span className="shrink-0 text-xs tabular-nums text-muted">{bytes(f.size)}</span>
+              {inferFormat(f.path) !== null && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  aria-label={`Import ${f.path} as table`}
+                  onClick={() => setImportingPath(f.path)}
+                >
+                  <Table2 /> Import as table
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -107,6 +120,15 @@ export function FilesTab({ ws, id }: { ws: string; id: string }) {
           ))}
         </div>
       )}
+      <ImportDialog
+        ws={ws}
+        open={Boolean(importingPath)}
+        onOpenChange={(o) => {
+          if (!o) setImportingPath(null);
+        }}
+        volumeId={id}
+        filePath={importingPath ?? ""}
+      />
     </div>
   );
 }
