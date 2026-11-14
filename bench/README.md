@@ -65,3 +65,24 @@ its slow `ptrace` mode. What changed, in order of effect:
 
 The gap to reading the bucket directly (the "direct" and "catalog" columns) is now about 0.1 s: the run through the sandbox's network
 bridge. Not measured yet: bytes and requests, CPU, memory, a larger table, a customer's remote bucket (network time will dominate).
+
+## Agent sandbox reads through the broker (`bench/broker_readers.py`, 14 Nov 2026)
+
+Can Polars, DuckDB and pyarrow read Parquet through the runner's storage broker, as a code sandbox would (a loopback port in front of
+the broker's Unix socket, path-style, plain http, placeholder keys)? RustFS on this machine, a 233 MB file of 30 row groups and a
+23 MB file. Not run inside gVisor yet (phase 2 of proposal 0006); the broker and the readers are the real ones.
+
+| read | bytes the broker served | cold | warm (from cache) | local disk, Polars |
+|---|--:|--:|--:|--:|
+| `count(*)` (footer only) | 0.13 to 0.27 MB | 0.02 to 0.03 s | 0.01 s | 0.009 s |
+| one column of four (`val`) | 24 MB of 233 MB | 0.11 to 0.14 s | 0.05 to 0.08 s | 0.011 s |
+| `WHERE id < 1000` (row groups pruned) | 1.3 to 1.5 MB | 0.04 s | 0.01 to 0.02 s | 0.004 s |
+
+- All three readers work unchanged. A column or a filter moves a fraction of the file: pushdown works through the broker.
+- A repeat read is served entirely from the broker's cache (cache hits equal requests), and file size does not matter: ranges of the
+  large file are cached too, not only whole small files.
+- Isolation, with any signature: the leased file 200; another folder and the bucket root 403; write and delete 403; `..` 400.
+- The `bytes` counter counts bytes served to a reader, cached or not, so storage traffic is `hits` against requests. Not measured
+  yet: the same through gVisor, many concurrent readers, a remote bucket, and the sandbox holding no credential.
+- Found for the build: the broker is authorized by a table list today. A code sandbox needs it authorized by folders (a volume's thread
+  folder), the region from the lease instead of `auto`, and an optional session token (done).

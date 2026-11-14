@@ -14,6 +14,8 @@ use serde_json::json;
 
 #[tokio::main]
 async fn main() {
+    // As the runner does at start: the object-store client needs a TLS provider installed before it is built.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let a: Vec<String> = std::env::args().collect();
     if a.len() != 7 {
         eprintln!("usage: broker_spike <dir> <endpoint> <bucket> <key id> <secret> <folder>");
