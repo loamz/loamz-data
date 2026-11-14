@@ -1947,6 +1947,23 @@ paths:
           $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/runs/{id}/result:
+    get:
+      summary: The whole result of a statement that was run with `export`, as a short-lived signed address.
+      description: >-
+        Needs the same right as the run's detail. The answer is `{url, bytes, format, expires_ms}`: fetch `url` with no credential
+        (the bytes go from the storage to the reader, never through this server). The file is an Arrow IPC stream and is removed 24 hours
+        after the run ends, or at once if the person who ran it is erased.
+      parameters:
+      - *id007
+      - *id008
+      responses:
+        '200':
+          description: The signed address
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
   /api/v1/workspaces/{ws}/runs/{id}/cancel:
     post:
       summary: 'Stop a run: at once if it has not started, otherwise when its compute next checks in.'
@@ -2340,6 +2357,12 @@ components:
         wait_s:
           type: integer
           description: Seconds to wait for the answer, at most 60 (default 30).
+        export:
+          type: boolean
+          description: >-
+            Keep the whole result as an Arrow IPC stream file (up to 1 GiB, for 24 hours) in the storage beside the first table the
+            statement reads. The run's own result then has the columns and `export: {rows, bytes}`, no rows. Read it with
+            `GET /runs/{id}/result`. A statement that reads no table cannot be exported.
     Job:
       type: object
       required:

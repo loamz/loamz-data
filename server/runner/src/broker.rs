@@ -216,7 +216,9 @@ impl Broker {
         };
         let bucket = field("bucket")?.to_owned();
         let endpoint = field("endpoint")?;
-        let (key_id, secret, token) = (field("key_id")?, field("secret")?, field("session_token")?);
+        // A store's own long-lived key has no session token; a vended credential has one.
+        let (key_id, secret) = (field("key_id")?, field("secret")?);
+        let token = storage["session_token"].as_str().unwrap_or_default();
         let client_key = format!("{endpoint}|{bucket}|{key_id}|{token}");
         let reused = self
             .clients
@@ -226,15 +228,18 @@ impl Broker {
         let store: Arc<dyn ObjectStore> = if let Some(client) = reused {
             client
         } else {
+            let mut builder = AmazonS3Builder::new()
+                .with_endpoint(endpoint)
+                .with_bucket_name(&bucket)
+                .with_access_key_id(key_id)
+                .with_secret_access_key(secret)
+                .with_region("auto")
+                .with_allow_http(endpoint.starts_with("http://"));
+            if !token.is_empty() {
+                builder = builder.with_token(token);
+            }
             let built: Arc<dyn ObjectStore> = Arc::new(
-                AmazonS3Builder::new()
-                    .with_endpoint(endpoint)
-                    .with_bucket_name(&bucket)
-                    .with_access_key_id(key_id)
-                    .with_secret_access_key(secret)
-                    .with_token(token)
-                    .with_region("auto")
-                    .with_allow_http(endpoint.starts_with("http://"))
+                builder
                     .build()
                     .map_err(|_| "the storage access could not be prepared")?,
             );

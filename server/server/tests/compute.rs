@@ -2415,6 +2415,7 @@ both!(an_import_from_an_address_is_downloaded_by_the_machine_and_never_shown_bac
 
 async fn a_whole_result_needs_a_table_and_a_storage_that_can_keep_it(s: Server) {
     let l = lab(&s).await;
+    let _ = attach(&s).await;
     s.assign(&l.ws, &[&bob()]).await;
     let statements = format!("/api/v1/workspaces/{}/sql/statements", l.ws);
     // It is kept beside the data it came from, so a statement that reads no table has nowhere to put it.

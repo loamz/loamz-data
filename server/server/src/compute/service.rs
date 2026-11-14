@@ -1013,6 +1013,7 @@ pub async fn prepare_maintenance(
         script,
         inputs: Vec::new(),
         output: String::new(),
+        fetch: None,
         table_writes: vec![target],
         target: None,
         memory_mb: None,
