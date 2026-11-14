@@ -48,8 +48,7 @@ and a guide for pointing a Modal account at us.
 
 **Built since 13 Nov:** a store per storage location (a catalog on a customer's bucket is read and written with that location's own credential, proven on RustFS), write-only credential custody in OpenBao, the write path on compute (import from a volume file or an https address, replace, compaction and snapshot expiry, all through two narrow doors in gVisor), job schedules and failure alerts, a statement's whole result as an Arrow file read by a signed address, a Parquet result saved in a person's volume with an idempotency key, and the console's import dialog. **Written but not yet merged:** abuse limits and organization suspension, the agent installer, and the docs pages for schedules, maintenance and storage. **Next:** agent sandboxes that read data through the storage broker (proposal 0006), the BI connection, search, and the AI phase once its scope is confirmed.
 
-**Scope still to confirm with the owner:** which of functions, MLflow, agent sandboxes, job schedules and alerts, BI connectors,
-search, network isolation and traces are in the beta.
+**Confirmed by the owner (14 Nov):** the AI phase is in the beta in full: functions as agent tools, agent sandboxes, MLflow for ML (experiments, models) and for GenAI (traces, evaluations, prompts), and Loamz Agents connected to all of it. Designed in [0008](../proposals/0008-ai-phase.md); still to confirm: which of BI connectors, search, network isolation and traces beyond the AI phase.
 
 > **Note:** this roadmap is a plan, not a promise. Built features are marked in the Today column.
 
@@ -87,9 +86,9 @@ search, network isolation and traces are in the beta.
 | File index at commit, pruning before reads | data | | | 📅 | | | |
 | Compaction and snapshot expiry, on demand or on a schedule | data | ✅ | | | | | |
 | Sort on write | data | | | 📅 | | | |
-| Functions (SQL, Python) as agent tools, run in sandboxes | data | | | | 📅 | | |
-| MLflow ML: experiments and models | data | | | | 📅 | | |
-| MLflow GenAI: traces, evals, prompts | data | | | | 📅 | | |
+| Functions (SQL, Python) as governed objects and agent tools, run in sandboxes as the caller (0008) | data | | | | 📅 | | |
+| MLflow ML: experiments, runs, models, through a governing gateway in front of the upstream server (0008) | data | | | | 📅 | | |
+| MLflow GenAI: traces, evaluations, prompts; Loamz Agents sends its traces and loads its prompts here (0008) | data | | | | 📅 | | |
 | Materialized views | data | | | | | | ❓ |
 | Search across catalogs by name, description, tag, owner | data | | | | | | ❓ |
 | Data quality checks | data | | | | | | ❓ |
