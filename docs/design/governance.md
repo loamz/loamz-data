@@ -100,7 +100,18 @@ the erase task.
 | `OrgCtx`, `WsCtx`, `FileCtx` | request context | built once per request from the token and the path |
 | `store.rs` per feature | repository | all SQL for that feature, portable across SQLite and Postgres |
 
-## 5. Planned
+## 5. Schedules
+
+A schedule stores a person's immutable SQL or job definition and is fired by the durable lifecycle worker. Each firing refreshes
+directory groups and submits through the ordinary compute authorization and policy path; losing access pauses the schedule. The
+worker advances a due time and inserts its task in one transaction, then links the queued run to that task in the run/audit
+transaction so retries cannot queue it twice. UTC cron and fixed intervals coalesce missed ticks and do not overlap an active run.
+
+Failure alerts are durable outbox records. They store only a vault reference, never its URL. Delivery uses HTTPS, no redirects,
+a short timeout, and freshly resolved public addresses pinned for that request; failures retry with per-schedule cooldown and a
+bounded attempt count. Webhooks receive only schedule/run identifiers and status, not statement or result data.
+
+## 6. Planned
 
 - ~~Service principals in the workspace~~ — built (0002 task 4): `workspaces/principals.rs`, token `lsp_…` (hash kept), confined to its workspace. One `Principal` type for members, groups and service principals is not done: grants still name them as `user:`, `group:`, `sp:` strings.
 - **Grants on compute and storage**: who can use which compute; `READ FILES`, `WRITE FILES`, `CREATE EXTERNAL LOCATION`,

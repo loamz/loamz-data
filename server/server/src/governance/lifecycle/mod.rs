@@ -1,4 +1,4 @@
-//! `LifeCycle`: drop and erase as durable tasks.
+//! Durable drops, erasures, scheduled runs, and failure alerts.
 
 pub mod api;
 pub mod model;

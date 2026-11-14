@@ -273,6 +273,15 @@ impl SecretStore for FakeVault {
         Ok(())
     }
     async fn get(&self, r: &SecretRef) -> Result<String, String> {
+        if r.key == "hook" {
+            return Ok("https://example.com/hook".into());
+        }
+        if r.key == "insecure" {
+            return Ok("http://example.com/hook".into());
+        }
+        if r.key == "private" {
+            return Ok("https://127.0.0.1/hook".into());
+        }
         match r.path.as_str() {
             "loamz-data/bucket" | "loamz-data/other" => Ok("a-secret".into()),
             _ => Err(format!("OpenBao has no secret {}", r.path)),

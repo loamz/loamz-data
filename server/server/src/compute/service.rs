@@ -407,6 +407,7 @@ pub struct Ctx<'a> {
     pub workspace: &'a Workspace,
     pub standing: Standing,
     pub sides: &'a [Side],
+    pub schedule_task_id: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -636,7 +637,36 @@ async fn queue(app: &App, ctx: &Ctx<'_>, run: &Run, action: &str) -> Result<()> 
             .into(),
         ));
     }
+    if let Some(task_id) = ctx.schedule_task_id {
+        // The row lock serializes this run against pause/delete on other server instances.
+        if orgs::is_erasing_in(
+            &mut uow.tx,
+            &run.org_id,
+            &format!("user:{}", ctx.identity.subject),
+        )
+        .await?
+        {
+            return Err(Error::Conflict("the schedule owner is being erased".into()));
+        }
+        let active = sqlx::query(
+            "UPDATE schedules SET last_error = last_error WHERE id = \
+             (SELECT subject FROM tasks WHERE id = $1 AND kind = 'schedule.run') AND state = 'active'",
+        )
+        .bind(task_id)
+        .execute(&mut *uow.tx)
+        .await?;
+        if active.rows_affected() != 1 {
+            return Err(Error::Conflict("the schedule is no longer active".into()));
+        }
+    }
     store::insert_run(&mut *uow.tx, run).await?;
+    if let Some(task_id) = ctx.schedule_task_id {
+        sqlx::query("UPDATE runs SET schedule_task_id = $2 WHERE id = $1")
+            .bind(&run.id)
+            .bind(task_id)
+            .execute(&mut *uow.tx)
+            .await?;
+    }
     uow.audit(
         &run.org_id,
         &Who::of(ctx.identity),
