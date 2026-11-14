@@ -398,7 +398,7 @@ async fn the_gateway_decides_for_every_request(s: Server, fake: Shared) {
 
     // Anything not on the list is not there: other MLflow areas, other methods, tricks.
     for (method, path) in [
-        ("POST", "api/2.0/mlflow/registered-models/create"),
+        ("POST", "api/2.0/mlflow/registered-models/rename"),
         ("GET", "api/2.0/mlflow-artifacts/artifacts"),
         ("POST", "ajax-api/2.0/mlflow/experiments/create"),
         ("GET", "api/2.0/mlflow/experiments/create"),
