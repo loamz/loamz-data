@@ -123,7 +123,8 @@ CREATE TABLE tasks (
     attempts     BIGINT NOT NULL,
     lease_until  BIGINT NOT NULL,
     created_ms   BIGINT NOT NULL,
-    last_error   TEXT NOT NULL
+    last_error   TEXT NOT NULL,
+    alert_ref    TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX tasks_due ON tasks (state, lease_until);
 
@@ -181,7 +182,8 @@ CREATE TABLE runs (
     lease_until   BIGINT NOT NULL,
     created_ms    BIGINT NOT NULL,
     started_ms    BIGINT NOT NULL,
-    finished_ms   BIGINT NOT NULL
+    finished_ms   BIGINT NOT NULL,
+    schedule_task_id TEXT UNIQUE
 );
 CREATE INDEX runs_workspace ON runs (workspace_id, created_ms);
 CREATE INDEX runs_due ON runs (state, target_id, created_ms);
@@ -261,3 +263,41 @@ CREATE TABLE table_policies (
     updated_by TEXT NOT NULL,
     updated_ms BIGINT NOT NULL
 );
+
+-- A saved SQL statement or job, evaluated with the creator's current rights on each firing.
+CREATE TABLE schedules (
+    id                 TEXT PRIMARY KEY,
+    org_id             TEXT NOT NULL,
+    workspace_id       TEXT NOT NULL,
+    name               TEXT NOT NULL,
+    owner              TEXT NOT NULL,
+    cadence_kind       TEXT NOT NULL,
+    cadence            TEXT NOT NULL,
+    definition         TEXT NOT NULL,
+    webhook_ref        TEXT NOT NULL,
+    state              TEXT NOT NULL,
+    next_run_ms        BIGINT NOT NULL,
+    next_alert_ms      BIGINT NOT NULL,
+    alert_lease_until  BIGINT NOT NULL,
+    last_error         TEXT NOT NULL,
+    created_ms         BIGINT NOT NULL
+);
+CREATE UNIQUE INDEX schedules_active_name ON schedules (workspace_id, name) WHERE state <> 'deleted';
+CREATE INDEX schedules_due ON schedules (state, next_run_ms);
+
+-- One task fire belongs to one run. The unique link makes retries after a crash idempotent.
+CREATE TABLE schedule_alerts (
+    id              TEXT PRIMARY KEY,
+    org_id          TEXT NOT NULL,
+    workspace_id    TEXT NOT NULL,
+    schedule_id     TEXT NOT NULL,
+    run_id          TEXT NOT NULL UNIQUE,
+    destination_ref TEXT NOT NULL,
+    state           TEXT NOT NULL,
+    attempts        BIGINT NOT NULL,
+    next_try_ms     BIGINT NOT NULL,
+    created_ms      BIGINT NOT NULL,
+    sent_ms         BIGINT NOT NULL,
+    last_error      TEXT NOT NULL
+);
+CREATE INDEX schedule_alerts_due ON schedule_alerts (state, next_try_ms);

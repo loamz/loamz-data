@@ -32,6 +32,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 sqlparser = { version = "0.63.0", features = ["visitor"] }
 apache-avro = "0.20"
+chrono = "0.4"
+cron = "0.15"
 
 [dev-dependencies]
 base64 = "0.22"

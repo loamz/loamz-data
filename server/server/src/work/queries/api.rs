@@ -18,6 +18,7 @@ fn ctx(c: &WsCtx) -> Ctx<'_> {
         workspace: &c.workspace,
         standing: c.standing,
         sides: &c.sides,
+        schedule_task_id: None,
     }
 }
 
