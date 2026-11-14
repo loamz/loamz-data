@@ -260,6 +260,14 @@ async fn customer_storage_secrets_are_write_only_and_rotation_is_fenced(s: Serve
         .await
         .unwrap();
     assert!(audits.iter().all(|line| !line.contains("CANARY_")));
+    assert!(vault.read_version(&vault_path, 5).await.is_ok());
+    assert_eq!(
+        s.delete(&format!("{base}/{credential}"), &ana())
+            .await
+            .status,
+        204
+    );
+    assert!(vault.read_version(&vault_path, 5).await.is_err());
 }
 both!(customer_storage_secrets_are_write_only_and_rotation_is_fenced);
 
@@ -2322,3 +2330,51 @@ async fn rustfs_live_storage_credential_check_sqlite() {
 async fn rustfs_live_storage_credential_check_postgres() {
     rustfs_live_storage_credential_check(server(fresh_db(true).await).await).await;
 }
+
+async fn location_creation_and_credential_deletion_do_not_orphan_a_location(s: Server) {
+    let ws = s.acme().await;
+    let base = format!("/api/v1/workspaces/{ws}/storage");
+    let credential = s.post(&format!("{base}/credentials"), &ana(), json!({
+        "name":"race-credential", "provider":"rustfs", "endpoint":"http://127.0.0.1:9000",
+        "secret":{"kind":"sts", "access_key_id":"race-key", "secret_access_key":"race-secret"}
+    })).await;
+    assert_eq!(credential.status, 201);
+    let id = credential.json()["id"].as_str().unwrap().to_owned();
+    let location_path = format!("{base}/locations");
+    let credential_path = format!("{base}/credentials/{id}");
+    let admin = ana();
+    let create = s.post(&location_path, &admin, json!({"name":"race-location", "credential_id":id, "bucket":"race-bucket", "prefix":"safe"}));
+    let delete = s.delete(&credential_path, &admin);
+    let (created, deleted) = tokio::join!(create, delete);
+    assert!(matches!(
+        (created.status, deleted.status),
+        (201, 409) | (404, 204)
+    ));
+    let orphans: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM storage_locations l LEFT JOIN storage_credentials c ON c.id = l.credential_id WHERE c.id IS NULL")
+        .fetch_one(s.app.db.pool()).await.unwrap();
+    assert_eq!(orphans, 0);
+}
+both!(location_creation_and_credential_deletion_do_not_orphan_a_location);
+
+async fn failed_vault_cleanup_after_deletion_is_reported_without_secrets(s: Server) {
+    let ws = s.acme().await;
+    let base = format!("/api/v1/workspaces/{ws}/storage/credentials");
+    let made = s.post(&base, &ana(), json!({"name":"delete-failure", "provider":"rustfs", "endpoint":"http://127.0.0.1:9000", "secret":{"kind":"sts", "access_key_id":"CANARY_DELETE_KEY", "secret_access_key":"CANARY_DELETE_SECRET"}})).await;
+    assert_eq!(made.status, 201);
+    let id = made.json()["id"].as_str().unwrap().to_owned();
+    s.vault.fail_destroy.store(true, Ordering::SeqCst);
+    let deleted = s.delete(&format!("{base}/{id}"), &ana()).await;
+    assert_eq!(deleted.status, 503);
+    assert!(!deleted.text().contains("CANARY"));
+    assert_eq!(s.get(&format!("{base}/{id}"), &ana()).await.status, 404);
+    assert!(
+        s.app
+            .vault
+            .as_ref()
+            .unwrap()
+            .read_version(&format!("customer-storage/{id}"), 1)
+            .await
+            .is_ok()
+    );
+}
+both!(failed_vault_cleanup_after_deletion_is_reported_without_secrets);

@@ -377,15 +377,19 @@ pub async fn delete_credential(
     id: &str,
 ) -> Result<()> {
     let org = manage_credential(app, identity, workspace, "delete a storage credential").await?;
-    let credential = store::get_credential(app.db.pool(), workspace, id)
+    let vault = app
+        .vault
+        .as_deref()
+        .ok_or_else(|| Error::Unavailable("vault unavailable".into()))?;
+    let mut uow = Uow::begin(app).await?;
+    let credential = store::get_credential(&mut *uow.tx, workspace, id)
         .await?
         .ok_or_else(|| Error::NotFound("not found".into()))?;
-    if store::locations_using(app.db.pool(), &credential.id).await? > 0 {
+    if store::locations_using(&mut *uow.tx, &credential.id).await? > 0 {
         return Err(Error::Conflict(
             "a location still uses this credential: delete it first".into(),
         ));
     }
-    let mut uow = Uow::begin(app).await?;
     if store::delete_credential(&mut uow.tx, workspace, id).await? == 0 {
         return Err(Error::NotFound("not found".into()));
     }
@@ -397,7 +401,15 @@ pub async fn delete_credential(
         "ok",
     )
     .await?;
-    uow.commit().await
+    uow.commit().await?;
+    vault
+        .destroy_path(&credential.secret_path)
+        .await
+        .map_err(|_| {
+            Error::Unavailable(
+                "credential deleted, but vault cleanup failed; contact an administrator".into(),
+            )
+        })
 }
 
 /// What a person gives to make a location.
@@ -464,6 +476,12 @@ pub async fn create_location(
         });
     }
     let mut uow = Uow::begin(app).await?;
+    if store::get_credential(&mut *uow.tx, workspace, &l.credential_id)
+        .await?
+        .is_none()
+    {
+        return Err(Error::NotFound("not found".into()));
+    }
     if store::location_name_taken(&mut *uow.tx, workspace, &l.name).await? {
         return Err(Error::Conflict(format!("{} already exists here", l.name)));
     }

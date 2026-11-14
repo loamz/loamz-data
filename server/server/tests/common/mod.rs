@@ -272,6 +272,13 @@ impl SecretStore for FakeVault {
         }
         Ok(())
     }
+    async fn destroy_path(&self, path: &str) -> Result<(), String> {
+        if self.fail_destroy.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("CANARY_UPSTREAM_SECRET".into());
+        }
+        self.versions.lock().unwrap().remove(path);
+        Ok(())
+    }
     async fn get(&self, r: &SecretRef) -> Result<String, String> {
         if r.key == "hook" {
             return Ok("https://example.com/hook".into());

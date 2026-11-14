@@ -249,11 +249,6 @@ async fn openbao_live_versioned_custody() {
         "second-canary"
     );
     vault.destroy_versions(&path, &[second]).await.unwrap();
-    let response = reqwest::Client::new()
-        .delete(format!("{addr}/v1/secret/metadata/{path}"))
-        .header("X-Vault-Token", "loamz-dev-only")
-        .send()
-        .await
-        .unwrap();
-    assert!(response.status().is_success());
+    vault.destroy_path(&path).await.unwrap();
+    assert!(vault.read_version(&path, second).await.is_err());
 }

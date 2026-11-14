@@ -71,6 +71,11 @@ pub trait SecretStore: Send + Sync {
     async fn destroy_versions(&self, _path: &str, _versions: &[i64]) -> Result<(), String> {
         Err("versioned secrets unavailable".into())
     }
+
+    /// Permanently delete the generated path and all of its versions.
+    async fn destroy_path(&self, _path: &str) -> Result<(), String> {
+        Err("versioned secrets unavailable".into())
+    }
 }
 
 fn versioned_data(body: &Value, expected: i64) -> Result<Value, String> {
@@ -233,6 +238,24 @@ impl SecretStore for OpenBao {
             Ok(())
         } else {
             Err("vault destroy failed".into())
+        }
+    }
+
+    async fn destroy_path(&self, path: &str) -> Result<(), String> {
+        let response = self
+            .http
+            .delete(format!("{}/v1/{}/metadata/{}", self.addr, self.mount, path))
+            .header(
+                "X-Vault-Token",
+                vault_token_header(&self.bearer().await.map_err(|_| "vault unavailable")?)?,
+            )
+            .send()
+            .await
+            .map_err(|_| "vault unavailable")?;
+        if response.status().is_success() || response.status().as_u16() == 404 {
+            Ok(())
+        } else {
+            Err("vault delete failed".into())
         }
     }
 
