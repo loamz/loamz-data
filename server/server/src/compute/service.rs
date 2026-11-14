@@ -447,6 +447,10 @@ pub struct JobRequest {
     /// (`loamz.path(name, file)` is an `s3://` address Polars, `DuckDB` and pyarrow read by range, on demand). Needs `READ` on each.
     #[serde(default)]
     pub reads: Vec<String>,
+    /// Commit what the script leaves in `/workspace/out` to a person's volume, under `threads/<thread>/runs/<run id>/`, each file with
+    /// "create only" so nothing is overwritten. Needs `WRITE` on the volume. One such job runs per thread at a time. The run's result
+    /// lists the files that were committed and the ones that were not.
+    pub commit: Option<SaveTo>,
     /// The volume that receives what the script leaves in `/workspace`, under `runs/<run id>/`. Empty: the job leaves no files.
     #[serde(default)]
     pub output: String,
@@ -633,6 +637,7 @@ fn new_run(ctx: &Ctx<'_>, kind: &str, title: &str, target: &Target, spec: &Value
         created_ms: now_ms(),
         started_ms: 0,
         finished_ms: 0,
+        thread_key: String::new(),
     }
 }
 
@@ -684,7 +689,24 @@ async fn queue(app: &App, ctx: &Ctx<'_>, run: &Run, action: &str) -> Result<()> 
             return Err(Error::Conflict("the schedule is no longer active".into()));
         }
     }
-    store::insert_run(&mut *uow.tx, run).await?;
+    if let Err(e) = store::insert_run(&mut *uow.tx, run).await {
+        return Err(match e {
+            Error::Internal(ref d)
+                if d.contains("thread_key") || d.contains("runs_thread_active") =>
+            {
+                let holder =
+                    store::run_of_thread(app.db.pool(), &run.workspace_id, &run.thread_key)
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default();
+                Error::Conflict(format!(
+                    "this thread already has a job running ({holder}): wait for it to finish or cancel it"
+                ))
+            }
+            other => other,
+        });
+    }
     if let Some(task_id) = ctx.schedule_task_id {
         sqlx::query("UPDATE runs SET schedule_task_id = $2 WHERE id = $1")
             .bind(&run.id)
@@ -803,12 +825,18 @@ async fn checked_save(app: &App, ctx: &Ctx<'_>, to: &SaveTo, personal: bool) -> 
             "personal data can only be saved in a personal volume".into(),
         ));
     }
+    if store::thread_deleting(app.db.pool(), &ctx.workspace.id, &entry.id, &to.thread).await? {
+        return Err(Error::Conflict(
+            "this thread's files are being deleted: try again in a few minutes".into(),
+        ));
+    }
     let spot = app
         .places
         .spot(&entry.folder)
         .await
         .map_err(|e| Error::Unavailable(e.to_string()))?;
-    if spot.issuer.is_none() || spot.place.is_none() {
+    // (Where the store is comes with the credential when the machine is given the work.)
+    if spot.issuer.is_none() {
         return Err(Error::Invalid(
             "this volume's storage cannot take a saved result".into(),
         ));
@@ -1130,6 +1158,7 @@ pub async fn prepare_maintenance(
         script,
         inputs: Vec::new(),
         reads: Vec::new(),
+        commit: None,
         output: String::new(),
         fetch: None,
         table_writes: vec![target],
@@ -1278,6 +1307,7 @@ pub async fn submit_import(app: &App, ctx: &Ctx<'_>, req: ImportRequest) -> Resu
             Source::Address(_) => vec![],
         },
         reads: Vec::new(),
+        commit: None,
         output: String::new(),
         table_writes: vec![req.target.clone()],
         fetch: match &source {
@@ -1425,7 +1455,11 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
         output_id = out.id;
     }
     let table_writes = checked_table_writes(app, ctx, &req.table_writes).await?;
-    if req.output.is_empty() && table_writes.is_empty() {
+    let commit = match &req.commit {
+        Some(to) => checked_save(app, ctx, to, has_personal).await?,
+        None => Value::Null,
+    };
+    if req.output.is_empty() && table_writes.is_empty() && commit.is_null() {
         return Err(Error::Invalid(
             "a job needs somewhere to leave its results: an output volume or a table to write"
                 .into(),
@@ -1453,11 +1487,19 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
     let limits = limits_for(&target, req.memory_mb, req.cpu_millis, req.timeout_s, 600)
         .map_err(Error::Invalid)?;
     let title = job_title(&req.title, &req.script);
-    let mut spec = json!({"as": As::of(ctx.identity), "script": req.script, "inputs": inputs, "reads": read_specs, "output": output_id, "table_writes": table_writes, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
+    let mut spec = json!({"as": As::of(ctx.identity), "script": req.script, "inputs": inputs, "reads": read_specs, "output": output_id, "commit": commit, "table_writes": table_writes, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
     if let Some(url) = &req.fetch {
         spec["fetch"] = json!({"url": url});
     }
-    let run = new_run(ctx, "job", &title, &target, &spec);
+    let mut run = new_run(ctx, "job", &title, &target, &spec);
+    // A job that commits files holds its thread: the database lets only one be queued or running at a time.
+    if !commit.is_null() {
+        run.thread_key = format!(
+            "{}:{}",
+            commit["volume"].as_str().unwrap_or_default(),
+            commit["thread"].as_str().unwrap_or_default()
+        );
+    }
     queue(app, ctx, &run, "job.submit").await?;
     Ok(run)
 }
@@ -1849,6 +1891,23 @@ async fn storage_for(
     Ok(Some(out))
 }
 
+/// A write credential for one folder of one store, with where that store is: what a machine uses to put one run's files there. The
+/// folders it is good for are the whole folder (the machine keeps to its own key or prefix). None: this storage cannot hand out
+/// credentials.
+async fn write_credential(app: &App, folder: &str, ttl: Duration) -> Result<Option<Value>> {
+    if folder.is_empty() || app.places.spot(folder).await?.issuer.is_none() {
+        return Ok(None);
+    }
+    let v = tables::vend(app, &[folder], true, ttl).await?;
+    let place = v
+        .place
+        .ok_or_else(|| Error::Unavailable("this storage is not a bucket".into()))?;
+    Ok(Some(json!({
+        "endpoint": place.endpoint, "region": place.region, "bucket": place.bucket,
+        "key_id": v.credentials.key_id, "secret": v.credentials.secret, "session_token": v.credentials.session_token,
+    })))
+}
+
 /// Where a statement that asked for its whole result may put it, and the credential for that one key, apart from the tables' own:
 /// beside the first table (a file for a signed address, kept a day), or in a person's volume (Parquet, kept until they delete it).
 /// None: this storage cannot hand out credentials.
@@ -1870,21 +1929,30 @@ async fn result_grant(
             result_name(run_id),
         )
     };
-    if folder.is_empty() {
+    let Some(mut grant) = write_credential(app, folder, ttl).await? else {
         return Ok(None);
-    }
-    if app.places.spot(folder).await?.issuer.is_none() {
+    };
+    grant["key"] = json!(format!("{}/{rel}", tables::key_of(app, folder).await?));
+    Ok(Some(grant))
+}
+
+/// Where a job may commit its outputs: a folder made for this one run in the thread, and the credential for the volume's store.
+async fn commit_grant(
+    app: &App,
+    spec: &Value,
+    run_id: &str,
+    ttl: Duration,
+) -> Result<Option<Value>> {
+    let commit = &spec["commit"];
+    let folder = commit["volume_folder"].as_str().unwrap_or_default();
+    let thread = commit["thread"].as_str().unwrap_or_default();
+    let Some(mut grant) = write_credential(app, folder, ttl).await? else {
         return Ok(None);
-    }
-    let v = tables::vend(app, &[folder], true, ttl).await?;
-    let place = v
-        .place
-        .ok_or_else(|| Error::Unavailable("this storage is not a bucket".into()))?;
-    Ok(Some(json!({
-        "endpoint": place.endpoint, "region": place.region, "bucket": place.bucket,
-        "key_id": v.credentials.key_id, "secret": v.credentials.secret, "session_token": v.credentials.session_token,
-        "key": format!("{}/{rel}", tables::key_of(app, folder).await?),
-    })))
+    };
+    let path = format!("threads/{thread}/runs/{run_id}");
+    grant["path_prefix"] = json!(path);
+    grant["key_prefix"] = json!(format!("{}/{path}", tables::key_of(app, folder).await?));
+    Ok(Some(grant))
 }
 
 /// Everything a machine needs from storage for one run: its tables, and where its whole result goes if it asked for one.
@@ -1897,11 +1965,19 @@ async fn lease_storage(
     timeout_s: i64,
 ) -> Result<Option<Value>> {
     let reading = spec["reads"].as_array().is_some_and(|a| !a.is_empty());
+    let committing = spec["commit"].is_object();
     let mut storage = if ids.is_empty() && !writing && !reading {
         None
     } else {
         storage_for(app, &run.org_id, ids, spec, timeout_s).await?
     };
+    if committing {
+        let ttl = Duration::from_secs(u64::try_from(timeout_s).unwrap_or(120) + 300);
+        let grant = commit_grant(app, spec, &run.id, ttl)
+            .await?
+            .ok_or_else(|| Error::Invalid("this storage cannot take a job's outputs".into()))?;
+        storage.get_or_insert_with(|| json!({}))["commit"] = grant;
+    }
     if spec["export"] == true {
         let ttl = Duration::from_secs(u64::try_from(timeout_s).unwrap_or(120) + 300);
         let grant = result_grant(app, spec, &run.id, ttl)
@@ -2220,6 +2296,7 @@ pub async fn lease(app: &App, target: &Target) -> Result<Option<Lease>> {
     let storage = if ids.is_empty()
         && !writing
         && spec["export"] != true
+        && !spec["commit"].is_object()
         && spec["reads"].as_array().is_none_or(Vec::is_empty)
     {
         None
@@ -2437,6 +2514,11 @@ pub async fn work_forever(app: crate::kernel::state::Shared) {
         {
             tracing::error!(error = %e, "result files could not be removed");
         }
+        if sweeps.is_multiple_of(12)
+            && let Err(e) = finish_thread_deletions(&app, now_ms()).await
+        {
+            tracing::error!(error = %e, "deleted threads could not be finished");
+        }
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
 }
@@ -2486,6 +2568,105 @@ pub async fn expire_results(app: &App, now: i64) -> Result<()> {
             }
             Err(e) => tracing::warn!(run = id, error = %e, "a result file could not be removed"),
         }
+    }
+    Ok(())
+}
+
+/// How long a thread stays closed to new files after it is deleted: a machine that was running then may still hold a credential for a
+/// few minutes, so the files are deleted once more when the time is up.
+const THREAD_CLOSED_MS: i64 = 10 * 60 * 1000;
+
+/// Removes the files a thread has in a volume (`threads/<thread>/`), whatever is there.
+async fn remove_thread_files(app: &App, folder: &str, thread: &str) -> Result<()> {
+    let prefix = format!("threads/{thread}/");
+    let listed = app
+        .places
+        .list(folder)
+        .await
+        .map_err(|e| Error::Internal(e.to_string()))?;
+    for entry in listed.into_iter().filter(|e| e.path.starts_with(&prefix)) {
+        match app.places.delete(folder, &entry.path).await {
+            Ok(()) | Err(loamz_lake::files::FileError::NotFound) => {}
+            Err(e) => return Err(Error::Internal(e.to_string())),
+        }
+    }
+    Ok(())
+}
+
+/// Deletes a thread's files in a volume, in an order that cannot leave a runner writing after it: the thread is closed to new work
+/// first, the job that holds it is cancelled, then the files go. It stays closed for ten minutes, and the files are deleted once more
+/// then. Needs `WRITE` on the volume.
+///
+/// # Errors
+/// Not allowed, not a volume, or the storage could not be read.
+pub async fn delete_thread(app: &App, ctx: &Ctx<'_>, volume: &str, thread: &str) -> Result<()> {
+    if thread.is_empty()
+        || thread.len() > 64
+        || !thread
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+    {
+        return Err(Error::Invalid(
+            "a thread is letters, digits, dashes and underscores, up to 64".into(),
+        ));
+    }
+    let org = &ctx.workspace.org_id;
+    let (entry, target) = catalogs::target_in(app, &ctx.workspace.id, org, volume).await?;
+    if entry.kind != Kind::Volume {
+        return Err(Error::Invalid("a thread is in a volume".into()));
+    }
+    iam::require(
+        app,
+        ctx.identity,
+        org,
+        ctx.sides,
+        Privilege::WriteVolume,
+        &target,
+    )
+    .await?;
+    // 1. Close the thread: nothing new may be saved to it or committed.
+    store::begin_thread_deletion(
+        app.db.pool(),
+        &ctx.workspace.id,
+        org,
+        &entry.id,
+        thread,
+        now_ms() + THREAD_CLOSED_MS,
+    )
+    .await?;
+    // 2. Stop the job that holds it. It keeps whatever credential it had until that expires, which is why step 4 exists.
+    let key = format!("{}:{thread}", entry.id);
+    if let Some(run) = store::run_of_thread(app.db.pool(), &ctx.workspace.id, &key).await? {
+        let _ = cancel(app, ctx, &run).await;
+    }
+    // 3. Delete the files.
+    remove_thread_files(app, &entry.folder, thread).await?;
+    crate::governance::audit::service::record(
+        app,
+        org,
+        &Who::of(ctx.identity),
+        "thread.delete",
+        &format!("volume {} thread {thread}", entry.id),
+        "ok",
+    )
+    .await
+}
+
+/// Finishes threads whose closed time is up: their files are deleted once more (anything a late machine wrote is gone) and the
+/// thread may be used again.
+///
+/// # Errors
+/// The database could not be reached.
+pub async fn finish_thread_deletions(app: &App, now: i64) -> Result<()> {
+    for (workspace, org, volume, thread) in store::thread_deletions_due(app.db.pool(), now).await? {
+        // A volume that is gone has nothing left to delete.
+        if let Ok((entry, _)) = catalogs::target(app, &org, &volume).await
+            && let Err(e) = remove_thread_files(app, &entry.folder, &thread).await
+        {
+            tracing::warn!(volume, thread, error = ?e, "a thread's files could not be deleted");
+            continue;
+        }
+        store::finish_thread_deletion(app.db.pool(), &workspace, &volume, &thread).await?;
     }
     Ok(())
 }

@@ -86,6 +86,8 @@ pub struct Run {
     pub created_ms: i64,
     pub started_ms: i64,
     pub finished_ms: i64,
+    /// `<volume id>:<thread>` for a job that commits files to a thread, held while it is queued or running; empty otherwise.
+    pub thread_key: String,
 }
 
 /// What a list of runs is narrowed to. Every field left empty narrows nothing.

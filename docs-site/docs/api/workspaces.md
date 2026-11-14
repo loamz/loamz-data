@@ -1695,6 +1695,31 @@ When input access cannot be verified, result_access is restricted and results, l
 
 ---
 
+## `DELETE` /api/v1/workspaces/{ws}/volumes/{id}/threads/{thread}
+
+**Delete a thread's files in a volume (`threads/<thread>/`).**
+
+Needs WRITE on the volume. In this order: the thread is closed to new saved results and committed outputs, the job that holds it is cancelled, and its files are deleted. It stays closed for ten minutes (409 for new work) and its files are deleted once more then, so nothing a late machine wrote remains.
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+| `id` | `path` | Yes | `string` |  |
+| `thread` | `path` | Yes | `string` |  |
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `204` | Deleted |
+| `400` | An RFC 9457 problem document. |
+| `401` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+
+---
+
 ## `GET` /api/v1/workspaces/{ws}/runs/{id}/result
 
 **The whole result of a statement that was run with `export`, as a short-lived signed address.**

@@ -2585,3 +2585,102 @@ async fn a_job_may_read_a_volume_in_place_only_with_read_on_it(s: Server) {
     }
 }
 both!(a_job_may_read_a_volume_in_place_only_with_read_on_it);
+
+async fn threads_hold_one_job_at_a_time_and_a_deleted_thread_is_closed(
+    s: Server,
+    concurrent: bool,
+) {
+    let l = lab(&s).await;
+    let _ = attach(&s).await;
+    s.assign(&l.ws, &[&bob()]).await;
+    let runs = format!("/api/v1/workspaces/{}/runs", l.ws);
+    let job = |thread: &str| json!({"script": "print(1)", "commit": {"volume": l.out, "thread": thread}, "timeout_s": 30});
+    // One job at a time per thread, enforced by the database; another thread is free.
+    let first = s.post(&runs, &ana(), job("t1")).await;
+    assert_eq!(first.status, 202, "{}", first.text());
+    let second = s.post(&runs, &ana(), job("t1")).await;
+    assert_eq!(second.status, 409, "{}", second.text());
+    assert!(
+        second.text().contains("already has a job"),
+        "{}",
+        second.text()
+    );
+    assert_eq!(s.post(&runs, &ana(), job("t2")).await.status, 202);
+    // Two sent at the same moment: one wins. (SQLite has one writer, so this is only tried on Postgres.)
+    if concurrent {
+        let who = ana();
+        let (one, two) = (job("t3"), job("t3"));
+        let (a, b) = tokio::join!(s.post(&runs, &who, one), s.post(&runs, &who, two));
+        let mut seen = [a.status, b.status];
+        seen.sort_unstable();
+        assert_eq!(seen, [202, 409], "{} / {}", a.text(), b.text());
+    }
+    // When the job ends, the thread is free again.
+    let id = first.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        s.post(&format!("{runs}/{id}/cancel"), &ana(), json!({}))
+            .await
+            .status,
+        202
+    );
+    assert_eq!(s.post(&runs, &ana(), job("t1")).await.status, 202);
+    // A thread name is plain, and it needs WRITE on the volume.
+    assert_eq!(s.post(&runs, &ana(), job("a/b")).await.status, 400);
+    let refused = s.post(&runs, &bob(), job("t9")).await.status;
+    assert!(
+        [403, 404].contains(&refused),
+        "no right to write there: {refused}"
+    );
+
+    // Deleting a thread closes it, cancels its job, and needs WRITE on the volume.
+    let gone = |thread: &str| {
+        format!(
+            "/api/v1/workspaces/{}/volumes/{}/threads/{thread}",
+            l.ws, l.out
+        )
+    };
+    let refused = s.delete(&gone("t2"), &bob()).await.status;
+    assert!(
+        [403, 404].contains(&refused),
+        "no right to write there: {refused}"
+    );
+    assert_eq!(s.delete(&gone("a.b"), &ana()).await.status, 400);
+    assert_eq!(s.delete(&gone("t2"), &ana()).await.status, 204);
+    let closed = s.post(&runs, &ana(), job("t2")).await;
+    assert_eq!(closed.status, 409, "{}", closed.text());
+    assert!(closed.text().contains("being deleted"), "{}", closed.text());
+    let saved = s
+        .post(
+            &format!("/api/v1/workspaces/{}/sql/statements", l.ws),
+            &ana(),
+            json!({"sql": "SELECT * FROM sales.raw.orders", "save": {"volume": l.out, "thread": "t2"}, "wait_s": 0}),
+        )
+        .await;
+    assert_eq!(saved.status, 409, "{}", saved.text());
+    // Its time is up: the files are deleted once more and the thread opens again.
+    compute::finish_thread_deletions(&s.app, now_ms() + 11 * 60 * 1000)
+        .await
+        .unwrap();
+    assert_eq!(s.post(&runs, &ana(), job("t2")).await.status, 202);
+}
+
+#[tokio::test]
+async fn threads_hold_one_job_at_a_time_and_a_deleted_thread_is_closed_sqlite() {
+    let issuer = std::sync::Arc::new(common::CountingIssuer::default());
+    threads_hold_one_job_at_a_time_and_a_deleted_thread_is_closed(
+        common::server_with_issuer(fresh_db(false).await, issuer).await,
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "needs LOAMZ_TEST_POSTGRES_URL"]
+async fn threads_hold_one_job_at_a_time_and_a_deleted_thread_is_closed_postgres() {
+    let issuer = std::sync::Arc::new(common::CountingIssuer::default());
+    threads_hold_one_job_at_a_time_and_a_deleted_thread_is_closed(
+        common::server_with_issuer(fresh_db(true).await, issuer).await,
+        true,
+    )
+    .await;
+}

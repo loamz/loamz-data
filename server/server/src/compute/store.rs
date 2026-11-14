@@ -6,7 +6,7 @@ use super::model::{Run, RunFilter, Target};
 use crate::kernel::error::{Error, Result};
 
 const TARGET: &str = "id, org_id, workspace_id, name, kind, endpoint, max_memory_mb, max_cpu_millis, created_by, created_ms, last_seen_ms";
-const RUN: &str = "id, org_id, workspace_id, kind, requested_by, on_behalf_of, target_id, state, title, spec, result, stdout, stderr, exit_code, error, cancel, lease_until, created_ms, started_ms, finished_ms";
+const RUN: &str = "id, org_id, workspace_id, kind, requested_by, on_behalf_of, target_id, state, title, spec, result, stdout, stderr, exit_code, error, cancel, lease_until, created_ms, started_ms, finished_ms, thread_key";
 
 fn target(r: &sqlx::any::AnyRow) -> std::result::Result<Target, sqlx::Error> {
     Ok(Target {
@@ -42,6 +42,7 @@ fn run(r: &sqlx::any::AnyRow) -> std::result::Result<Run, sqlx::Error> {
         exit_code: r.try_get("exit_code")?,
         error: r.try_get("error")?,
         cancel: r.try_get::<i64, _>("cancel")? != 0,
+        thread_key: r.try_get("thread_key")?,
         lease_until: r.try_get("lease_until")?,
         created_ms: r.try_get("created_ms")?,
         started_ms: r.try_get("started_ms")?,
@@ -243,7 +244,7 @@ pub async fn set_workspace_quota(
 }
 
 pub async fn insert_run<'e, E: Executor<'e, Database = Any>>(e: E, r: &Run) -> Result<()> {
-    sqlx::query(&format!("INSERT INTO runs ({RUN}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)"))
+    sqlx::query(&format!("INSERT INTO runs ({RUN}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)"))
         .bind(&r.id)
         .bind(&r.org_id)
         .bind(&r.workspace_id)
@@ -264,6 +265,7 @@ pub async fn insert_run<'e, E: Executor<'e, Database = Any>>(e: E, r: &Run) -> R
         .bind(r.created_ms)
         .bind(r.started_ms)
         .bind(r.finished_ms)
+        .bind(&r.thread_key)
         .execute(e)
         .await?;
     Ok(())
@@ -402,6 +404,107 @@ pub async fn heartbeat<'e, E: Executor<'e, Database = Any>>(
     let r = sqlx::query("UPDATE runs SET lease_until = $3 WHERE id = $1 AND target_id = $2 AND state = 'running' RETURNING cancel").bind(id).bind(target).bind(until).fetch_optional(e).await?;
     Ok(match r {
         Some(row) => Some(row.try_get::<i64, _>("cancel")? != 0),
+        None => None,
+    })
+}
+
+/// Whether the thread's files are being deleted: nothing may be written to it until the deletion is finished.
+pub async fn thread_deleting<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    workspace: &str,
+    volume: &str,
+    thread: &str,
+) -> Result<bool> {
+    Ok(sqlx::query(
+        "SELECT 1 FROM thread_deletions WHERE workspace_id = $1 AND volume_id = $2 AND thread = $3",
+    )
+    .bind(workspace)
+    .bind(volume)
+    .bind(thread)
+    .fetch_optional(e)
+    .await?
+    .is_some())
+}
+
+/// Marks the thread as being deleted until `until_ms` (later, if it already was).
+pub async fn begin_thread_deletion<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    workspace: &str,
+    org: &str,
+    volume: &str,
+    thread: &str,
+    until_ms: i64,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO thread_deletions (workspace_id, org_id, volume_id, thread, until_ms) VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT (workspace_id, volume_id, thread) DO UPDATE SET until_ms = excluded.until_ms",
+    )
+    .bind(workspace)
+    .bind(org)
+    .bind(volume)
+    .bind(thread)
+    .bind(until_ms)
+    .execute(e)
+    .await?;
+    Ok(())
+}
+
+/// Threads whose deletion window has ended: workspace, organization, volume and thread.
+pub async fn thread_deletions_due<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    now: i64,
+) -> Result<Vec<(String, String, String, String)>> {
+    let rows = sqlx::query(
+        "SELECT workspace_id, org_id, volume_id, thread FROM thread_deletions WHERE until_ms <= $1 LIMIT 50",
+    )
+    .bind(now)
+    .fetch_all(e)
+    .await?;
+    rows.iter()
+        .map(|r| {
+            Ok((
+                r.try_get::<String, _>("workspace_id")?,
+                r.try_get::<String, _>("org_id")?,
+                r.try_get::<String, _>("volume_id")?,
+                r.try_get::<String, _>("thread")?,
+            ))
+        })
+        .collect()
+}
+
+/// The deletion is over: the thread may be written to again.
+pub async fn finish_thread_deletion<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    workspace: &str,
+    volume: &str,
+    thread: &str,
+) -> Result<()> {
+    sqlx::query(
+        "DELETE FROM thread_deletions WHERE workspace_id = $1 AND volume_id = $2 AND thread = $3",
+    )
+    .bind(workspace)
+    .bind(volume)
+    .bind(thread)
+    .execute(e)
+    .await?;
+    Ok(())
+}
+
+/// The run that holds a thread now, if one does.
+pub async fn run_of_thread<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    workspace: &str,
+    thread_key: &str,
+) -> Result<Option<String>> {
+    let r = sqlx::query(
+        "SELECT id FROM runs WHERE workspace_id = $1 AND thread_key = $2 AND state IN ('queued', 'running')",
+    )
+    .bind(workspace)
+    .bind(thread_key)
+    .fetch_optional(e)
+    .await?;
+    Ok(match r {
+        Some(row) => Some(row.try_get::<String, _>("id")?),
         None => None,
     })
 }

@@ -13,6 +13,7 @@
 pub mod agent;
 pub mod broker;
 pub mod check;
+pub mod commit;
 pub mod door;
 pub mod exec;
 pub mod fetch;

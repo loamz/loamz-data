@@ -244,6 +244,41 @@ impl Api {
     }
 }
 
+/// Commits what the job left in `/workspace/out` to the person's volume, and puts what happened in the report: which files are in the
+/// volume, and which are not and why. A run is only succeeded if every file made it; the ones that did stay either way.
+async fn commit_outputs(lease: &Lease, workspace: &Path, mut report: Report) -> Report {
+    let outcome = match lease.storage.as_ref().map(|s| &s["commit"]) {
+        Some(grant) if grant.is_object() => {
+            crate::commit::commit(grant, &workspace.join("out")).await
+        }
+        _ => crate::commit::Outcome {
+            committed: Vec::new(),
+            failed: vec!["the lease has no way to store outputs".into()],
+        },
+    };
+    report.result = serde_json::json!({
+        "volume": lease.run.spec["commit"]["volume"],
+        "committed": outcome.committed,
+        "failed": outcome.failed,
+    })
+    .to_string();
+    if !outcome.failed.is_empty() {
+        "failed".clone_into(&mut report.state);
+        report.error = format!(
+            "{} file(s) were not committed: {}",
+            outcome.failed.len(),
+            outcome
+                .failed
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
+    report
+}
+
 /// Puts a statement's whole result where the data is: in the same bucket, in the one file the run's own credential allows. It is
 /// streamed from disk; the Data server never carries it.
 pub async fn upload_result(storage: &Value, file: &Path) -> Result<(), String> {
@@ -588,7 +623,10 @@ async fn go(
     if let Some(doors) = &doors {
         doors.close().await;
     }
-    let report = report?;
+    let mut report = report?;
+    if report.state == "running" && lease.run.spec["commit"].is_object() {
+        report = commit_outputs(lease, &workspace, report).await;
+    }
     // Only a run that ended well has anything to collect.
     if report.state == "running" {
         collect(lease, &api, &workspace, report).await
@@ -672,23 +710,25 @@ async fn stage(
             .map_err(io)?;
         mounts.push(("doors".to_owned(), dir.join("doors")));
     }
-    if reading {
-        let storage = lease
-            .storage
-            .as_ref()
-            .ok_or("the lease has no storage access")?;
+    // `import loamz` is there for a job that reads volumes in place, and for one that commits its outputs (`loamz.out`).
+    if reading || spec["commit"].is_object() {
         tokio::fs::create_dir_all(code.join("loamz"))
             .await
             .map_err(io)?;
         tokio::fs::write(code.join("loamz").join("__init__.py"), LOAMZ_PKG)
             .await
             .map_err(io)?;
+        let storage = lease.storage.as_ref();
         let config = serde_json::json!({
-            "bucket": storage["bucket"], "region": storage["region"], "volumes": storage["volumes"],
+            "bucket": storage.map(|s| s["bucket"].clone()),
+            "region": storage.map(|s| s["region"].clone()),
+            "volumes": storage.map_or_else(|| serde_json::json!({}), |s| s["volumes"].clone()),
         });
         tokio::fs::write(code.join("loamz.json"), config.to_string())
             .await
             .map_err(io)?;
+    }
+    if reading {
         mounts.push(("broker".to_owned(), dir.join("broker")));
     }
     Ok(Staged {
@@ -716,6 +756,10 @@ async fn sandboxed(
         User::Nobody
     };
     prepare_workspace(workspace, user).map_err(io)?;
+    // A job that commits its outputs leaves them in /workspace/out; anything else in /workspace is discarded with the sandbox.
+    if lease.run.spec["commit"].is_object() {
+        prepare_workspace(&workspace.join("out"), user).map_err(io)?;
+    }
     let sandbox = Sandbox {
         rootfs: machine.rootfs.clone(),
         inputs: staged.mounts,

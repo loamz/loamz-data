@@ -1947,6 +1947,30 @@ paths:
           $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/volumes/{id}/threads/{thread}:
+    delete:
+      summary: Delete a thread's files in a volume (`threads/<thread>/`).
+      description: >-
+        Needs WRITE on the volume. In this order: the thread is closed to new saved results and committed outputs, the job that holds it
+        is cancelled, and its files are deleted. It stays closed for ten minutes (409 for new work) and its files are deleted once more
+        then, so nothing a late machine wrote remains.
+      parameters:
+      - *id007
+      - *id008
+      - name: thread
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
   /api/v1/workspaces/{ws}/runs/{id}/result:
     get:
       summary: The whole result of a statement that was run with `export`, as a short-lived signed address.
@@ -2386,6 +2410,21 @@ components:
             `loamz.path(volume name, file)` (an `s3://` address that Polars, DuckDB and pyarrow read by byte range through the
             machine's storage broker, read-only, only these volumes), `loamz.duckdb()`, `loamz.fs()` and
             `loamz.fetch(volume name, file)` (one file copied to /tmp). Needs READ on each volume.
+        commit:
+          type: object
+          required: [volume, thread]
+          properties:
+            volume:
+              type: string
+              description: The id of a volume the person may write.
+            thread:
+              type: string
+              description: Letters, digits, dashes and underscores, up to 64.
+          description: >-
+            Commit what the script leaves in /workspace/out (`loamz.out(name)`) to the volume, under `threads/<thread>/runs/<run id>/`.
+            Each file is created and never overwritten; folders up to 4 deep, plain names, at most 200 files and 1 GiB, links and other
+            non-regular files are refused. Not a transaction: the run's result lists the files that were committed and the ones that were
+            not, and the run fails if any were not. One such job runs per thread at a time (409 for a second). Needs WRITE on the volume.
         output:
           type: string
           description: 'A volume id: what the script leaves in /workspace is saved there under runs/<run id>/. Leave it out when the job only writes tables.'

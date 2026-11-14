@@ -357,6 +357,19 @@ async fn get_result(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> 
     })))
 }
 
+/// Deletes a thread's files in a volume (`threads/<thread>/`): the thread is closed to new work, its running job is cancelled, then its
+/// files are deleted.
+async fn delete_thread(State(app): State<Shared>, c: WsCtx) -> Result<StatusCode> {
+    service::delete_thread(
+        &app,
+        &ctx(&c),
+        &param(&c.params, "id")?,
+        &param(&c.params, "thread")?,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn cancel_run(State(app): State<Shared>, c: WsCtx) -> Result<(StatusCode, Json<Value>)> {
     let run = service::cancel(&app, &ctx(&c), &param(&c.params, "id")?).await?;
     Ok((StatusCode::ACCEPTED, Json(run_view(&run, false))))
@@ -555,6 +568,10 @@ pub fn routes() -> Routes {
         .get("/api/v1/workspaces/{ws}/runs", list_runs)
         .get("/api/v1/workspaces/{ws}/runs/{id}", get_run)
         .get("/api/v1/workspaces/{ws}/runs/{id}/result", get_result)
+        .delete(
+            "/api/v1/workspaces/{ws}/volumes/{id}/threads/{thread}",
+            delete_thread,
+        )
         .post("/api/v1/workspaces/{ws}/runs/{id}/cancel", cancel_run)
         .post("/api/v1/workspaces/{ws}/compute/targets", attach)
         .post(

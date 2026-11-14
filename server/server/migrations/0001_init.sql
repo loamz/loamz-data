@@ -188,7 +188,20 @@ CREATE TABLE runs (
     result_bytes  BIGINT NOT NULL DEFAULT 0,
     result_folder TEXT NOT NULL DEFAULT '',
     -- a key a person may send with a request so that sending it again returns this run instead of making another
-    idempotency_key TEXT NOT NULL DEFAULT ''
+    idempotency_key TEXT NOT NULL DEFAULT '',
+    -- a job that commits files to a person's volume holds its thread (`<volume id>:<thread>`) while it is queued or running
+    thread_key TEXT NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX runs_thread_active ON runs (workspace_id, thread_key) WHERE thread_key <> '' AND state IN ('queued', 'running');
+-- A thread whose files are being deleted: no new result or output may be written to it until `until_ms`, when the sweep deletes its files
+-- once more (a machine that was running when it was deleted may still hold a credential for a few minutes) and removes this row.
+CREATE TABLE thread_deletions (
+    workspace_id TEXT NOT NULL,
+    org_id       TEXT NOT NULL,
+    volume_id    TEXT NOT NULL,
+    thread       TEXT NOT NULL,
+    until_ms     BIGINT NOT NULL,
+    PRIMARY KEY (workspace_id, volume_id, thread)
 );
 CREATE UNIQUE INDEX runs_idempotency ON runs (workspace_id, requested_by, idempotency_key) WHERE idempotency_key <> '';
 CREATE INDEX runs_workspace ON runs (workspace_id, created_ms);

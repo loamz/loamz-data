@@ -272,6 +272,38 @@ try:
     served = [l for l in open(f"{work}/agent.log").read().splitlines() if "storage broker for a job" in l]
     step("broker traffic per run: " + " | ".join(l.split("served_bytes")[1].split(" storage")[0].strip()[:60] for l in served[-2:]))
 
+    # A job commits what it leaves in /workspace/out to the person's volume, under this run's own path, each file create-only. A link
+    # in the folder and a name that is not plain are refused and reported, and a run that did not commit everything is failed.
+    writer = ("import loamz, os, polars as pl\n"
+              "pl.DataFrame({'x': [1, 2, 3]}).write_csv(loamz.out('summary.csv'))\n"
+              "open(loamz.out('charts/one.txt'), 'w').write('chart')\n")
+    _, c1 = call("POST", f"{S}/runs", ana, {"script": writer, "commit": {"volume": home, "thread": "t1"}, "timeout_s": 120})
+    done1 = wait_run(c1["id"])
+    if done1["state"] != "succeeded":
+        print(open(f"{work}/agent.log").read()[-1500:])
+        sys.exit("the commit job failed: " + done1["error"] + " | " + done1["stderr"][-600:])
+    got1 = json.loads(done1["result"]) if isinstance(done1["result"], str) else done1["result"]
+    paths = sorted(f["path"] for f in got1["committed"])
+    assert paths == [f"threads/t1/runs/{c1['id']}/charts/one.txt", f"threads/t1/runs/{c1['id']}/summary.csv"] and not got1["failed"], got1
+    _, back = call("GET", f"{S}/volumes/{home}/files/{paths[1]}", ana)
+    assert back.decode().split() == ["x", "1", "2", "3"], back
+    step(f"a job committed its outputs to the thread: {[p.split('/', 4)[-1] for p in paths]}; the file read back through the API")
+    sneaky = ("import loamz, os\nopen(loamz.out('ok.txt'), 'w').write('fine')\n"
+              "os.symlink('/etc/passwd', '/workspace/out/leak')\nopen('/workspace/out/bad;name', 'w').write('x')\n")
+    _, c2 = call("POST", f"{S}/runs", ana, {"script": sneaky, "commit": {"volume": home, "thread": "t1"}, "timeout_s": 120})
+    done2 = wait_run(c2["id"])
+    got2 = json.loads(done2["result"]) if isinstance(done2["result"], str) else done2["result"]
+    names = sorted(f["path"].rsplit("/", 1)[-1] for f in got2["committed"])
+    assert done2["state"] == "failed" and names == ["ok.txt"] and len(got2["failed"]) == 2, (done2["state"], got2)
+    _, listing = call("GET", f"{S}/volumes/{home}/files", ana)
+    assert not any(f"{c2['id']}/leak" in f["path"] or "bad" in f["path"] for f in listing["items"]), "a refused file must not be in the volume"
+    step(f"a link and an odd name were refused and reported, the good file stayed, and the run failed: {done2['error'][:110]}")
+    _, closed = call("DELETE", f"{S}/volumes/{home}/threads/t1", ana)
+    _, left = call("GET", f"{S}/volumes/{home}/files", ana)
+    assert not any(f["path"].startswith("threads/t1/") for f in left["items"]), left
+    code, _ = call("POST", f"{S}/runs", ana, {"script": writer, "commit": {"volume": home, "thread": "t1"}, "timeout_s": 60}, ok=(409,))
+    step(f"deleting the thread removed its files, and new work on it is refused for now ({code})")
+
     # A catalog on a customer's storage location: its bytes are read and written with the location's own credential, in its own
     # folder of the bucket (here the same RustFS, a folder of its own), and nothing of it is in the installation's default storage.
     _, cred = call("POST", f"{S}/storage/credentials", ana, {"name": "rustfs", "provider": "rustfs", "endpoint": S3,

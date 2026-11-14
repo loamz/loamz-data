@@ -10,7 +10,9 @@ of a file they use) and remembers query results it has already read.
     con.execute(f"SELECT count(*) FROM read_parquet('{loamz.path('agent_files', 'threads/t1/results/q.parquet')}')").fetchall()
     local = loamz.fetch("agent_files", "uploads/report.xlsx")   # one file copied to /tmp, for libraries that need a local path
 
-What you write goes in /workspace; it is local and disappears with the sandbox.
+What you write goes in /workspace; it is local and disappears with the sandbox. Files you want to keep go in /workspace/out
+(`loamz.out("chart.png")` gives the path): when the run ends they are committed to the thread's folder in your volume, each as a new
+file under this run's own path. The run's result lists what was committed and what was not.
 """
 import json
 import os
@@ -142,4 +144,11 @@ def fetch(volume, relative):
     with urllib.request.urlopen(f"http://{endpoint()}/{address}", timeout=600) as response, open(target, "wb") as out:
         while chunk := response.read(1 << 20):
             out.write(chunk)
+    return target
+
+
+def out(relative):
+    """The path of a file to keep: under /workspace/out, with its folders made. Plain names only (letters, digits, . _ - and space)."""
+    target = os.path.join("/workspace", "out", *[p for p in str(relative).split("/") if p])
+    os.makedirs(os.path.dirname(target), exist_ok=True)
     return target
