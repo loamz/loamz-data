@@ -1,39 +1,18 @@
 //! Credentials and locations, and the rule that locations never overlap. Pure.
 
-/// How the server gets short-lived access for others from this store.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Vending {
-    /// No other machine can be given access: only this server reads the bucket.
-    None,
-    /// STS `AssumeRole` with a session policy (`RustFS`, S3). `role_arn` only for stores that need one.
-    Sts { role_arn: String },
-    /// Cloudflare R2's own API, with a management token kept in the vault.
-    R2 { token_ref: String },
-}
-
-impl Vending {
-    #[must_use]
-    pub fn kind(&self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Sts { .. } => "sts",
-            Self::R2 { .. } => "r2",
-        }
-    }
-}
-
-/// How the server reaches a store. The keys are references into the vault, never values.
+/// Public settings and the private vault pointer for a storage credential.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Credential {
     pub id: String,
     pub org_id: String,
     pub workspace_id: String,
     pub name: String,
+    pub provider: String,
     pub endpoint: String,
     pub region: String,
-    pub key_id_ref: String,
-    pub secret_ref: String,
-    pub vending: Vending,
+    pub secret_path: String,
+    pub secret_version: i64,
+    pub generation: i64,
     pub created_by: String,
     pub created_ms: i64,
 }

@@ -83,9 +83,8 @@ async fn credential(s: &Server, workspace: &str, who: &Who, name: &str) -> Strin
             json!({
                 "name": name,
                 "endpoint": "http://127.0.0.1:9000",
-                "key_id_ref": "loamz-data/bucket#key_id",
-                "secret_ref": "loamz-data/bucket#secret",
-                "vending": {"kind": "sts"}
+                "provider": "rustfs",
+                "secret": {"kind": "sts", "access_key_id": "fake-key", "secret_access_key": "fake-secret"}
             }),
         )
         .await;

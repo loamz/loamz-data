@@ -21,6 +21,12 @@ pub struct Settings {
     pub storage: Storage,
     /// The Keycloak realm that signs people in, such as `https://auth.loamz.com/realms/loamz`.
     pub issuer: String,
+    /// Operator explicitly allows private customer storage endpoints.
+    pub storage_allow_private: bool,
+    /// Address of the TLS proxy that overwrites X-Forwarded-Proto.
+    pub storage_tls_proxy: Option<std::net::IpAddr>,
+    /// Allows plain HTTP for the explicitly configured development stack only.
+    pub storage_allow_http_dev: bool,
     pub max_upload_bytes: u64,
     /// Maximum queued and running SQL statements and jobs per organization.
     pub max_active_runs: i64,
@@ -388,6 +394,14 @@ impl Settings {
                 }
             },
             issuer,
+            storage_allow_private: var("LOAMZ_DATA_STORAGE_ALLOW_PRIVATE").as_deref()
+                == Some("true"),
+            storage_tls_proxy: var("LOAMZ_DATA_STORAGE_TLS_PROXY")
+                .map(|v| v.parse())
+                .transpose()
+                .map_err(|_| "LOAMZ_DATA_STORAGE_TLS_PROXY must be an IP address")?,
+            storage_allow_http_dev: var("LOAMZ_DATA_STORAGE_ALLOW_HTTP_DEV").as_deref()
+                == Some("true"),
             max_upload_bytes: max_mb.saturating_mul(1024 * 1024),
             max_active_runs,
             web_dir: var("LOAMZ_DATA_WEB_DIR").map(Into::into),

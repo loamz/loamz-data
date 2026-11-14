@@ -225,12 +225,10 @@ CREATE TABLE storage_credentials (
     name             TEXT NOT NULL,
     endpoint         TEXT NOT NULL,
     region           TEXT NOT NULL,
-    key_id_ref       TEXT NOT NULL,
-    secret_ref       TEXT NOT NULL,
-    -- 'none', 'sts' (AssumeRole with a session policy) or 'r2' (Cloudflare's own API)
-    vending          TEXT NOT NULL,
-    role_arn         TEXT NOT NULL,
-    issuer_token_ref TEXT NOT NULL,
+    provider         TEXT NOT NULL,
+    secret_path      TEXT NOT NULL,
+    secret_version   BIGINT NOT NULL,
+    generation       BIGINT NOT NULL,
     created_by       TEXT NOT NULL,
     created_ms       BIGINT NOT NULL,
     UNIQUE (workspace_id, name)

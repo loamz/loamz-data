@@ -188,6 +188,8 @@ pub fn wrong_issuer(who: &Who) -> String {
 pub struct Reply {
     pub status: u16,
     pub content_type: String,
+    pub cache_control: String,
+    pub etag: String,
     pub bytes: Vec<u8>,
 }
 
@@ -223,10 +225,53 @@ impl loamz_lake::grants::Issuer for CountingIssuer {
 }
 
 /// A vault that holds a few secrets, so a test can name them without a real `OpenBao`.
-pub struct FakeVault;
+#[derive(Default)]
+pub struct FakeVault {
+    versions: Mutex<HashMap<String, Vec<Option<Value>>>>,
+    pub fail_write: std::sync::atomic::AtomicBool,
+    pub fail_destroy: std::sync::atomic::AtomicBool,
+}
 
 #[async_trait]
 impl SecretStore for FakeVault {
+    async fn write_version(&self, path: &str, data: &Value) -> Result<i64, String> {
+        if self.fail_write.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("CANARY_UPSTREAM_SECRET".into());
+        }
+        let mut all = self.versions.lock().unwrap();
+        let entries = all.entry(path.to_owned()).or_default();
+        entries.push(Some(data.clone()));
+        Ok(i64::try_from(entries.len()).unwrap())
+    }
+    async fn read_version(&self, path: &str, version: i64) -> Result<Value, String> {
+        let index = version
+            .checked_sub(1)
+            .and_then(|v| usize::try_from(v).ok())
+            .ok_or("missing")?;
+        self.versions
+            .lock()
+            .unwrap()
+            .get(path)
+            .and_then(|v| v.get(index))
+            .and_then(Clone::clone)
+            .ok_or_else(|| "missing".into())
+    }
+    async fn destroy_versions(&self, path: &str, versions: &[i64]) -> Result<(), String> {
+        if self.fail_destroy.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("CANARY_UPSTREAM_SECRET".into());
+        }
+        let mut all = self.versions.lock().unwrap();
+        if let Some(entries) = all.get_mut(path) {
+            for version in versions {
+                if let Some(index) = version.checked_sub(1).and_then(|v| usize::try_from(v).ok())
+                    && let Some(entry) = entries.get_mut(index)
+                {
+                    *entry = None;
+                }
+            }
+        }
+        Ok(())
+    }
     async fn get(&self, r: &SecretRef) -> Result<String, String> {
         match r.path.as_str() {
             "loamz-data/bucket" | "loamz-data/other" => Ok("a-secret".into()),
@@ -298,6 +343,7 @@ impl Directory for FakeDirectory {
 pub struct Server {
     pub app: Shared,
     pub directory: Arc<FakeDirectory>,
+    pub vault: Arc<FakeVault>,
     pub routes: Vec<(&'static str, String)>,
     router: Router,
     dir: PathBuf,
@@ -363,6 +409,9 @@ async fn build_with(
         database_url: String::new(),
         storage: Storage::Folder(dir.clone()),
         issuer: ISSUER.into(),
+        storage_allow_private: true,
+        storage_tls_proxy: None,
+        storage_allow_http_dev: true,
         max_upload_bytes: max_upload,
         max_active_runs,
         web_dir: None,
@@ -377,7 +426,8 @@ async fn build_with(
     db.migrate(&MIGRATIONS).await.unwrap();
     let fake = Arc::new(FakeDirectory::default());
     let mut app = App::new(&settings, &Secrets::default(), db).unwrap();
-    app.vault = Some(Arc::new(FakeVault));
+    let vault = Arc::new(FakeVault::default());
+    app.vault = Some(vault.clone());
     app.issuer = issuer;
     app.metrics_token = Some("m".repeat(40));
     if directory {
@@ -389,6 +439,7 @@ async fn build_with(
     Server {
         app,
         directory: fake,
+        vault,
         routes,
         router: door,
         dir,
@@ -397,9 +448,29 @@ async fn build_with(
 
 impl Server {
     pub async fn send(&self, method: &str, path: &str, token: Option<&str>, body: Body) -> Reply {
-        let mut req = Request::builder().method(method).uri(path);
+        self.send_with_header(method, path, token, body, None).await
+    }
+
+    pub async fn send_with_header(
+        &self,
+        method: &str,
+        path: &str,
+        token: Option<&str>,
+        body: Body,
+        extra: Option<(&str, &str)>,
+    ) -> Reply {
+        let mut req =
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .extension(axum::extract::ConnectInfo(
+                    "127.0.0.1:1234".parse::<std::net::SocketAddr>().unwrap(),
+                ));
         if let Some(t) = token {
             req = req.header(header::AUTHORIZATION, format!("Bearer {t}"));
+        }
+        if let Some((name, value)) = extra {
+            req = req.header(name, value);
         }
         let res = self
             .router
@@ -414,10 +485,24 @@ impl Server {
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_owned();
+        let cache_control = res
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_owned();
+        let etag = res
+            .headers()
+            .get(header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_owned();
         let bytes = res.into_body().collect().await.unwrap().to_bytes().to_vec();
         Reply {
             status,
             content_type,
+            cache_control,
+            etag,
             bytes,
         }
     }

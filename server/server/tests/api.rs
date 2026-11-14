@@ -11,6 +11,7 @@ use common::{
 };
 use loamz_data_server::{governance::lifecycle::service::run_once, kernel::now_ms};
 use serde_json::{Value, json};
+use std::sync::atomic::Ordering;
 
 /// Runs one scenario on `SQLite`, and the same scenario on `Postgres`.
 macro_rules! both {
@@ -50,6 +51,217 @@ async fn tree(s: &Server, ws: &str) -> (String, String, String) {
 fn securables(ws: &str) -> String {
     format!("/api/v1/workspaces/{ws}/securables")
 }
+
+async fn customer_storage_secrets_are_write_only_and_rotation_is_fenced(s: Server) {
+    let ws = s.acme().await;
+    s.assign(&ws, &[&bob()]).await;
+    let base = format!("/api/v1/workspaces/{ws}/storage/credentials");
+    let create = json!({"name":"customer", "provider":"rustfs", "endpoint":"http://127.0.0.1:9000", "region":"us-east-1", "secret":{"kind":"sts", "access_key_id":"CANARY_KEY_123", "secret_access_key":"CANARY_SECRET_123"}});
+    let mut unverified = create.clone();
+    unverified["name"] = json!("unverified");
+    unverified["provider"] = json!("minio");
+    let unsupported = s.post(&base, &ana(), unverified).await;
+    assert_eq!(unsupported.status, 422);
+    assert!(!unsupported.text().contains("CANARY_"));
+    let refused = s.post(&base, &bob(), create.clone()).await;
+    assert_eq!(refused.status, 404);
+    assert_eq!(refused.cache_control, "no-store");
+    assert!(!refused.text().contains("CANARY_"));
+    assert_eq!(s.post(&base, &bob(), json!({})).await.status, 404);
+    let made = s.post(&base, &ana(), create).await;
+    assert_eq!(made.status, 201, "{}", made.text());
+    assert_eq!(made.cache_control, "no-store");
+    assert!(!made.text().contains("CANARY_"));
+    assert!(!made.text().contains("secret_ref"));
+    let credential = made.json()["id"].as_str().unwrap().to_owned();
+    assert_eq!(made.json()["generation"], 1);
+    let service = s
+        .post(
+            &format!("/api/v1/workspaces/{ws}/service-principals"),
+            &ana(),
+            json!({"name":"storage-test-service"}),
+        )
+        .await;
+    assert_eq!(service.status, 201);
+    let principal = service.json()["principal"].as_str().unwrap().to_owned();
+    let service_token = service.json()["token"].as_str().unwrap().to_owned();
+    let assigned = s
+        .put(
+            &format!("/api/v1/workspaces/{ws}/members"),
+            &ana(),
+            json!({"principal":principal,"role":"admin"}),
+        )
+        .await;
+    assert_eq!(assigned.status, 204);
+    let denied_service = s.bearer("POST", &base, &service_token, Some(json!({"name":"service", "provider":"rustfs", "endpoint":"http://127.0.0.1:9000", "secret":{"kind":"sts", "access_key_id":"CANARY_SVC_KEY", "secret_access_key":"CANARY_SVC_SECRET"}}))).await;
+    assert_eq!(denied_service.status, 404);
+    assert!(!denied_service.text().contains("CANARY_"));
+    assert_eq!(
+        s.bearer(
+            "PUT",
+            &format!("{base}/{credential}/secret"),
+            &service_token,
+            Some(json!({}))
+        )
+        .await
+        .status,
+        404
+    );
+
+    let listed = s.get(&base, &ana()).await;
+    assert!(!listed.text().contains("CANARY_"));
+    assert!(!listed.text().contains("secret_ref"));
+    assert_eq!(
+        s.post(&format!("{base}/{credential}/check"), &ana(), json!({}))
+            .await
+            .status,
+        400
+    );
+    let no_location = s
+        .post(
+            &format!("{base}/{credential}/check"),
+            &ana(),
+            json!({"location_id":"missing"}),
+        )
+        .await;
+    assert_eq!(no_location.status, 404);
+    assert_eq!(
+        s.post(&format!("{base}/{credential}/check"), &bob(), json!({}))
+            .await
+            .status,
+        404
+    );
+    let denied_rotation = s
+        .send_with_header(
+            "PUT",
+            &format!("{base}/{credential}/secret"),
+            Some(&token(&bob())),
+            axum::body::Body::from("{}"),
+            Some(("if-match", "\"1\"")),
+        )
+        .await;
+    assert_eq!(denied_rotation.status, 404);
+    let path = format!("{base}/{credential}/secret");
+    let payload = json!({"kind":"sts", "access_key_id":"CANARY_KEY_456", "secret_access_key":"CANARY_SECRET_456"});
+    let rotate = s
+        .send_with_header(
+            "PUT",
+            &path,
+            Some(&token(&ana())),
+            axum::body::Body::from(payload.to_string()),
+            Some(("if-match", "\"1\"")),
+        )
+        .await;
+    assert_eq!(rotate.status, 204, "{}", rotate.text());
+    assert!(!rotate.text().contains("CANARY_"));
+    let stale = s
+        .send_with_header(
+            "PUT",
+            &path,
+            Some(&token(&ana())),
+            axum::body::Body::from(payload.to_string()),
+            Some(("if-match", "\"1\"")),
+        )
+        .await;
+    assert_eq!(stale.status, 412);
+    assert!(!stale.text().contains("CANARY_"));
+    let again = s.get(&format!("{base}/{credential}"), &ana()).await;
+    assert_eq!(again.json()["generation"], 2);
+    assert_eq!(again.etag, "\"2\"");
+    assert!(!again.text().contains("CANARY_"));
+    let (vault_path, pinned_version, generation): (String, i64, i64) = sqlx::query_as(
+        "SELECT secret_path, secret_version, generation FROM storage_credentials WHERE id = $1",
+    )
+    .bind(&credential)
+    .fetch_one(s.app.db.pool())
+    .await
+    .unwrap();
+    assert!(vault_path.starts_with("customer-storage/"));
+    assert_eq!((pinned_version, generation), (2, 2));
+    let vault = s.app.vault.as_ref().unwrap();
+    assert!(vault.read_version(&vault_path, 1).await.is_err());
+    assert_eq!(
+        vault.read_version(&vault_path, 2).await.unwrap()["secret_access_key"],
+        "CANARY_SECRET_456"
+    );
+    let auth = token(&ana());
+    let a = s.send_with_header(
+        "PUT",
+        &path,
+        Some(&auth),
+        axum::body::Body::from(payload.to_string()),
+        Some(("if-match", "\"2\"")),
+    );
+    let b = s.send_with_header(
+        "PUT",
+        &path,
+        Some(&auth),
+        axum::body::Body::from(payload.to_string()),
+        Some(("if-match", "\"2\"")),
+    );
+    let (a, b) = tokio::join!(a, b);
+    let mut statuses = [a.status, b.status];
+    statuses.sort_unstable();
+    assert_eq!(statuses, [204, 412]);
+    assert!(vault.read_version(&vault_path, 2).await.is_err());
+    assert_eq!(
+        s.get(&format!("{base}/{credential}"), &ana()).await.json()["generation"],
+        3
+    );
+    s.vault.fail_write.store(true, Ordering::SeqCst);
+    let failed = s
+        .send_with_header(
+            "PUT",
+            &path,
+            Some(&auth),
+            axum::body::Body::from(payload.to_string()),
+            Some(("if-match", "\"3\"")),
+        )
+        .await;
+    assert_eq!(failed.status, 503);
+    assert!(!failed.text().contains("CANARY"));
+    assert_eq!(
+        s.get(&format!("{base}/{credential}"), &ana()).await.json()["generation"],
+        3
+    );
+    s.vault.fail_write.store(false, Ordering::SeqCst);
+    s.vault.fail_destroy.store(true, Ordering::SeqCst);
+    let cleanup_failed = s
+        .send_with_header(
+            "PUT",
+            &path,
+            Some(&auth),
+            axum::body::Body::from(payload.to_string()),
+            Some(("if-match", "\"3\"")),
+        )
+        .await;
+    assert_eq!(cleanup_failed.status, 503);
+    assert!(!cleanup_failed.text().contains("CANARY"));
+    assert_eq!(
+        s.get(&format!("{base}/{credential}"), &ana()).await.json()["generation"],
+        4
+    );
+    s.vault.fail_destroy.store(false, Ordering::SeqCst);
+    let repaired = s
+        .send_with_header(
+            "PUT",
+            &path,
+            Some(&auth),
+            axum::body::Body::from(payload.to_string()),
+            Some(("if-match", "\"4\"")),
+        )
+        .await;
+    assert_eq!(repaired.status, 204);
+    assert!(vault.read_version(&vault_path, 3).await.is_err());
+    assert!(vault.read_version(&vault_path, 4).await.is_err());
+    let audits: Vec<String> = sqlx::query_scalar("SELECT target FROM audit WHERE org_id = $1")
+        .bind(ACME)
+        .fetch_all(s.app.db.pool())
+        .await
+        .unwrap();
+    assert!(audits.iter().all(|line| !line.contains("CANARY_")));
+}
+both!(customer_storage_secrets_are_write_only_and_rotation_is_fenced);
 
 // ---- identity ----------------------------------------------------------------------------------------------------
 
@@ -1117,15 +1329,12 @@ async fn storage_is_set_per_workspace(s: Server) {
     let other = s.workspace(&ana(), ACME, "Other").await;
     s.assign(&main, &[&bob()]).await;
     let base = format!("/api/v1/workspaces/{main}/storage");
-    let credential = |name: &str, key: &str| {
-        json!({"name": name, "endpoint": "http://127.0.0.1:9000", "key_id_ref": key, "secret_ref": "loamz-data/bucket#secret",
-               "vending": {"kind": "sts"}})
-    };
+    let credential = |name: &str, key: &str| json!({"name": name, "provider": "rustfs", "endpoint": "http://127.0.0.1:9000", "secret": {"kind": "sts", "access_key_id": if key.contains("nope") { "" } else { key }, "secret_access_key": "fake-secret"}});
 
     // A workspace's admins set storage; a member cannot even look.
     assert_eq!(
         s.get(&format!("{base}/credentials"), &bob()).await.status,
-        403
+        404
     );
     assert_eq!(
         s.post(
@@ -1135,7 +1344,7 @@ async fn storage_is_set_per_workspace(s: Server) {
         )
         .await
         .status,
-        403
+        404
     );
 
     // The vault must have the secrets; the endpoint must be https or local; names are plain.
@@ -1147,11 +1356,7 @@ async fn storage_is_set_per_workspace(s: Server) {
         )
         .await;
     assert_eq!(missing.status, 400);
-    assert!(
-        missing.text().contains("loamz-data/nope#key_id"),
-        "{}",
-        missing.text()
-    );
+    assert!(!missing.text().contains("fake-secret"));
     let mut remote = credential("rustfs", "loamz-data/bucket#key_id");
     remote["endpoint"] = json!("http://example.test");
     assert_eq!(
@@ -1180,11 +1385,7 @@ async fn storage_is_set_per_workspace(s: Server) {
         .await;
     assert_eq!(made.status, 201, "{}", made.text());
     let cred = made.json()["id"].as_str().unwrap().to_owned();
-    assert_eq!(
-        made.json()["secret_ref"],
-        "loamz-data/bucket#secret",
-        "only references are ever shown"
-    );
+    assert!(made.json().get("secret_ref").is_none());
     assert_eq!(
         s.post(
             &format!("{base}/credentials"),
@@ -1331,8 +1532,7 @@ async fn location_like_wildcards_do_not_match_other_catalog_prefixes(s: Server) 
         .post(
             &format!("{base}/credentials"),
             &ana(),
-            json!({"name": "rustfs", "endpoint": "http://127.0.0.1:9000", "key_id_ref": "loamz-data/bucket#key_id",
-                   "secret_ref": "loamz-data/bucket#secret", "vending": {"kind": "sts"}}),
+            json!({"name": "rustfs", "endpoint": "http://127.0.0.1:9000", "provider":"rustfs", "secret":{"kind":"sts", "access_key_id":"fake-key", "secret_access_key":"fake-secret"}}),
         )
         .await
         .json()["id"]
@@ -1384,8 +1584,7 @@ async fn a_catalog_keeps_its_data_where_its_location_says(s: Server) {
         .post(
             &format!("{base}/credentials"),
             &ana(),
-            json!({"name": "rustfs", "endpoint": "http://127.0.0.1:9000", "key_id_ref": "loamz-data/bucket#key_id",
-                   "secret_ref": "loamz-data/bucket#secret", "vending": {"kind": "sts"}}),
+            json!({"name": "rustfs", "endpoint": "http://127.0.0.1:9000", "provider":"rustfs", "secret":{"kind":"sts", "access_key_id":"fake-key", "secret_access_key":"fake-secret"}}),
         )
         .await
         .json()["id"]
@@ -2070,4 +2269,56 @@ async fn the_routes_and_the_spec_agree() {
         in_router, in_spec,
         "left: the server's routes, right: the spec"
     );
+}
+
+async fn rustfs_live_storage_credential_check(s: Server) {
+    let endpoint =
+        std::env::var("LOAMZ_TEST_STS_ENDPOINT").unwrap_or_else(|_| "http://127.0.0.1:9000".into());
+    let ws = s.acme().await;
+    let base = format!("/api/v1/workspaces/{ws}/storage");
+    let made = s.post(&format!("{base}/credentials"), &ana(), json!({
+        "name":"live-check", "provider":"rustfs", "endpoint":endpoint,
+        "region":"us-east-1", "secret":{"kind":"sts", "access_key_id":"loamz-dev", "secret_access_key":"loamz-dev-only"}
+    })).await;
+    assert_eq!(made.status, 201);
+    let credential = made.json()["id"].as_str().unwrap().to_owned();
+    let location = s.post(&format!("{base}/locations"), &ana(), json!({
+        "name":"live-location", "credential_id":credential, "bucket":"loamz-data", "prefix":format!("check{}", std::process::id())
+    })).await;
+    assert_eq!(location.status, 201);
+    let location_id = location.json()["id"].as_str().unwrap().to_owned();
+    let checked = s
+        .post(
+            &format!("{base}/credentials/{credential}/check"),
+            &ana(),
+            json!({"location_id":location_id}),
+        )
+        .await;
+    assert_eq!(checked.status, 200);
+    assert_eq!(checked.json()["status"], "usable");
+    assert_eq!(checked.json()["generation"], 1);
+    let rotated = s.send_with_header("PUT", &format!("{base}/credentials/{credential}/secret"), Some(&token(&ana())), axum::body::Body::from(json!({"kind":"sts", "access_key_id":"bad-test-key", "secret_access_key":"bad-test-secret"}).to_string()), Some(("if-match", "\"1\""))).await;
+    assert_eq!(rotated.status, 204);
+    let denied = s
+        .post(
+            &format!("{base}/credentials/{credential}/check"),
+            &ana(),
+            json!({"location_id":location_id}),
+        )
+        .await;
+    assert_eq!(denied.status, 200);
+    assert_eq!(denied.json()["status"], "denied");
+    assert_eq!(denied.json()["generation"], 2);
+}
+
+#[tokio::test]
+#[ignore = "needs the local RustFS development service"]
+async fn rustfs_live_storage_credential_check_sqlite() {
+    rustfs_live_storage_credential_check(server(fresh_db(false).await).await).await;
+}
+
+#[tokio::test]
+#[ignore = "needs the local RustFS and Postgres development services"]
+async fn rustfs_live_storage_credential_check_postgres() {
+    rustfs_live_storage_credential_check(server(fresh_db(true).await).await).await;
 }

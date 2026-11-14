@@ -22,6 +22,7 @@ deploy/dev/openbao_sso.py
 export LOAMZ_DATA_LISTEN=127.0.0.1:8020 LOAMZ_DATA_DATABASE_URL="sqlite:$PWD/.dev/data.db?mode=rwc" LOAMZ_DATA_BUCKET=$bucket LOAMZ_DATA_BUCKET_ENDPOINT=$s3 LOAMZ_DATA_BUCKET_STS_ENDPOINT=$s3 LOAMZ_DATA_AGENT_CLIENTS=loamz-agents
 export LOAMZ_DATA_OPENBAO_ADDR=$bao LOAMZ_DATA_OPENBAO_TOKEN_FILE=$PWD/.dev/openbao-token LOAMZ_DATA_BUCKET_KEY_ID_REF=loamz-data/bucket#key_id LOAMZ_DATA_BUCKET_SECRET_REF=loamz-data/bucket#secret LOAMZ_DATA_DIRECTORY_SECRET_REF=loamz-data/directory#secret
 export LOAMZ_DATA_OIDC_ISSUER=http://127.0.0.1:8082/realms/loamz
+export LOAMZ_DATA_STORAGE_ALLOW_HTTP_DEV=true LOAMZ_DATA_STORAGE_ALLOW_PRIVATE=true
 export VITE_OIDC_AUTHORITY=http://127.0.0.1:8082/realms/loamz
 [ -x target/release/loamz-data ] || cargo build --release -p loamz-data-server
 trap 'kill 0' EXIT

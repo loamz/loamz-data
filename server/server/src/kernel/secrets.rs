@@ -56,6 +56,38 @@ pub trait SecretStore: Send + Sync {
     /// # Errors
     /// The store could not be reached, refused, or has no such secret. The message names the reference, never a value.
     async fn get(&self, r: &SecretRef) -> Result<String, String>;
+
+    /// Write one version of a server-generated credential path.
+    async fn write_version(&self, _path: &str, _data: &Value) -> Result<i64, String> {
+        Err("versioned secrets unavailable".into())
+    }
+
+    /// Read exactly the version pinned in the database.
+    async fn read_version(&self, _path: &str, _version: i64) -> Result<Value, String> {
+        Err("versioned secrets unavailable".into())
+    }
+
+    /// Permanently destroy specific obsolete versions.
+    async fn destroy_versions(&self, _path: &str, _versions: &[i64]) -> Result<(), String> {
+        Err("versioned secrets unavailable".into())
+    }
+}
+
+fn versioned_data(body: &Value, expected: i64) -> Result<Value, String> {
+    if body["data"]["metadata"]["version"].as_i64() != Some(expected) {
+        return Err("invalid vault response".into());
+    }
+    body.get("data")
+        .and_then(|v| v.get("data"))
+        .cloned()
+        .ok_or_else(|| "invalid vault response".into())
+}
+
+fn vault_token_header(token: &str) -> Result<reqwest::header::HeaderValue, String> {
+    let mut header =
+        reqwest::header::HeaderValue::from_str(token).map_err(|_| "invalid vault token")?;
+    header.set_sensitive(true);
+    Ok(header)
 }
 
 /// How the server proves who it is to `OpenBao`.
@@ -83,6 +115,8 @@ impl OpenBao {
     pub fn new(addr: &str, mount: &str, login: Login) -> Result<Self, String> {
         Ok(Self {
             http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
                 .timeout(Duration::from_secs(10))
                 .build()
                 .map_err(|e| e.to_string())?,
@@ -133,11 +167,80 @@ impl OpenBao {
 
 #[async_trait]
 impl SecretStore for OpenBao {
+    async fn write_version(&self, path: &str, data: &Value) -> Result<i64, String> {
+        let response = self
+            .http
+            .post(format!("{}/v1/{}/data/{}", self.addr, self.mount, path))
+            .header(
+                "X-Vault-Token",
+                vault_token_header(&self.bearer().await.map_err(|_| "vault unavailable")?)?,
+            )
+            .json(&json!({"data": data}))
+            .send()
+            .await
+            .map_err(|_| "vault unavailable")?;
+        if !response.status().is_success() {
+            return Err("vault write failed".into());
+        }
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|_| "invalid vault response")?;
+        body["data"]["version"]
+            .as_i64()
+            .filter(|v| *v > 0)
+            .ok_or_else(|| "invalid vault response".into())
+    }
+
+    async fn read_version(&self, path: &str, version: i64) -> Result<Value, String> {
+        let response = self
+            .http
+            .get(format!("{}/v1/{}/data/{}", self.addr, self.mount, path))
+            .query(&[("version", version)])
+            .header(
+                "X-Vault-Token",
+                vault_token_header(&self.bearer().await.map_err(|_| "vault unavailable")?)?,
+            )
+            .send()
+            .await
+            .map_err(|_| "vault unavailable")?;
+        if !response.status().is_success() {
+            return Err("vault read failed".into());
+        }
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|_| "invalid vault response")?;
+        versioned_data(&body, version)
+    }
+
+    async fn destroy_versions(&self, path: &str, versions: &[i64]) -> Result<(), String> {
+        if versions.is_empty() {
+            return Ok(());
+        }
+        let response = self
+            .http
+            .post(format!("{}/v1/{}/destroy/{}", self.addr, self.mount, path))
+            .header(
+                "X-Vault-Token",
+                vault_token_header(&self.bearer().await.map_err(|_| "vault unavailable")?)?,
+            )
+            .json(&json!({"versions": versions}))
+            .send()
+            .await
+            .map_err(|_| "vault unavailable")?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err("vault destroy failed".into())
+        }
+    }
+
     async fn get(&self, r: &SecretRef) -> Result<String, String> {
         let reply = self
             .http
             .get(format!("{}/v1/{}/data/{}", self.addr, self.mount, r.path))
-            .header("X-Vault-Token", self.bearer().await?)
+            .header("X-Vault-Token", vault_token_header(&self.bearer().await?)?)
             .send()
             .await
             .map_err(|e| format!("OpenBao is not reachable: {e}"))?;
@@ -159,6 +262,18 @@ impl SecretStore for OpenBao {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn versioned_reads_reject_a_mismatched_vault_version() {
+        let body = json!({"data":{"data":{"key":"canary"}, "metadata":{"version":2}}});
+        assert!(versioned_data(&body, 1).is_err());
+        assert_eq!(versioned_data(&body, 2).unwrap()["key"], "canary");
+    }
+
+    #[test]
+    fn vault_token_header_is_sensitive() {
+        assert!(vault_token_header("canary-token").unwrap().is_sensitive());
+    }
 
     #[test]
     fn a_reference_is_a_path_and_a_key() {

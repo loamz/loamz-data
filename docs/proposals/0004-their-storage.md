@@ -1,6 +1,6 @@
 # Proposal 0004: their storage
 
-- **Status:** proposed for lead review, 14 Nov 2026. This is a contract decision, not an implementation or a security certification.
+- **Status:** approved with the lead amendments in section 5. Those amendments replace conflicting earlier decisions; implementation is not a security certification.
 - **Scope:** W2 and the W3 interfaces it needs in [the beta proposal](0003-beta.md). The lead agrees these contracts before code.
 - **Starting point:** [storage](../design/storage.md), [governance](../design/governance.md), and the current credential and location APIs. This proposal replaces the storage design's post-beta timing for customer buckets: they are in the beta.
 
@@ -668,3 +668,15 @@ Agreed with these changes, for a beta of one server and fewer than three custome
 5. **Split of part 2.** Codex: key custody, `build_location`, endpoint safety (2a). Lead: the per-location registry, columns, managed and
    external objects, storage grants and `USE_COMPUTE` (2b).
 
+
+### 5.1 Client memory and handle lifetime
+
+A location handle's S3 client and credential vendor retain the signing material needed for later requests in server memory. The input secret is consumed and zeroized where the code controls its memory; it is never returned or included in logs, errors, leases or cache keys. The `object_store` client retains internal copies that Loamz cannot zeroize. Evicting a handle limits their lifetime but cannot guarantee immediate memory erasure; a process compromise can expose them. The registry keys handles by organization, workspace, location and generation, evicts them on rotation, deletion, suspension or an epoch change, and checks the current generation before vending. Its configurable maximum handle age defaults to one hour, after which it rebuilds from OpenBao. A short vault outage does not stop already-running work; destroying a vault version alone stops further use by a cached handle no later than its expiry, subject to in-flight work.
+
+Credential management is limited to directly authenticated human workspace or account administrators. Service principals, delegated agent requests and job-scoped tokens cannot use these routes, even when their underlying person has administrator standing.
+
+The credential API requires a TLS-terminating proxy whose peer IP is configured as `LOAMZ_DATA_STORAGE_TLS_PROXY`. The proxy must remove client-supplied `X-Forwarded-Proto` values and set exactly one value to `https`, and the server must be unreachable by untrusted clients at that proxy IP. Plain HTTP secret submissions are allowed only from a loopback peer when `LOAMZ_DATA_STORAGE_ALLOW_HTTP_DEV=true`; do not enable that development setting on a public deployment. Customer endpoint private-address access is separately enabled by `LOAMZ_DATA_STORAGE_ALLOW_PRIVATE=true`; plain HTTP to a storage endpoint also requires the development setting.
+
+For a customer location with a tested vendor, the store signs each GET or PUT using newly issued, folder-scoped temporary credentials; it never places the customer's parent key ID in a signed URL. A location without a safe vendor refuses signed access. URLs remain bearer credentials for their stated lifetime, so the caller must protect them.
+
+Part 2a offers RustFS in the credential API and console. AWS remains unavailable until a Loamz AWS identity is configured. R2 and MinIO vending remain unavailable until each provider passes its own conformance test; their request construction or S3-compatible behavior alone is not enough to offer them. The RustFS development test uses the local service's test identity, so conformance with a customer-created non-root identity still needs verification.

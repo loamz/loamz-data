@@ -1,28 +1,13 @@
 use sqlx::{Any, Executor, Row};
 
-use super::model::{Credential, Location, Vending};
-use crate::kernel::error::{Error, Result};
+use super::model::{Credential, Location};
+use crate::kernel::error::Result;
 
-const CREDENTIAL: &str = "id, org_id, workspace_id, name, endpoint, region, key_id_ref, secret_ref, vending, role_arn, issuer_token_ref, created_by, created_ms";
+const CREDENTIAL: &str = "id, org_id, workspace_id, name, endpoint, region, provider, secret_path, secret_version, generation, created_by, created_ms";
 const LOCATION: &str =
     "id, org_id, workspace_id, name, credential_id, bucket, prefix, created_by, created_ms";
 
 fn credential(r: &sqlx::any::AnyRow) -> Result<Credential> {
-    let kind: String = r.try_get("vending")?;
-    let vending = match kind.as_str() {
-        "none" => Vending::None,
-        "sts" => Vending::Sts {
-            role_arn: r.try_get("role_arn")?,
-        },
-        "r2" => Vending::R2 {
-            token_ref: r.try_get("issuer_token_ref")?,
-        },
-        other => {
-            return Err(Error::Internal(format!(
-                "unknown vending {other} in the database"
-            )));
-        }
-    };
     Ok(Credential {
         id: r.try_get("id")?,
         org_id: r.try_get("org_id")?,
@@ -30,9 +15,10 @@ fn credential(r: &sqlx::any::AnyRow) -> Result<Credential> {
         name: r.try_get("name")?,
         endpoint: r.try_get("endpoint")?,
         region: r.try_get("region")?,
-        key_id_ref: r.try_get("key_id_ref")?,
-        secret_ref: r.try_get("secret_ref")?,
-        vending,
+        provider: r.try_get("provider")?,
+        secret_path: r.try_get("secret_path")?,
+        secret_version: r.try_get("secret_version")?,
+        generation: r.try_get("generation")?,
         created_by: r.try_get("created_by")?,
         created_ms: r.try_get("created_ms")?,
     })
@@ -56,13 +42,8 @@ pub async fn insert_credential<'e, E: Executor<'e, Database = Any>>(
     e: E,
     c: &Credential,
 ) -> Result<()> {
-    let (role_arn, token_ref) = match &c.vending {
-        Vending::None => (String::new(), String::new()),
-        Vending::Sts { role_arn } => (role_arn.clone(), String::new()),
-        Vending::R2 { token_ref } => (String::new(), token_ref.clone()),
-    };
     sqlx::query(&format!(
-        "INSERT INTO storage_credentials ({CREDENTIAL}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)"
+        "INSERT INTO storage_credentials ({CREDENTIAL}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
     ))
     .bind(&c.id)
     .bind(&c.org_id)
@@ -70,11 +51,10 @@ pub async fn insert_credential<'e, E: Executor<'e, Database = Any>>(
     .bind(&c.name)
     .bind(&c.endpoint)
     .bind(&c.region)
-    .bind(&c.key_id_ref)
-    .bind(&c.secret_ref)
-    .bind(c.vending.kind())
-    .bind(role_arn)
-    .bind(token_ref)
+    .bind(&c.provider)
+    .bind(&c.secret_path)
+    .bind(c.secret_version)
+    .bind(c.generation)
     .bind(&c.created_by)
     .bind(c.created_ms)
     .execute(e)

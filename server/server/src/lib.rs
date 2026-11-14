@@ -39,6 +39,7 @@ pub fn router(app: Shared) -> (Router, Vec<(&'static str, String)>) {
     // Unknown paths get the same problem document as every other error.
     let router = router
         .fallback(|| async { Error::NotFound("no such route".into()) })
+        .layer(axum::middleware::from_fn(storage::locations::api::no_store))
         .layer(axum::middleware::from_fn_with_state(
             app.clone(),
             metrics::count,
