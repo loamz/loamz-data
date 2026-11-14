@@ -87,12 +87,12 @@ pub fn root_of(location: &str) -> String {
     format!("{MARK}{location}")
 }
 
-/// Where a statement's whole result goes when its table is in `folder`: a `results` folder beside the data, in the same store.
+/// The private result folder for a run beside its table's data, in the same store.
 #[must_use]
-pub fn results_of(folder: &str) -> String {
+pub fn results_of(folder: &str, run: &str) -> String {
     match location_of(folder) {
-        Some(location) => format!("{}/results", root_of(location)),
-        None => "results".to_owned(),
+        Some(location) => format!("{}/results/{run}", root_of(location)),
+        None => format!("results/{run}"),
     }
 }
 
@@ -283,7 +283,20 @@ mod tests {
         // Only the marker and an id make it a location: a bare marker is an ordinary folder name.
         assert_eq!(location_of("loc-"), None);
         assert_eq!(location_of(&root_of(id)), Some(id));
-        assert_eq!(results_of(&on), format!("loc-{id}/results"));
-        assert_eq!(results_of("wk-1/cat/tbl"), "results");
+        assert_eq!(
+            results_of(&on, "run-1"),
+            format!("loc-{id}/results/run-1")
+        );
+        assert_eq!(
+            results_of("wk-1/cat/tbl", "run-1"),
+            "results/run-1"
+        );
+    }
+
+    #[test]
+    fn result_folders_are_private_to_each_run() {
+        let id = "0b9c5e44-7a2f-4a4b-9d0a-0123456789ab";
+        let on = format!("{}/cat/tbl", root_of(id));
+        assert_ne!(results_of(&on, "run-1"), results_of(&on, "run-2"));
     }
 }

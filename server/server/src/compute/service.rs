@@ -592,10 +592,17 @@ async fn pick(
         .ok_or_else(|| too_big(&online))
 }
 
-fn new_run(ctx: &Ctx<'_>, kind: &str, title: &str, target: &Target, spec: &Value) -> Run {
+fn new_run(
+    ctx: &Ctx<'_>,
+    id: String,
+    kind: &str,
+    title: &str,
+    target: &Target,
+    spec: &Value,
+) -> Run {
     let who = Who::of(ctx.identity);
     Run {
-        id: new_id(),
+        id,
         org_id: ctx.workspace.org_id.clone(),
         workspace_id: ctx.workspace.id.clone(),
         kind: kind.into(),
@@ -756,6 +763,7 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
     }
     let statement = sql::guard(&req.sql, &rules).map_err(Error::Invalid)?;
     let limit = req.limit.unwrap_or(DEFAULT_ROWS).clamp(1, MAX_ROWS);
+    let run_id = new_id();
     // The whole result is kept beside the data it came from, in that storage: so it needs a table, and a storage that can sign.
     let mut result_folder = String::new();
     if req.export {
@@ -766,7 +774,7 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
                 Error::Invalid("a whole result is kept beside a table: read at least one".into())
             })?;
         let (_, _, folder) = tables::locate(app, &ctx.workspace.org_id, first).await?;
-        result_folder = crate::kernel::places::results_of(&folder);
+        result_folder = crate::kernel::places::results_of(&folder, &run_id);
         let spot = app
             .places
             .spot(&result_folder)
@@ -795,7 +803,7 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
     .await?;
     let limits = limits_for(&target, None, None, None, 120).map_err(Error::Invalid)?;
     let spec = json!({"as": As::of(ctx.identity), "source_sql": req.sql, "sql": statement, "limit": limit, "tables": tables, "export": req.export, "result_folder": result_folder, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
-    let run = new_run(ctx, "sql", &req.sql, &target, &spec);
+    let run = new_run(ctx, run_id, "sql", &req.sql, &target, &spec);
     queue(app, ctx, &run, "sql.submit").await?;
     Ok(run)
 }
@@ -1204,7 +1212,7 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
     if let Some(url) = &req.fetch {
         spec["fetch"] = json!({"url": url});
     }
-    let run = new_run(ctx, "job", &title, &target, &spec);
+    let run = new_run(ctx, new_id(), "job", &title, &target, &spec);
     queue(app, ctx, &run, "job.submit").await?;
     Ok(run)
 }
