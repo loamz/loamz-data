@@ -249,6 +249,29 @@ async fn submit_import(
     Ok((StatusCode::ACCEPTED, Json(run_view(&run, false))))
 }
 
+#[derive(Deserialize)]
+struct MaintenanceBody {
+    action: String,
+    older_than: Option<i64>,
+}
+
+async fn submit_maintenance(
+    State(app): State<Shared>,
+    c: WsCtx,
+    body: Bytes,
+) -> Result<(StatusCode, Json<Value>)> {
+    let req: MaintenanceBody = body_json(&body)?;
+    let run = service::submit_maintenance(
+        &app,
+        &ctx(&c),
+        &param(&c.params, "id")?,
+        &req.action,
+        req.older_than,
+    )
+    .await?;
+    Ok((StatusCode::ACCEPTED, Json(run_view(&run, false))))
+}
+
 async fn submit_job(
     State(app): State<Shared>,
     c: WsCtx,
@@ -502,6 +525,10 @@ pub fn routes() -> Routes {
         .post("/api/v1/workspaces/{ws}/sql/statements", statement)
         .post("/api/v1/workspaces/{ws}/runs", submit_job)
         .post("/api/v1/workspaces/{ws}/imports", submit_import)
+        .post(
+            "/api/v1/workspaces/{ws}/tables/{id}/maintenance",
+            submit_maintenance,
+        )
         .get("/api/v1/workspaces/{ws}/runs", list_runs)
         .get("/api/v1/workspaces/{ws}/runs/{id}", get_run)
         .post("/api/v1/workspaces/{ws}/runs/{id}/cancel", cancel_run)

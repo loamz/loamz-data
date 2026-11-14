@@ -181,6 +181,7 @@ pub struct ScheduleDraft {
     pub interval_seconds: Option<i64>,
     pub sql: Option<String>,
     pub job: Option<serde_json::Value>,
+    pub maintenance: Option<compute::ScheduledMaintenance>,
     pub webhook_ref: Option<String>,
 }
 
@@ -200,18 +201,23 @@ fn schedule_cadence(draft: &ScheduleDraft) -> Result<(&'static str, String)> {
 }
 
 fn schedule_definition(draft: &ScheduleDraft) -> Result<(String, &'static str)> {
-    match (&draft.sql, &draft.job) {
-        (Some(sql), None) if !sql.trim().is_empty() && sql.len() <= 100_000 => {
+    match (&draft.sql, &draft.job, &draft.maintenance) {
+        (Some(sql), None, None) if !sql.trim().is_empty() && sql.len() <= 100_000 => {
             Ok((serde_json::json!({"sql": sql}).to_string(), "sql-access"))
         }
-        (None, Some(job)) => {
+        (None, Some(job), None) => {
             let _: compute::JobRequest = serde_json::from_value(job.clone())
                 .map_err(|_| Error::Invalid("the job definition is invalid".into()))?;
             Ok((job.to_string(), "compute-create"))
         }
-        (Some(_), Some(_)) => Err(Error::Invalid("give either sql or job, not both".into())),
+        (None, None, Some(maintenance)) => Ok((
+            serde_json::to_string(&serde_json::json!({"maintenance": maintenance})).map_err(
+                |_| Error::Internal("the maintenance definition could not be saved".into()),
+            )?,
+            "compute-create",
+        )),
         _ => Err(Error::Invalid(
-            "give a non-empty sql statement or a job".into(),
+            "give exactly one of sql, job, or maintenance".into(),
         )),
     }
 }
@@ -257,6 +263,23 @@ pub async fn create_schedule(
             action: "schedule work",
             target: format!("{entitlement} in {}", ctx.workspace.name),
         }));
+    }
+    if let Some(maintenance) = &draft.maintenance {
+        let compute_ctx = compute::Ctx {
+            identity: &ctx.identity,
+            workspace: &ctx.workspace,
+            standing: ctx.standing,
+            sides: &ctx.sides,
+            schedule_task_id: None,
+        };
+        compute::prepare_maintenance(
+            app,
+            &compute_ctx,
+            &maintenance.table_id,
+            &maintenance.action,
+            maintenance.older_than,
+        )
+        .await?;
     }
     let webhook_ref = check_webhook(app, draft.webhook_ref.as_deref()).await?;
     let now = now_ms();
@@ -633,6 +656,18 @@ async fn run_schedule(app: &App, task: &Task) -> Result<()> {
                 .map(str::to_owned),
         };
         compute::submit_sql(app, &ctx, request).await.map(|_| ())
+    } else if let Some(maintenance) = definition.get("maintenance") {
+        let request: compute::ScheduledMaintenance = serde_json::from_value(maintenance.clone())
+            .map_err(|_| Error::Internal("a saved maintenance definition is invalid".into()))?;
+        compute::submit_maintenance(
+            app,
+            &ctx,
+            &request.table_id,
+            &request.action,
+            request.older_than,
+        )
+        .await
+        .map(|_| ())
     } else {
         let request: compute::JobRequest = serde_json::from_value(definition)
             .map_err(|_| Error::Internal("a saved schedule job is invalid".into()))?;

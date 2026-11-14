@@ -363,6 +363,101 @@ async fn scheduled_jobs_use_the_normal_job_submission_path(s: Server) {
 }
 both!(scheduled_jobs_use_the_normal_job_submission_path);
 
+async fn scheduled_maintenance_uses_the_same_table_write_checks(s: Server) {
+    let ws = s.acme().await;
+    let catalog = s.make(&ws, &ana(), "catalog", "", "data").await;
+    let schema = s.make(&ws, &ana(), "schema", &catalog, "raw").await;
+    let table = s.make(&ws, &ana(), "table", &schema, "events").await;
+    let target = create_online_target(&s, &ws).await;
+    let created = s
+        .post(
+            &format!("/api/v1/workspaces/{ws}/schedules"),
+            &ana(),
+            json!({
+                "name": "compact-events",
+                "interval_seconds": 60,
+                "maintenance": {"table_id": table, "action": "compact"}
+            }),
+        )
+        .await;
+    assert_eq!(created.status, 201, "{}", created.text());
+
+    let due = created.json()["next_run_ms"].as_i64().unwrap();
+    lifecycle::run_once(&s.app, due).await.unwrap();
+    let (kind, run_target, spec): (String, String, String) =
+        sqlx::query_as("SELECT kind, target_id, spec FROM runs WHERE schedule_task_id IS NOT NULL")
+            .fetch_one(s.app.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(kind, "job");
+    assert_eq!(run_target, target);
+    let spec: Value = serde_json::from_str(&spec).unwrap();
+    assert_eq!(spec["table_writes"][0]["id"], table);
+    assert!(
+        spec["script"]
+            .as_str()
+            .unwrap()
+            .contains("iceberg_rewrite_data_files")
+    );
+}
+both!(scheduled_maintenance_uses_the_same_table_write_checks);
+
+async fn scheduled_maintenance_pauses_when_modify_is_revoked(s: Server) {
+    let ws = s.acme().await;
+    let catalog = s.make(&ws, &ana(), "catalog", "", "data").await;
+    let schema = s.make(&ws, &ana(), "schema", &catalog, "raw").await;
+    let table = s.make(&ws, &ana(), "table", &schema, "events").await;
+    s.assign(&ws, &[&bob()]).await;
+    s.put(
+        &format!("/api/v1/workspaces/{ws}/entitlements"),
+        &ana(),
+        json!({"principal": "user:bob", "entitlement": "compute-create"}),
+    )
+    .await;
+    s.grant(&ws, &ana(), &table, "user:bob", "contributor")
+        .await;
+    create_online_target(&s, &ws).await;
+    let created = s
+        .post(
+            &format!("/api/v1/workspaces/{ws}/schedules"),
+            &bob(),
+            json!({
+                "name": "compact-events",
+                "interval_seconds": 60,
+                "maintenance": {"table_id": table, "action": "compact"}
+            }),
+        )
+        .await;
+    assert_eq!(created.status, 201, "{}", created.text());
+    let schedule = created.json();
+    let id = schedule["id"].as_str().unwrap();
+    let due = schedule["next_run_ms"].as_i64().unwrap();
+    assert_eq!(
+        s.delete(
+            &format!("/api/v1/workspaces/{ws}/securables/{table}/grants/user:bob"),
+            &ana(),
+        )
+        .await
+        .status,
+        204
+    );
+
+    lifecycle::run_once(&s.app, due).await.unwrap();
+    let state: String = sqlx::query_scalar("SELECT state FROM schedules WHERE id = $1")
+        .bind(id)
+        .fetch_one(s.app.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(state, "paused");
+    let runs: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM runs WHERE schedule_task_id IS NOT NULL")
+            .fetch_one(s.app.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(runs, 0);
+}
+both!(scheduled_maintenance_pauses_when_modify_is_revoked);
+
 async fn a_paused_schedule_discards_an_already_queued_firing(s: Server) {
     let ws = s.acme().await;
     let created = s
