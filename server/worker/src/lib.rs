@@ -99,6 +99,75 @@ fn answer(connection: &Connection, sql: &str, limit: usize) -> Result<Json> {
     }
 }
 
+/// A whole result asked for as an Arrow file: where to write it and the most it may be.
+pub struct Export {
+    pub path: std::path::PathBuf,
+    pub max_bytes: u64,
+}
+
+/// Counts what is written, and refuses to go past the most the file may be.
+struct Capped<W: std::io::Write> {
+    inner: W,
+    written: u64,
+    max: u64,
+}
+
+impl<W: std::io::Write> std::io::Write for Capped<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let next = self.written.saturating_add(buf.len() as u64);
+        if next > self.max {
+            return Err(std::io::Error::other("the result is larger than the limit"));
+        }
+        let n = self.inner.write(buf)?;
+        self.written = self.written.saturating_add(n as u64);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// Runs a read-only statement and writes every row to `export.path` as an Arrow IPC stream. The answer has the columns and the size,
+/// no rows. The file is removed if anything goes wrong.
+fn export_arrow(connection: &Connection, sql: &str, export: &Export) -> Result<Json> {
+    let sql = sql.trim().trim_end_matches(';');
+    let other = |e: &dyn std::fmt::Display| duckdb::Error::InvalidParameterName(e.to_string());
+    let done = || -> Result<Json> {
+        let mut stmt = connection.prepare(&format!("SELECT * FROM ({sql}) AS loamz_result"))?;
+        let batches = stmt.query_arrow([])?;
+        let schema = batches.get_schema();
+        let columns: Vec<Json> = schema
+            .fields()
+            .iter()
+            .map(|f| json!({"name": f.name(), "type": f.data_type().to_string()}))
+            .collect();
+        let file = std::fs::File::create(&export.path).map_err(|e| other(&e))?;
+        let mut capped = Capped {
+            inner: std::io::BufWriter::new(file),
+            written: 0,
+            max: export.max_bytes,
+        };
+        let mut rows = 0_u64;
+        {
+            let mut writer = arrow_ipc::writer::StreamWriter::try_new(&mut capped, &schema)
+                .map_err(|e| other(&e))?;
+            for batch in batches {
+                rows = rows.saturating_add(batch.num_rows() as u64);
+                writer.write(&batch).map_err(|e| other(&e))?;
+            }
+            writer.finish().map_err(|e| other(&e))?;
+        }
+        std::io::Write::flush(&mut capped).map_err(|e| other(&e))?;
+        Ok(json!({"columns": columns, "rows": [], "truncated": false, "export": {"rows": rows, "bytes": capped.written}}))
+    };
+    let answer = done();
+    if answer.is_err() {
+        let _ = std::fs::remove_file(&export.path);
+    }
+    answer
+}
+
 /// What a session is started for: if the next statement needs something different, the worker starts a new one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionKey {
@@ -199,6 +268,7 @@ impl Session {
         access: Option<&Access>,
         sql: &str,
         limit: usize,
+        export: Option<&Export>,
     ) -> Done {
         let began = std::time::Instant::now();
         let mut prepared = began.elapsed();
@@ -216,7 +286,10 @@ impl Session {
         };
         let result = Self::prepare(&conn, tables, access, &mut undo).and_then(|()| {
             prepared = began.elapsed();
-            answer(&conn, sql, limit)
+            match export {
+                Some(export) => export_arrow(&conn, sql, export),
+                None => answer(&conn, sql, limit),
+            }
         });
         let run = began.elapsed().saturating_sub(prepared);
         // Always undo, last made first. A failure here means something may be left behind.
@@ -359,7 +432,7 @@ fn to_json(value: duckdb::types::Value) -> Result<Json> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use super::Engine;
+    use super::{Engine, Export};
 
     #[test]
     fn lockdown_denies_host_files_and_cannot_be_changed() {
@@ -423,5 +496,39 @@ mod tests {
         let result = engine.answer("SELECT * FROM range(3)", 2).unwrap();
         assert_eq!(result["rows"], serde_json::json!([[0], [1]]));
         assert_eq!(result["truncated"], true);
+    }
+
+    #[test]
+    fn a_whole_result_is_written_as_an_arrow_file_and_read_back() {
+        let engine = Engine::start(&[]).unwrap();
+        let dir = std::env::temp_dir().join(format!("loamz-export-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let export = Export {
+            path: dir.join("r.arrow"),
+            max_bytes: 1 << 20,
+        };
+        let answer = super::export_arrow(
+            &engine.connection,
+            "SELECT i AS n, 'x' || i::VARCHAR AS s FROM range(5000) t(i);",
+            &export,
+        )
+        .unwrap();
+        assert_eq!(answer["export"]["rows"], 5000);
+        assert_eq!(answer["rows"], serde_json::json!([]));
+        assert_eq!(answer["columns"][0]["name"], "n");
+        let file = std::fs::File::open(&export.path).unwrap();
+        let reader = arrow_ipc::reader::StreamReader::try_new(file, None).unwrap();
+        let rows: usize = reader.map(|b| b.unwrap().num_rows()).sum();
+        assert_eq!(rows, 5000);
+
+        // A result over the limit is refused and leaves no file.
+        let small = Export {
+            path: dir.join("big.arrow"),
+            max_bytes: 1024,
+        };
+        let refused = super::export_arrow(&engine.connection, "SELECT * FROM range(100000)", &small);
+        assert!(refused.is_err());
+        assert!(!small.path.exists());
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

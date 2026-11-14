@@ -2322,3 +2322,40 @@ async fn an_import_from_an_address_is_downloaded_by_the_machine_and_never_shown_
     assert_eq!(shown.json()["spec"]["fetch"], true);
 }
 both!(an_import_from_an_address_is_downloaded_by_the_machine_and_never_shown_back);
+
+async fn a_whole_result_needs_a_table_and_a_storage_that_can_keep_it(s: Server) {
+    let l = lab(&s).await;
+    s.assign(&l.ws, &[&bob()]).await;
+    let statements = format!("/api/v1/workspaces/{}/sql/statements", l.ws);
+    // It is kept beside the data it came from, so a statement that reads no table has nowhere to put it.
+    let none = s
+        .post(
+            &statements,
+            &ana(),
+            json!({"sql": "SELECT 1", "export": true, "wait_s": 0}),
+        )
+        .await;
+    assert_eq!(none.status, 400, "{}", none.text());
+    // And this test's storage is a plain folder, which cannot hand out credentials or signed addresses.
+    let folder = s
+        .post(
+            &statements,
+            &ana(),
+            json!({"sql": "SELECT * FROM sales.raw.orders", "export": true, "wait_s": 0}),
+        )
+        .await;
+    assert_eq!(folder.status, 400, "{}", folder.text());
+    // A run that kept no file has none to read, for anyone.
+    let plain = s
+        .post(
+            &statements,
+            &ana(),
+            json!({"sql": "SELECT * FROM sales.raw.orders", "wait_s": 0}),
+        )
+        .await;
+    let id = plain.json()["id"].as_str().unwrap().to_owned();
+    let path = format!("/api/v1/workspaces/{}/runs/{id}/result", l.ws);
+    assert_eq!(s.get(&path, &ana()).await.status, 404);
+    assert_eq!(s.get(&path, &bob()).await.status, 404);
+}
+both!(a_whole_result_needs_a_table_and_a_storage_that_can_keep_it);

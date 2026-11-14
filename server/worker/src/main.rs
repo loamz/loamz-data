@@ -2,7 +2,7 @@
 
 use std::io::{self, BufRead, Write};
 
-use loamz_worker::{Access, Session, SessionKey, Table};
+use loamz_worker::{Access, Export, Session, SessionKey, Table};
 use serde_json::{Value, json};
 
 mod proxy;
@@ -23,6 +23,8 @@ struct Request {
     tables: Vec<Table>,
     access: Option<Access>,
     key: SessionKey,
+    /// The whole result as an Arrow file, when the statement asked for it.
+    export: Option<Export>,
 }
 
 fn parse(request: &Value, proxy_port: u16) -> Result<Request, String> {
@@ -81,11 +83,16 @@ fn parse(request: &Value, proxy_port: u16) -> Result<Request, String> {
             Some(field("bucket")?),
         )
     };
+    let export = (spec["export"] == true).then(|| Export {
+        path: "/workspace/result.arrow".into(),
+        max_bytes: 1 << 30,
+    });
     Ok(Request {
         sql,
         limit,
         tables,
         access,
+        export,
         key: SessionKey {
             bucket,
             memory_mb,
@@ -125,7 +132,13 @@ fn run(
     let Some(active) = session.as_ref() else {
         return (Err("the SQL sandbox has no engine".into()), false);
     };
-    let done = active.statement(&req.tables, req.access.as_ref(), &req.sql, req.limit);
+    let done = active.statement(
+        &req.tables,
+        req.access.as_ref(),
+        &req.sql,
+        req.limit,
+        req.export.as_ref(),
+    );
     let result = match done.result {
         Ok(mut answer) => {
             // Where the time went, in milliseconds: starting an engine (0 when one was reused), getting the tables ready, and the run.

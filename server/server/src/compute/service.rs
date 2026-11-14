@@ -415,6 +415,10 @@ pub struct SqlRequest {
     pub sql: String,
     pub limit: Option<i64>,
     pub target: Option<String>,
+    /// Keep the whole result as an Arrow file (up to 1 GiB, for a day), read from `/runs/{id}/result`. The run's own result then has the
+    /// columns and the size, not the rows.
+    #[serde(default)]
+    pub export: bool,
 }
 
 #[derive(Deserialize)]
@@ -752,6 +756,28 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
     }
     let statement = sql::guard(&req.sql, &rules).map_err(Error::Invalid)?;
     let limit = req.limit.unwrap_or(DEFAULT_ROWS).clamp(1, MAX_ROWS);
+    // The whole result is kept beside the data it came from, in that storage: so it needs a table, and a storage that can sign.
+    let mut result_folder = String::new();
+    if req.export {
+        let first = tables
+            .first()
+            .and_then(|t| t["id"].as_str())
+            .ok_or_else(|| {
+                Error::Invalid("a whole result is kept beside a table: read at least one".into())
+            })?;
+        let (_, _, folder) = tables::locate(app, &ctx.workspace.org_id, first).await?;
+        result_folder = crate::kernel::places::results_of(&folder);
+        let spot = app
+            .places
+            .spot(&result_folder)
+            .await
+            .map_err(|e| Error::Unavailable(e.to_string()))?;
+        if spot.issuer.is_none() || spot.place.is_none() {
+            return Err(Error::Invalid(
+                "this storage cannot keep a whole result".into(),
+            ));
+        }
+    }
     let mut policies = Vec::new();
     for t in &tables {
         let id = t["id"].as_str().unwrap_or_default();
@@ -768,7 +794,7 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
     )
     .await?;
     let limits = limits_for(&target, None, None, None, 120).map_err(Error::Invalid)?;
-    let spec = json!({"as": As::of(ctx.identity), "source_sql": req.sql, "sql": statement, "limit": limit, "tables": tables, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
+    let spec = json!({"as": As::of(ctx.identity), "source_sql": req.sql, "sql": statement, "limit": limit, "tables": tables, "export": req.export, "result_folder": result_folder, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
     let run = new_run(ctx, "sql", &req.sql, &target, &spec);
     queue(app, ctx, &run, "sql.submit").await?;
     Ok(run)
@@ -1496,6 +1522,7 @@ async fn guarded_sql(app: &App, identity: &Identity, run: &Run, spec: &Value) ->
 async fn storage_for(
     app: &App,
     org: &str,
+    run_id: &str,
     ids: &[String],
     spec: &Value,
     timeout_s: i64,
@@ -1550,12 +1577,23 @@ async fn storage_for(
     let place = vended
         .place
         .ok_or_else(|| Error::Unavailable("this server's storage is not a bucket".into()))?;
-    Ok(Some(json!({
+    let mut out = json!({
         "endpoint": place.endpoint, "region": place.region, "bucket": place.bucket, "key_id": creds.key_id, "secret": creds.secret,
         "session_token": creds.session_token, "tables": located,
         "mode": if writing { "write" } else { "read" },
         "read_prefixes": read_prefixes, "write_prefixes": write_prefixes, "create_roots": create_roots,
-    })))
+    });
+    // A statement that asked for its whole result may write one file, and only that file: its own credential, apart from the tables'.
+    if spec["export"] == true
+        && let Some(folder) = spec["result_folder"].as_str()
+    {
+        let v = tables::vend(app, &[folder], true, ttl).await?;
+        out["result"] = json!({
+            "key_id": v.credentials.key_id, "secret": v.credentials.secret, "session_token": v.credentials.session_token,
+            "key": result_key(app, folder, run_id).await?,
+        });
+    }
+    Ok(Some(out))
 }
 
 /// Check the current workspace, entitlements, object grants and table rules before handing a run to a worker.
@@ -1861,9 +1899,9 @@ pub async fn lease(app: &App, target: &Target) -> Result<Option<Lease>> {
         None
     } else {
         // The credentials come from the storage provider over the network: one more try before giving up on a slow answer.
-        let mut got = storage_for(app, &run.org_id, &ids, &spec, limits.timeout_s).await;
+        let mut got = storage_for(app, &run.org_id, &run.id, &ids, &spec, limits.timeout_s).await;
         if got.is_err() {
-            got = storage_for(app, &run.org_id, &ids, &spec, limits.timeout_s).await;
+            got = storage_for(app, &run.org_id, &run.id, &ids, &spec, limits.timeout_s).await;
         }
         match got {
             Ok(s) => s,
@@ -1958,6 +1996,16 @@ pub async fn complete(app: &App, target: &Target, id: &str, report: Report) -> R
         ));
     }
     store::tokens_delete_for_run(&mut *uow.tx, id).await?;
+    // A statement that asked for its whole result and says it was kept: remember where, so a person can read it and it can be removed.
+    if report.state == "succeeded"
+        && let Ok(spec) = serde_json::from_str::<Value>(&run.spec)
+        && spec["export"] == true
+        && let Some(folder) = spec["result_folder"].as_str()
+        && let Ok(kept) = serde_json::from_str::<Value>(&report.result)
+        && let Some(bytes) = kept["export"]["bytes"].as_i64().filter(|b| *b > 0)
+    {
+        store::set_result(&mut *uow.tx, id, bytes, folder).await?;
+    }
     uow.audit(
         &run.org_id,
         &Who::system(&run.on_behalf_of),
@@ -2035,12 +2083,78 @@ pub async fn reap(app: &App, now: i64) -> Result<usize> {
 
 /// Runs forever, tidying every few seconds. Started once by the server.
 pub async fn work_forever(app: crate::kernel::state::Shared) {
+    let mut sweeps = 0_u32;
     loop {
         if let Err(e) = reap(&app, now_ms()).await {
             tracing::error!(error = %e, "the compute reaper could not reach the database");
         }
+        // Result files: looked at about once a minute.
+        sweeps = sweeps.wrapping_add(1);
+        if sweeps.is_multiple_of(12)
+            && let Err(e) = expire_results(&app, now_ms()).await
+        {
+            tracing::error!(error = %e, "result files could not be removed");
+        }
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
+}
+
+/// How long a result file is kept after its run ends.
+const KEEP_RESULTS_MS: i64 = 24 * 60 * 60 * 1000;
+/// How long a signed address for a result file works.
+const RESULT_LINK: Duration = Duration::from_mins(5);
+/// The same, in milliseconds, for the answer.
+pub const RESULT_LINK_MS: i64 = 5 * 60 * 1000;
+
+fn result_name(run: &str) -> String {
+    format!("{run}.arrow")
+}
+
+/// Where the machine puts a statement's whole result: the key the run's own write credential is limited to.
+async fn result_key(app: &App, folder: &str, run: &str) -> Result<String> {
+    Ok(format!(
+        "{}/{}",
+        tables::key_of(app, folder).await?,
+        result_name(run)
+    ))
+}
+
+/// A statement's whole result, as a short-lived signed address into the storage the data is in: the bytes never pass through this
+/// server. For someone who may see the run's detail. Returns the address and the file's size.
+///
+/// # Errors
+/// No such run, no right to its detail, or it kept no file (or the file has expired).
+pub async fn result_link(app: &App, ctx: &Ctx<'_>, id: &str) -> Result<(String, i64)> {
+    let run = get(app, ctx, id).await?;
+    require_detail(app, ctx, &run).await?;
+    let missing = || Error::NotFound("this run has no result file".into());
+    let (folder, bytes) = store::result_folder(app.db.pool(), id)
+        .await?
+        .ok_or_else(missing)?;
+    let spot = app.places.spot(&folder).await.map_err(|_| missing())?;
+    let url = spot
+        .store
+        .sign_get(&spot.rest, &result_name(id), RESULT_LINK)
+        .await
+        .map_err(|_| missing())?;
+    Ok((url, bytes))
+}
+
+/// Removes the result files that are a day old or belong to an erased run.
+///
+/// # Errors
+/// The database could not be reached.
+pub async fn expire_results(app: &App, now: i64) -> Result<()> {
+    for (id, folder) in store::results_to_remove(app.db.pool(), now - KEEP_RESULTS_MS, 100).await? {
+        // A file that is already gone is what was wanted.
+        match app.places.delete(&folder, &result_name(&id)).await {
+            Ok(()) | Err(loamz_lake::files::FileError::NotFound) => {
+                store::set_result(app.db.pool(), &id, 0, "").await?;
+            }
+            Err(e) => tracing::warn!(run = id, error = %e, "a result file could not be removed"),
+        }
+    }
+    Ok(())
 }
 
 /// Which compute may read a catalog, by id (empty: any compute of the workspace).

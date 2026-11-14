@@ -631,6 +631,7 @@ async fn run_schedule(app: &App, task: &Task) -> Result<()> {
                 .get("target")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned),
+            export: false,
         };
         compute::submit_sql(app, &ctx, request).await.map(|_| ())
     } else {

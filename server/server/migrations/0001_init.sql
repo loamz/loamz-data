@@ -183,7 +183,10 @@ CREATE TABLE runs (
     created_ms    BIGINT NOT NULL,
     started_ms    BIGINT NOT NULL,
     finished_ms   BIGINT NOT NULL,
-    schedule_task_id TEXT UNIQUE
+    schedule_task_id TEXT UNIQUE,
+    -- a statement's whole result kept as an Arrow file in the data's own storage: its size and the folder it is in (0 and empty: none)
+    result_bytes  BIGINT NOT NULL DEFAULT 0,
+    result_folder TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX runs_workspace ON runs (workspace_id, created_ms);
 CREATE INDEX runs_due ON runs (state, target_id, created_ms);

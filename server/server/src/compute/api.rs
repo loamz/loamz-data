@@ -205,6 +205,9 @@ struct StatementBody {
     sql: String,
     limit: Option<i64>,
     target: Option<String>,
+    /// Keep the whole result as an Arrow file, read from `/runs/{id}/result`.
+    #[serde(default)]
+    export: bool,
     /// How long to wait for the answer, in seconds, before getting the run back to ask about later.
     wait_s: Option<u64>,
 }
@@ -220,6 +223,7 @@ async fn statement(State(app): State<Shared>, c: WsCtx, body: Bytes) -> Result<R
             sql: req.sql,
             limit: req.limit,
             target: req.target,
+            export: req.export,
         },
     )
     .await?;
@@ -313,6 +317,16 @@ async fn get_run(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
         restricted_view(&run, &c)
     };
     Ok(Json(view))
+}
+
+/// A statement's whole result: an Arrow IPC stream kept in the storage beside the data. The answer is a short-lived signed address;
+/// the reader fetches it without any credential of ours (the bytes go from the bucket to the reader, not through this server).
+async fn get_result(State(app): State<Shared>, c: WsCtx) -> Result<Json<Value>> {
+    let (url, bytes) = service::result_link(&app, &ctx(&c), &param(&c.params, "id")?).await?;
+    Ok(Json(json!({
+        "url": url, "bytes": bytes, "format": "application/vnd.apache.arrow.stream",
+        "expires_ms": now_ms() + service::RESULT_LINK_MS,
+    })))
 }
 
 async fn cancel_run(State(app): State<Shared>, c: WsCtx) -> Result<(StatusCode, Json<Value>)> {
@@ -508,6 +522,7 @@ pub fn routes() -> Routes {
         .post("/api/v1/workspaces/{ws}/imports", submit_import)
         .get("/api/v1/workspaces/{ws}/runs", list_runs)
         .get("/api/v1/workspaces/{ws}/runs/{id}", get_run)
+        .get("/api/v1/workspaces/{ws}/runs/{id}/result", get_result)
         .post("/api/v1/workspaces/{ws}/runs/{id}/cancel", cancel_run)
         .post("/api/v1/workspaces/{ws}/compute/targets", attach)
         .post(

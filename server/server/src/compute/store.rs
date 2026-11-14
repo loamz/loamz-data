@@ -406,6 +406,63 @@ pub async fn heartbeat<'e, E: Executor<'e, Database = Any>>(
     })
 }
 
+/// Records that a run's whole result is kept in `folder` (its size), or no longer is (0 and empty).
+pub async fn set_result<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    id: &str,
+    bytes: i64,
+    folder: &str,
+) -> Result<()> {
+    sqlx::query("UPDATE runs SET result_bytes = $2, result_folder = $3 WHERE id = $1")
+        .bind(id)
+        .bind(bytes)
+        .bind(folder)
+        .execute(e)
+        .await?;
+    Ok(())
+}
+
+/// The folder a run's whole result is in and its size, if one is kept.
+pub async fn result_folder<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    id: &str,
+) -> Result<Option<(String, i64)>> {
+    let r = sqlx::query("SELECT result_bytes, result_folder FROM runs WHERE id = $1")
+        .bind(id)
+        .fetch_optional(e)
+        .await?;
+    Ok(match r {
+        Some(row) if row.try_get::<i64, _>("result_bytes")? > 0 => Some((
+            row.try_get::<String, _>("result_folder")?,
+            row.try_get::<i64, _>("result_bytes")?,
+        )),
+        _ => None,
+    })
+}
+
+/// Runs whose result file is to go: it is a day old, or the run was erased (an erased run has no spec any more).
+pub async fn results_to_remove<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    before_ms: i64,
+    limit: i64,
+) -> Result<Vec<(String, String)>> {
+    let rows = sqlx::query(
+        "SELECT id, result_folder FROM runs WHERE result_bytes > 0 AND ((finished_ms > 0 AND finished_ms < $1) OR spec = '') LIMIT $2",
+    )
+    .bind(before_ms)
+    .bind(limit)
+    .fetch_all(e)
+    .await?;
+    rows.iter()
+        .map(|r| {
+            Ok((
+                r.try_get::<String, _>("id")?,
+                r.try_get::<String, _>("result_folder")?,
+            ))
+        })
+        .collect()
+}
+
 pub struct Outcome<'a> {
     pub state: &'a str,
     pub exit_code: i64,

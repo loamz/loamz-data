@@ -11,7 +11,9 @@ rust-version = "1.95"
 
 [dependencies]
 # Linked to DuckDB's own prebuilt library (DUCKDB_LIB_DIR, see scripts/fetch-duckdb.sh), not compiled from source: no `bundled`.
-duckdb = { version = "=1.20000.1" }
+duckdb = { version = "=1.20000.1", features = ["vtab-arrow"] }
+# The IPC writer for a statement's whole result (the same Arrow version DuckDB hands out).
+arrow-ipc = "60"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 serde_json = "1"
 

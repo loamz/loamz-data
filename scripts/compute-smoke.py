@@ -177,6 +177,25 @@ try:
     assert refused["state"] == "failed" and "x.csv" not in json.dumps(refused), refused
     _, http = call("POST", f"{S}/imports", ana, {"target": "shop.main.fetched", "url": "http://example.com/x.csv"}, ok=(400,))
 
+    # A whole result as Arrow: the machine puts the file beside the data (in the bucket), and the server only signs a short-lived address.
+    many = ", ".join(f"shop.main.orders t{i}" for i in range(6))
+    t1 = time.time()
+    _, big = call("POST", f"{S}/sql/statements", ana, {"sql": f"SELECT t0.order_id, t0.region, t0.amount FROM {many}", "export": True, "wait_s": 90})
+    if big["state"] != "succeeded":
+        print(open(f"{work}/agent.log").read()[-1500:])
+        sys.exit("the exported statement failed: " + json.dumps({k: big[k] for k in ("state", "error", "stderr")})[:800])
+    kept = big["result"]["export"]
+    _, link = call("GET", f"{S}/runs/{big['id']}/result", ana)
+    assert link["format"] == "application/vnd.apache.arrow.stream" and link["bytes"] == kept["bytes"], link
+    # Read straight from the bucket with the signed address alone: no credential of ours is sent.
+    import pyarrow.ipc as ipc
+    with urllib.request.urlopen(link["url"], timeout=60) as r:
+        table = ipc.open_stream(r).read_all()
+    assert table.num_rows == kept["rows"] == 5 ** 6 and table.column_names == ["order_id", "region", "amount"], (table.num_rows, kept)
+    step(f"a whole result ({table.num_rows} rows, {kept['bytes']} bytes) was kept beside the data and read as an Arrow stream straight from the bucket in {time.time() - t1:.1f} s")
+    code, _ = call("GET", f"{S}/runs/{big['id']}/result", "not-a-token", ok=(401,))
+    step(f"and the address is only given to someone with a token ({code})")
+
     # A catalog on a customer's storage location: its bytes are read and written with the location's own credential, in its own
     # folder of the bucket (here the same RustFS, a folder of its own), and nothing of it is in the installation's default storage.
     _, cred = call("POST", f"{S}/storage/credentials", ana, {"name": "rustfs", "provider": "rustfs", "endpoint": S3,

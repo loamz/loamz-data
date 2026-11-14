@@ -45,6 +45,7 @@ where
     F: Fn(crate::pool::WorkerKey, crate::work::Limits) -> Fut + Send + Sync,
     Fut: std::future::Future<Output = std::io::Result<crate::pool::Worker>> + Send,
 {
+    #[allow(clippy::too_many_lines)]
     async fn execute(&self, lease: &crate::work::Lease, stop: StopSignal) -> crate::work::Report {
         if lease.run.kind != "sql" {
             return crate::work::Report::failed("the warm worker only runs SQL");
@@ -125,6 +126,7 @@ where
         }
         match outcome {
             Ok(Ok(report)) => {
+                let report = with_export(&worker, lease, report).await;
                 worker.completed();
                 report
             }
@@ -145,6 +147,23 @@ where
             }
         }
     }
+}
+
+/// A whole result asked for as a file is moved out of the sandbox's folder now, while the worker is still ours.
+async fn with_export(
+    worker: &crate::pool::Worker,
+    lease: &crate::work::Lease,
+    mut report: crate::work::Report,
+) -> crate::work::Report {
+    if report.state == "succeeded" && lease.run.spec["export"] == true {
+        match worker.take_export(&lease.run.id).await {
+            Some(path) => report.file = Some(path),
+            None => {
+                report = crate::work::Report::failed("the statement produced no result file");
+            }
+        }
+    }
+    report
 }
 
 #[derive(Debug)]

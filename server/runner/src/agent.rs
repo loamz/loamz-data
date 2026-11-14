@@ -9,7 +9,7 @@ use tokio::sync::watch;
 use crate::{
     exec::{Executor, WarmExecutor},
     pool::Pool,
-    work::{Lease, Machine, Report, execute},
+    work::{Lease, Machine, Report, execute, upload_result},
 };
 
 pub struct Agent {
@@ -108,11 +108,23 @@ impl Agent {
         let stop = async move {
             let _ = stop_rx.wait_for(|stopped| *stopped).await;
         };
-        let report = if lease.run.kind == "sql" {
+        let mut report = if lease.run.kind == "sql" {
             warm.execute(&lease, Box::pin(stop)).await
         } else {
             execute(&lease, &self.machine, &self.data_url, stop).await
         };
+        // A whole result goes to the bucket the data is in, before the report says the run is done; if it cannot be put there, the run
+        // has failed. The Data server never carries it.
+        if let Some(path) = report.file.take() {
+            let put = match &lease.storage {
+                Some(storage) => upload_result(storage, &path).await,
+                None => Err("the lease has no storage".into()),
+            };
+            if let Err(e) = put {
+                report = Report::failed(format!("the result could not be stored: {e}"));
+            }
+            let _ = tokio::fs::remove_file(&path).await;
+        }
         beat.abort();
         tracing::info!(run = id, state = report.state, "finished");
         self.report(http, &id, &report).await;

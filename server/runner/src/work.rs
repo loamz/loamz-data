@@ -62,6 +62,9 @@ pub struct Report {
     pub stderr: String,
     pub result: String,
     pub error: String,
+    /// A statement's whole result, as an Arrow file on this machine. It is sent to the server before the report and is not part of it.
+    #[serde(skip)]
+    pub file: Option<PathBuf>,
 }
 
 impl Report {
@@ -239,6 +242,46 @@ impl Api {
         }
         Ok(())
     }
+}
+
+/// Puts a statement's whole result where the data is: in the same bucket, in the one file the run's own credential allows. It is
+/// streamed from disk; the Data server never carries it.
+pub async fn upload_result(storage: &Value, file: &Path) -> Result<(), String> {
+    use object_store::{aws::AmazonS3Builder, buffered::BufWriter, path::Path as Key};
+    use tokio::io::AsyncWriteExt;
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+    let text = |root: &Value, k: &str| {
+        root[k]
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| format!("the lease has no result {k}"))
+    };
+    let result = &storage["result"];
+    let endpoint = text(storage, "endpoint")?;
+    let s3 = AmazonS3Builder::new()
+        .with_endpoint(&endpoint)
+        // A local store (RustFS in development) is plain http.
+        .with_allow_http(endpoint.starts_with("http://"))
+        .with_bucket_name(text(storage, "bucket")?)
+        .with_access_key_id(text(result, "key_id")?)
+        .with_secret_access_key(text(result, "secret")?)
+        .with_token(text(result, "session_token")?)
+        .with_region(storage["region"].as_str().unwrap_or("auto"))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut writer = BufWriter::new(
+        std::sync::Arc::new(s3),
+        Key::from(text(result, "key")?.as_str()),
+    );
+    let mut from = tokio::fs::File::open(file)
+        .await
+        .map_err(|e| e.to_string())?;
+    tokio::io::copy(&mut from, &mut writer)
+        .await
+        .map_err(|e| e.to_string())?;
+    writer.shutdown().await.map_err(|e| e.to_string())
 }
 
 /// Fetches a table's whole folder (its Iceberg metadata and data files) straight from the bucket, with the run's own read-only

@@ -87,6 +87,15 @@ pub fn root_of(location: &str) -> String {
     format!("{MARK}{location}")
 }
 
+/// Where a statement's whole result goes when its table is in `folder`: a `results` folder beside the data, in the same store.
+#[must_use]
+pub fn results_of(folder: &str) -> String {
+    match location_of(folder) {
+        Some(location) => format!("{}/results", root_of(location)),
+        None => "results".to_owned(),
+    }
+}
+
 /// The location a folder is on, if it is on one.
 #[must_use]
 pub fn location_of(folder: &str) -> Option<&str> {
@@ -274,5 +283,7 @@ mod tests {
         // Only the marker and an id make it a location: a bare marker is an ordinary folder name.
         assert_eq!(location_of("loc-"), None);
         assert_eq!(location_of(&root_of(id)), Some(id));
+        assert_eq!(results_of(&on), format!("loc-{id}/results"));
+        assert_eq!(results_of("wk-1/cat/tbl"), "results");
     }
 }
