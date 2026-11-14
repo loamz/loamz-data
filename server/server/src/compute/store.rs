@@ -243,7 +243,17 @@ pub async fn set_workspace_quota(
 }
 
 pub async fn insert_run<'e, E: Executor<'e, Database = Any>>(e: E, r: &Run) -> Result<()> {
-    sqlx::query(&format!("INSERT INTO runs ({RUN}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)"))
+    let spec: serde_json::Value = serde_json::from_str(&r.spec)
+        .map_err(|e| Error::Internal(format!("a run has a spec that is not JSON: {e}")))?;
+    let result_folder = if spec["export"] == true {
+        spec["result_folder"]
+            .as_str()
+            .filter(|folder| !folder.is_empty())
+            .ok_or_else(|| Error::Internal("an exported run has no result folder".into()))?
+    } else {
+        ""
+    };
+    sqlx::query(&format!("INSERT INTO runs ({RUN}, result_folder) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)"))
         .bind(&r.id)
         .bind(&r.org_id)
         .bind(&r.workspace_id)
@@ -264,6 +274,7 @@ pub async fn insert_run<'e, E: Executor<'e, Database = Any>>(e: E, r: &Run) -> R
         .bind(r.created_ms)
         .bind(r.started_ms)
         .bind(r.finished_ms)
+        .bind(result_folder)
         .execute(e)
         .await?;
     Ok(())
@@ -447,7 +458,7 @@ pub async fn results_to_remove<'e, E: Executor<'e, Database = Any>>(
     limit: i64,
 ) -> Result<Vec<(String, String)>> {
     let rows = sqlx::query(
-        "SELECT id, result_folder FROM runs WHERE result_bytes > 0 AND ((finished_ms > 0 AND finished_ms < $1) OR spec = '') LIMIT $2",
+        "SELECT id, result_folder FROM runs WHERE result_folder <> '' AND ((finished_ms > 0 AND finished_ms < $1) OR spec = '') LIMIT $2",
     )
     .bind(before_ms)
     .bind(limit)
@@ -709,4 +720,51 @@ pub async fn queue_depths<'e, E: Executor<'e, Database = Any>>(e: E) -> Result<V
         .map(|r| Ok((r.try_get::<String, _>("state")?, r.try_get::<i64, _>("n")?)))
         .collect::<std::result::Result<_, sqlx::Error>>()
         .map_err(Into::into)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn insert_run_records_result_folder_before_upload() {
+        let db = loamz_lake::sql::Db::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        db.migrate(&crate::MIGRATIONS).await.unwrap();
+        let run = Run {
+            id: "run-1".into(),
+            org_id: "org-1".into(),
+            workspace_id: "workspace-1".into(),
+            kind: "sql".into(),
+            requested_by: "user:alice".into(),
+            on_behalf_of: "user:alice".into(),
+            target_id: "target-1".into(),
+            state: "queued".into(),
+            title: "query".into(),
+            spec: r#"{"export":true,"result_folder":"results/run-1"}"#.into(),
+            result: String::new(),
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: -1,
+            error: String::new(),
+            cancel: false,
+            lease_until: 0,
+            created_ms: 1,
+            started_ms: 0,
+            finished_ms: 0,
+        };
+        insert_run(db.pool(), &run).await.unwrap();
+
+        let row = sqlx::query("SELECT result_folder FROM runs WHERE id = $1")
+            .bind(&run.id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(
+            row.try_get::<String, _>("result_folder").unwrap(),
+            "results/run-1"
+        );
+    }
 }

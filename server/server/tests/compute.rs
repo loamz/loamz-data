@@ -2359,3 +2359,42 @@ async fn a_whole_result_needs_a_table_and_a_storage_that_can_keep_it(s: Server) 
     assert_eq!(s.get(&path, &bob()).await.status, 404);
 }
 both!(a_whole_result_needs_a_table_and_a_storage_that_can_keep_it);
+
+async fn expiry_removes_an_unreported_result_file(s: Server) {
+    let l = lab(&s).await;
+    attach(&s).await;
+    let statement = format!("/api/v1/workspaces/{}/sql/statements", l.ws);
+    let run = s
+        .post(
+            &statement,
+            &ana(),
+            json!({"sql": "SELECT * FROM sales.raw.orders", "wait_s": 0}),
+        )
+        .await;
+    assert_eq!(run.status, 202, "{}", run.text());
+    let id = run.json()["id"].as_str().unwrap().to_owned();
+    let file = format!("{id}.arrow");
+    let mut upload = s
+        .app
+        .places
+        .begin_put("results", &file, 1024)
+        .await
+        .unwrap();
+    upload.write(b"uploaded but not reported").await.unwrap();
+    upload.commit().await.unwrap();
+    sqlx::query(
+        "UPDATE runs SET state = 'failed', finished_ms = 1, result_folder = 'results' WHERE id = $1",
+    )
+    .bind(&id)
+    .execute(s.app.db.pool())
+    .await
+    .unwrap();
+
+    compute::expire_results(&s.app, now_ms()).await.unwrap();
+
+    assert!(
+        s.app.places.open("results", &file).await.is_err(),
+        "expiry left an uploaded result whose completion report was never recorded"
+    );
+}
+both!(expiry_removes_an_unreported_result_file);
