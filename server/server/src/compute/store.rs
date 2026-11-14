@@ -456,9 +456,9 @@ pub async fn results_to_remove<'e, E: Executor<'e, Database = Any>>(
     e: E,
     before_ms: i64,
     limit: i64,
-) -> Result<Vec<(String, String)>> {
+) -> Result<Vec<(String, String, i64, i64)>> {
     let rows = sqlx::query(
-        "SELECT id, result_folder FROM runs WHERE result_folder <> '' AND ((finished_ms > 0 AND finished_ms < $1) OR spec = '') LIMIT $2",
+        "SELECT id, result_folder, result_bytes, finished_ms FROM runs WHERE result_folder <> '' AND ((finished_ms > 0 AND finished_ms < $1) OR spec = '') LIMIT $2",
     )
     .bind(before_ms)
     .bind(limit)
@@ -469,6 +469,8 @@ pub async fn results_to_remove<'e, E: Executor<'e, Database = Any>>(
             Ok((
                 r.try_get::<String, _>("id")?,
                 r.try_get::<String, _>("result_folder")?,
+                r.try_get::<i64, _>("result_bytes")?,
+                r.try_get::<i64, _>("finished_ms")?,
             ))
         })
         .collect()

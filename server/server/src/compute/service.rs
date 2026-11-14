@@ -1003,11 +1003,11 @@ impl<'a> Source<'a> {
         }
     }
 
-    /// What titles say about the file: a volume's path, or only the host of an address (its path may carry a secret too).
+    /// What titles say about the file without exposing an address.
     fn label(&self) -> String {
         match self {
             Self::Volume(path) => (*path).to_owned(),
-            Self::Address(url) => url.host_str().unwrap_or_default().to_owned(),
+            Self::Address(_) => "remote file".to_owned(),
         }
     }
 }
@@ -2153,11 +2153,17 @@ pub async fn result_link(app: &App, ctx: &Ctx<'_>, id: &str) -> Result<(String, 
 /// # Errors
 /// The database could not be reached.
 pub async fn expire_results(app: &App, now: i64) -> Result<()> {
-    for (id, folder) in store::results_to_remove(app.db.pool(), now - KEEP_RESULTS_MS, 100).await? {
+    let before_ms = now - KEEP_RESULTS_MS;
+    for (id, folder, bytes, finished_ms) in
+        store::results_to_remove(app.db.pool(), before_ms, 100).await?
+    {
         // A file that is already gone is what was wanted.
         match app.places.delete(&folder, &result_name(&id)).await {
             Ok(()) | Err(loamz_lake::files::FileError::NotFound) => {
-                store::set_result(app.db.pool(), &id, 0, "").await?;
+                // Keep tracking an erased in-flight upload until its storage credential has expired.
+                if bytes > 0 || finished_ms < before_ms {
+                    store::set_result(app.db.pool(), &id, 0, "").await?;
+                }
             }
             Err(e) => tracing::warn!(run = id, error = %e, "a result file could not be removed"),
         }

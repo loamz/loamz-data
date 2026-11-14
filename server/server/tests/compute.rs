@@ -1460,6 +1460,23 @@ async fn completed_results_require_current_input_access(s: Server) {
             && view.get("stderr").is_none()
             && view.get("result").is_none()
     );
+    let result_folder = format!("results/{id}");
+    sqlx::query("UPDATE runs SET result_bytes = 1, result_folder = $2 WHERE id = $1")
+        .bind(&id)
+        .bind(result_folder)
+        .execute(s.app.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        s.get(
+            &format!("/api/v1/workspaces/{}/runs/{id}/result", l.ws),
+            &bob()
+        )
+        .await
+        .status,
+        404,
+        "a hidden run must not yield a signed result link"
+    );
     s.assign(&l.ws, &[&bob(), &cy()]).await;
     assert_eq!(
         s.get(&path, &cy()).await.status,
@@ -2286,7 +2303,7 @@ async fn an_import_from_an_address_is_downloaded_by_the_machine_and_never_shown_
     assert_eq!(r.status, 202, "{}", r.text());
     let run = r.json();
     let title = run["title"].as_str().unwrap();
-    assert!(title.contains("files.example.com"), "{title}");
+    assert!(!title.contains("files.example.com"), "{title}");
     assert!(
         !title.contains("exports") && !title.contains("topsecret"),
         "{title}"
@@ -2320,6 +2337,14 @@ async fn an_import_from_an_address_is_downloaded_by_the_machine_and_never_shown_
     assert_eq!(shown.status, 200);
     assert!(!shown.text().contains("topsecret"), "{}", shown.text());
     assert_eq!(shown.json()["spec"]["fetch"], true);
+    let audit = s
+        .get(&format!("/api/v1/orgs/{ACME}/audit?limit=500"), &ana())
+        .await;
+    assert!(
+        !audit.text().contains("topsecret") && !audit.text().contains("files.example.com"),
+        "{}",
+        audit.text()
+    );
 }
 both!(an_import_from_an_address_is_downloaded_by_the_machine_and_never_shown_back);
 
@@ -2346,6 +2371,7 @@ async fn a_whole_result_needs_a_table_and_a_storage_that_can_keep_it(s: Server) 
         .await;
     assert_eq!(folder.status, 400, "{}", folder.text());
     // A run that kept no file has none to read, for anyone.
+    attach(&s).await;
     let plain = s
         .post(
             &statements,
@@ -2353,6 +2379,7 @@ async fn a_whole_result_needs_a_table_and_a_storage_that_can_keep_it(s: Server) 
             json!({"sql": "SELECT * FROM sales.raw.orders", "wait_s": 0}),
         )
         .await;
+    assert_eq!(plain.status, 202, "{}", plain.text());
     let id = plain.json()["id"].as_str().unwrap().to_owned();
     let path = format!("/api/v1/workspaces/{}/runs/{id}/result", l.ws);
     assert_eq!(s.get(&path, &ana()).await.status, 404);
