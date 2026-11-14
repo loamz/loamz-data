@@ -399,6 +399,12 @@ pub fn catalog_allows(grant: &CatalogGrant, method: &str, path: &str) -> bool {
         return false;
     }
     let parts: Vec<String> = rest.split('/').map(pct_decode).collect();
+    if parts
+        .iter()
+        .any(|part| matches!(part.as_str(), "." | "..") || part.contains(['/', '\\']))
+    {
+        return false;
+    }
     // `config`, or `<catalog>/...`
     let reading = matches!(method, "GET" | "HEAD");
     if parts.first().is_some_and(|p| p == "config") {
@@ -1092,6 +1098,7 @@ mod tests {
             ("GET", "/lake/ws/cat/other/x", ""),
             ("GET", "/lake/ws/cat/tbl/../other/x", ""),
             ("GET", "/lake/ws/cat/tbl/%2e%2e/other/x", ""),
+            ("GET", "/lake/ws/cat/tbl/%2e%2e%2fother/x", ""),
             ("GET", "/lake/ws/cat/tbl", ""),
             ("PUT", "/lake/ws/cat/tbl/x", "acl"),
             ("GET", "/lake/ws/cat/tbl/x", "versions"),
@@ -1137,6 +1144,12 @@ mod tests {
             ("GET", "/api/v1/workspaces/w2/iceberg/v1/config".into()),
             ("GET", "/api/v1/workspaces/w1/securables".into()),
             ("GET", format!("{base}/sales/namespaces/raw/tables/../../x")),
+            ("GET", format!("{base}/%2e%2e/namespaces/raw/tables/orders")),
+            ("GET", format!("{base}/sales/namespaces/raw/tables/%2e%2e")),
+            (
+                "GET",
+                format!("{base}/sales/namespaces/raw%5c..%5ctables/orders"),
+            ),
             ("POST", format!("{base}/transactions/commit")),
         ] {
             assert!(!yes(m, &p), "{m} {p}");
@@ -1259,6 +1272,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transfer_encoding_and_expect_cannot_smuggle_a_second_request_body() {
+        for header in ["Transfer-Encoding: chunked", "Expect: 100-continue"] {
+            let (mut client, mut door) = UnixStream::pair().unwrap();
+            client
+                .write_all(
+                    format!(
+                        "POST /lake/ws/cat/tbl/x HTTP/1.1\r\nHost: local\r\nContent-Length: 1\r\n{header}\r\n\r\n0"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            assert!(
+                matches!(read_request(&mut door).await, Err(411)),
+                "{header}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_storage_door_rejects_a_declared_body_over_its_limit() {
+        let (mut client, mut door) = UnixStream::pair().unwrap();
+        client
+            .write_all(
+                format!(
+                    "PUT /lake/ws/cat/tbl/x HTTP/1.1\r\nHost: local\r\nContent-Length: {}\r\n\r\n",
+                    MAX_BODY + 1
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(read_request(&mut door).await, Err(413)));
+    }
+
+    #[tokio::test]
     async fn encoded_bulk_delete_cannot_delete_a_read_only_input() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
@@ -1271,7 +1320,9 @@ mod tests {
             let mut request = [0; 1024];
             let _ = stream.read(&mut request).await;
             let _ = stream
-                .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .write_all(
+                    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
                 .await;
             true
         });
@@ -1295,6 +1346,9 @@ mod tests {
         )
         .await;
         assert_eq!(answer.status, 403);
-        assert!(!upstream.await.unwrap(), "the refused request reached storage");
+        assert!(
+            !upstream.await.unwrap(),
+            "the refused request reached storage"
+        );
     }
 }
