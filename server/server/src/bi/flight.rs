@@ -82,9 +82,17 @@ fn credentials(md: &MetadataMap) -> Result<(String, String), Status> {
         return Ok((workspace.to_owned(), token.to_owned()));
     }
     if let Some(basic) = header.strip_prefix("Basic ") {
-        use base64::{Engine, engine::general_purpose::STANDARD};
+        use base64::{
+            Engine,
+            engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD},
+        };
+        // Clients differ in which base64 alphabet and padding they use for the same header.
+        let basic = basic.trim();
         let decoded = STANDARD
             .decode(basic)
+            .or_else(|_| STANDARD_NO_PAD.decode(basic))
+            .or_else(|_| URL_SAFE.decode(basic))
+            .or_else(|_| URL_SAFE_NO_PAD.decode(basic))
             .map_err(|_| Status::unauthenticated("the credentials are not readable"))?;
         let text = String::from_utf8(decoded)
             .map_err(|_| Status::unauthenticated("the credentials are not readable"))?;

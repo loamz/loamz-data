@@ -319,7 +319,7 @@ try:
             "names = sorted(f\"{c['catalog_name']}.{s['db_schema_name']}.{x['table_name']}\" for c in objs for s in (c['catalog_db_schemas'] or []) for x in (s['db_schema_tables'] or []))\n"
             "bad = None\n"
             "try:\n    fl.connect('grpc://127.0.0.1:18041', db_kwargs={'username': ws, 'password': 'not-a-token'})\n    c2 = fl.connect('grpc://127.0.0.1:18041', db_kwargs={'username': ws, 'password': 'not-a-token'}); c2.cursor().execute('SELECT 1')\nexcept Exception as e:\n    bad = type(e).__name__\n"
-            "print(json.dumps({'rows': t.to_pylist(), 'types': [str(f.type) for f in t.schema], 'tables': names, 'bad': bad}))\n"),
+            "print(json.dumps({'rows': t.to_pylist(), 'types': [str(f.type) for f in t.schema], 'tables': names, 'bad': bad}, default=str))\n"),
          WSID, ana, "x"], capture_output=True, text=True)
     if flight.returncode:
         sys.exit("the BI connection failed: " + flight.stderr[-800:])
