@@ -183,7 +183,9 @@ pub fn mount_names(names: &[String]) -> Vec<String> {
     for n in names {
         let mut candidate = n.clone();
         let mut i = 2;
-        while out.contains(&candidate) || candidate == "job" || candidate == "tables" {
+        while out.contains(&candidate)
+            || matches!(candidate.as_str(), "job" | "tables" | "doors" | "broker")
+        {
             candidate = format!("{n}_{i}");
             i += 1;
         }
@@ -326,8 +328,12 @@ mod tests {
     fn mounts_are_unique_and_never_hide_what_the_runner_adds() {
         let n = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
         assert_eq!(
-            mount_names(&n(&["orders", "orders", "job", "tables"])),
-            n(&["orders", "orders_2", "job_2", "tables_2"])
+            mount_names(&n(&[
+                "orders", "orders", "job", "tables", "doors", "broker"
+            ])),
+            n(&[
+                "orders", "orders_2", "job_2", "tables_2", "doors_2", "broker_2"
+            ])
         );
     }
 

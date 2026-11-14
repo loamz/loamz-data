@@ -27,15 +27,17 @@ flowchart LR
 - The server only authorizes and signs. A statement needs at least one table, and a storage that can sign.
 - Files are removed 24 hours after the run ends, or at once for an erased run.
 
-## Planned: agent sandboxes read storage through the broker
+## Built (14 Nov): jobs read storage through the broker; planned: the commit of outputs and the agents' switch
 
 Agents' code runs in a gVisor sandbox on Loamz compute, with no network and no credentials. It reads the person's files and query
 results as `s3://` paths through the runner's existing read-only storage broker (ranged reads, host cache, only the leased
 folders), so Polars, DuckDB and pyarrow fetch only the bytes they touch. Query results become immutable Parquet objects at
 `threads/<thread>/results/<run>.parquet`. `/workspace` is local scratch; files written under `/workspace/out/` are committed to
 `threads/<thread>/files/` at the end, with conditional writes, and the run says which were committed. One active run per thread,
-enforced in the database with fencing. No FUSE and no staging of whole folders; FUSE stays an optional later adapter. Before
-building: a spike measuring range reads, cache correctness, credential isolation and Polars/DuckDB/pyarrow compatibility against
+enforced in the database with fencing. No FUSE and no staging of whole folders; FUSE stays an optional later adapter. Built so far: a statement's result saved as Parquet in the person's volume with an idempotency key; a job's `reads` of volumes in place
+(`import loamz`: `path`, `duckdb`, `fs`, `fetch`), proven in gVisor on RustFS with writes and other folders refused and no key in the
+sandbox; the spike below was run first (`bench/README.md`). Still to build: committing a job's `/workspace/out` files with
+conditional writes, the one-active-run-per-thread reservation and thread deletion, and the switch in loamz-agents. The spike measured range reads, cache correctness, credential isolation and Polars/DuckDB/pyarrow compatibility against
 RustFS, cold and warm.
 
 ## Threats to check

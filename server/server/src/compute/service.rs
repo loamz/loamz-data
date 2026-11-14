@@ -443,6 +443,10 @@ pub struct JobRequest {
     /// Tables and volumes the script may read, by id. Each is mounted read-only at `/inputs/<name>`.
     #[serde(default)]
     pub inputs: Vec<String>,
+    /// Volumes the script may read in place, by id: nothing is downloaded before it starts. It reaches them through `import loamz`
+    /// (`loamz.path(name, file)` is an `s3://` address Polars, `DuckDB` and pyarrow read by range, on demand). Needs `READ` on each.
+    #[serde(default)]
+    pub reads: Vec<String>,
     /// The volume that receives what the script leaves in `/workspace`, under `runs/<run id>/`. Empty: the job leaves no files.
     #[serde(default)]
     pub output: String,
@@ -1125,6 +1129,7 @@ pub async fn prepare_maintenance(
         ),
         script,
         inputs: Vec::new(),
+        reads: Vec::new(),
         output: String::new(),
         fetch: None,
         table_writes: vec![target],
@@ -1272,6 +1277,7 @@ pub async fn submit_import(app: &App, ctx: &Ctx<'_>, req: ImportRequest) -> Resu
             Source::Volume(_) => vec![req.volume.clone()],
             Source::Address(_) => vec![],
         },
+        reads: Vec::new(),
         output: String::new(),
         table_writes: vec![req.target.clone()],
         fetch: match &source {
@@ -1315,7 +1321,7 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
     if req.script.trim().is_empty() || req.script.len() > 1_000_000 {
         return Err(Error::Invalid("the script is empty or too long".into()));
     }
-    if req.inputs.len() > 20 {
+    if req.inputs.len() + req.reads.len() > 20 {
         return Err(Error::Invalid("a job reads at most 20 inputs".into()));
     }
     let org = &ctx.workspace.org_id;
@@ -1354,11 +1360,43 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
         inputs.push((entry.id.clone(), entry.kind));
         reads.push(entry.id);
     }
-    let mounts = mount_names(&names);
+    // Volumes to read in place: the same rights as an input, and the same rules for sealed and personal data.
+    let mut read_entries = Vec::new();
+    for id in &req.reads {
+        let (entry, target) = catalogs::target_in(app, &ctx.workspace.id, org, id).await?;
+        if entry.kind != Kind::Volume {
+            return Err(Error::Invalid(format!("{} is not a volume", entry.name)));
+        }
+        iam::require(
+            app,
+            ctx.identity,
+            org,
+            ctx.sides,
+            Privilege::ReadVolume,
+            &target,
+        )
+        .await?;
+        if entry.classification == "sealed" {
+            return Err(Error::Invalid(
+                "sealed data cannot be used by compute".into(),
+            ));
+        }
+        has_personal |= entry.classification == "personal";
+        names.push(entry.name.clone());
+        read_entries.push((entry.id.clone(), entry.folder.clone()));
+        reads.push(entry.id);
+    }
+    let mut mounts = mount_names(&names);
+    let read_names = mounts.split_off(inputs.len());
     let inputs: Vec<Value> = inputs
         .iter()
         .zip(&mounts)
         .map(|((id, kind), name)| json!({"id": id, "kind": kind.as_str(), "name": name}))
+        .collect();
+    let read_specs: Vec<Value> = read_entries
+        .iter()
+        .zip(&read_names)
+        .map(|((id, folder), name)| json!({"id": id, "name": name, "folder": folder}))
         .collect();
     let mut output_id = String::new();
     if !req.output.is_empty() {
@@ -1415,7 +1453,7 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
     let limits = limits_for(&target, req.memory_mb, req.cpu_millis, req.timeout_s, 600)
         .map_err(Error::Invalid)?;
     let title = job_title(&req.title, &req.script);
-    let mut spec = json!({"as": As::of(ctx.identity), "script": req.script, "inputs": inputs, "output": output_id, "table_writes": table_writes, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
+    let mut spec = json!({"as": As::of(ctx.identity), "script": req.script, "inputs": inputs, "reads": read_specs, "output": output_id, "table_writes": table_writes, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
     if let Some(url) = &req.fetch {
         spec["fetch"] = json!({"url": url});
     }
@@ -1756,6 +1794,17 @@ async fn storage_for(
     for f in &folders {
         read_prefixes.push(format!("{}/", tables::key_of(app, f).await?));
     }
+    // Volumes a job reads in place: their real folders in the bucket, by the name the job knows them by.
+    let mut volumes = serde_json::Map::new();
+    for r in spec["reads"].as_array().into_iter().flatten() {
+        let (Some(name), Some(folder)) = (r["name"].as_str(), r["folder"].as_str()) else {
+            continue;
+        };
+        let key = tables::key_of(app, folder).await?;
+        read_prefixes.push(format!("{key}/"));
+        volumes.insert(name.to_owned(), json!(key));
+        folders.push(folder.to_owned());
+    }
     // A job that writes tables is also given the folders it may write: an existing table's own, and for a table it will create, its
     // catalog's root (the new table's folder is not known yet; the storage door narrows it to the folder the catalog gives).
     let mut write_prefixes: Vec<String> = Vec::new();
@@ -1793,7 +1842,7 @@ async fn storage_for(
         .ok_or_else(|| Error::Unavailable("this server's storage is not a bucket".into()))?;
     let out = json!({
         "endpoint": place.endpoint, "region": place.region, "bucket": place.bucket, "key_id": creds.key_id, "secret": creds.secret,
-        "session_token": creds.session_token, "tables": located,
+        "session_token": creds.session_token, "tables": located, "volumes": volumes,
         "mode": if writing { "write" } else { "read" },
         "read_prefixes": read_prefixes, "write_prefixes": write_prefixes, "create_roots": create_roots,
     });
@@ -1847,7 +1896,8 @@ async fn lease_storage(
     writing: bool,
     timeout_s: i64,
 ) -> Result<Option<Value>> {
-    let mut storage = if ids.is_empty() && !writing {
+    let reading = spec["reads"].as_array().is_some_and(|a| !a.is_empty());
+    let mut storage = if ids.is_empty() && !writing && !reading {
         None
     } else {
         storage_for(app, &run.org_id, ids, spec, timeout_s).await?
@@ -1874,6 +1924,12 @@ async fn authorize_lease(app: &App, target: &Target, run: &Run, spec: &Value) ->
         ),
         _ => return Err(invalid()),
     };
+    // Volumes a job reads in place are checked like its inputs.
+    let mut all: Vec<Value> = items.clone();
+    for r in spec["reads"].as_array().into_iter().flatten() {
+        all.push(json!({"id": r["id"], "kind": "volume"}));
+    }
+    let items = &all;
     let mut reads = Vec::with_capacity(items.len());
     for item in items {
         reads.push(
@@ -2161,7 +2217,11 @@ pub async fn lease(app: &App, target: &Target) -> Result<Option<Lease>> {
     let writing = spec["table_writes"]
         .as_array()
         .is_some_and(|a| !a.is_empty());
-    let storage = if ids.is_empty() && !writing && spec["export"] != true {
+    let storage = if ids.is_empty()
+        && !writing
+        && spec["export"] != true
+        && spec["reads"].as_array().is_none_or(Vec::is_empty)
+    {
         None
     } else {
         // The credentials come from the storage provider over the network: one more try before giving up on a slow answer.

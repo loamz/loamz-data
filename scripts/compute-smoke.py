@@ -246,6 +246,32 @@ try:
     assert table.num_rows == 5 ** 6 and table.schema.names == ["order_id", "region", "amount"], table.schema
     step(f"a whole result ({kept['rows']} rows, {kept['bytes']} bytes) was saved as Parquet in the person's volume at {kept['path']} in {time.time() - t2:.1f} s; sending it again returned the same run")
 
+    # Code in the sandbox reads the saved result in place, through the machine's storage broker: nothing is downloaded before it starts.
+    reader = (
+        "import json, urllib.request, urllib.error, os\nimport loamz, polars as pl\n"
+        f"p = loamz.path('agent_files', '{kept['path']}')\n"
+        "n = pl.scan_parquet(p).select(pl.len()).collect().item()\n"
+        "few = pl.scan_parquet(p).filter(pl.col('order_id') < 3).select(pl.len()).collect().item()\n"
+        "m = loamz.duckdb().execute(f\"SELECT count(*) FROM read_parquet('{p}')\").fetchone()[0]\n"
+        "local = loamz.fetch('agent_files', '" + kept['path'] + "')\n"
+        "# the sandbox may only read: a write and another volume's folder are refused, and no real key is in reach\n"
+        "req = urllib.request.Request('http://' + loamz.endpoint() + '/loamz-data/' + p.split('/', 3)[3] + '.x', data=b'x', method='PUT')\n"
+        "try:\n    urllib.request.urlopen(req); put = 200\nexcept urllib.error.HTTPError as e:\n    put = e.code\n"
+        "try:\n    urllib.request.urlopen('http://' + loamz.endpoint() + '/loamz-data/elsewhere/x'); other = 200\nexcept urllib.error.HTTPError as e:\n    other = e.code\n"
+        "print(json.dumps({'rows': n, 'filtered': few, 'duckdb': m, 'fetched_bytes': os.path.getsize(local), 'put': put, 'other': other, 'keys': [v for k, v in os.environ.items() if 'loamz-dev' in v]}))\n"
+    )
+    for attempt in (1, 2):
+        _, rj = call("POST", f"{S}/runs", ana, {"script": reader, "reads": [home], "output": out, "timeout_s": 120})
+        rr = wait_run(rj["id"])
+        if rr["state"] != "succeeded":
+            print(open(f"{work}/agent.log").read()[-1500:])
+            sys.exit("the job that reads the volume in place failed: " + rr["error"] + " | " + rr["stderr"][-900:])
+        seen = json.loads(rr["stdout"].strip().splitlines()[-1])
+        assert seen["rows"] == seen["duckdb"] == 5 ** 6 and seen["filtered"] == 2 * 5 ** 5 and seen["put"] == 403 and seen["other"] == 403 and seen["keys"] == [], seen
+        step(f"a job read the saved result in place through the broker (Polars, DuckDB and a one-file fetch), run {attempt}: {seen['rows']} rows, a write is refused ({seen['put']}), another folder is refused ({seen['other']}), no key in its environment")
+    served = [l for l in open(f"{work}/agent.log").read().splitlines() if "storage broker for a job" in l]
+    step("broker traffic per run: " + " | ".join(l.split("served_bytes")[1].split(" storage")[0].strip()[:60] for l in served[-2:]))
+
     # A catalog on a customer's storage location: its bytes are read and written with the location's own credential, in its own
     # folder of the bucket (here the same RustFS, a folder of its own), and nothing of it is in the installation's default storage.
     _, cred = call("POST", f"{S}/storage/credentials", ana, {"name": "rustfs", "provider": "rustfs", "endpoint": S3,

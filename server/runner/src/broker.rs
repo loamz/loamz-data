@@ -33,6 +33,15 @@ struct Grant {
     prefixes: Vec<String>,
     store: Arc<dyn ObjectStore>,
     generation: u64,
+    /// Every object under the prefixes never changes (an Iceberg table's files): all of it may be remembered. Otherwise only files
+    /// in a `results` folder, which are written once and never replaced, are.
+    immutable: bool,
+}
+
+impl Grant {
+    fn may_cache(&self, key: &str) -> bool {
+        self.immutable || key.contains("/results/")
+    }
 }
 
 /// Objects up to this size are fetched whole, once: a footer, a manifest or a small Parquet file is then served from memory.
@@ -59,11 +68,19 @@ struct CacheInner {
     blobs: HashMap<(String, u64, u64), (Bytes, u64)>,
 }
 
-/// What the broker has already read. Kept for the life of the worker.
+/// What the broker has already read. Kept for the life of the worker, or, for the jobs of a machine, for the life of the agent.
 #[derive(Default)]
-struct Cache {
+pub struct Cache {
     inner: Mutex<CacheInner>,
     hits: AtomicU64,
+}
+
+/// The cache that every job's broker on this machine shares: a result file read by one run is not read from storage again by the
+/// next. Safe to share because a request is checked against its own lease before the cache is looked at.
+#[must_use]
+pub fn shared_cache() -> Arc<Cache> {
+    static SHARED: std::sync::OnceLock<Arc<Cache>> = std::sync::OnceLock::new();
+    Arc::clone(SHARED.get_or_init(|| Arc::new(Cache::default())))
 }
 
 impl Cache {
@@ -141,12 +158,16 @@ pub struct Broker {
 
 impl Broker {
     pub fn start(dir: &Path) -> std::io::Result<Self> {
+        Self::start_with_cache(dir, Arc::new(Cache::default()))
+    }
+
+    /// As [`Broker::start`], remembering what it reads in `cache`, which other brokers may share.
+    pub fn start_with_cache(dir: &Path, cache: Arc<Cache>) -> std::io::Result<Self> {
         let socket = dir.join("socket");
         let listener = UnixListener::bind(&socket)?;
         let access = Arc::new(RwLock::new(None));
         let generation = Arc::new(AtomicU64::new(0));
         let bytes = Arc::new(AtomicU64::new(0));
-        let cache = Arc::new(Cache::default());
         let requests = Arc::new(Mutex::new(Vec::<tokio::task::AbortHandle>::new()));
         let task = tokio::spawn({
             let (access, generation, bytes, cache) = (
@@ -208,6 +229,43 @@ impl Broker {
             return Ok(());
         }
         let storage = storage.ok_or("the lease has no storage access")?;
+        let mut prefixes = Vec::new();
+        for table in tables {
+            let id = table["id"].as_str().ok_or("a table has no identity")?;
+            let folder = storage["tables"][id]["folder"]
+                .as_str()
+                .ok_or("a table has no folder")?;
+            let parsed = ObjectPath::parse(folder).map_err(|_| "a table folder is invalid")?;
+            if parsed.as_ref().is_empty() {
+                return Err("a table folder is empty".into());
+            }
+            prefixes.push(format!("{}/", parsed.as_ref().trim_end_matches('/')));
+        }
+        self.grant_for(storage, prefixes, true).await
+    }
+
+    /// Install access for exactly the folders a job reads (`read_prefixes` of the lease, each ending in `/`), before giving it to the
+    /// sandbox. Only what is under a `results` folder is remembered: the rest may be replaced.
+    pub async fn authorize_reads(&self, storage: &Value) -> Result<(), String> {
+        self.clear().await;
+        let prefixes: Vec<String> = storage["read_prefixes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|p| p.as_str().map(str::to_owned))
+            .collect();
+        if prefixes.is_empty() || prefixes.iter().any(|p| p.is_empty() || !p.ends_with('/')) {
+            return Err("the lease names no folder to read".into());
+        }
+        self.grant_for(storage, prefixes, false).await
+    }
+
+    async fn grant_for(
+        &self,
+        storage: &Value,
+        prefixes: Vec<String>,
+        immutable: bool,
+    ) -> Result<(), String> {
         let field = |key: &str| {
             storage[key]
                 .as_str()
@@ -233,7 +291,7 @@ impl Broker {
                 .with_bucket_name(&bucket)
                 .with_access_key_id(key_id)
                 .with_secret_access_key(secret)
-                .with_region("auto")
+                .with_region(storage["region"].as_str().unwrap_or("auto"))
                 .with_allow_http(endpoint.starts_with("http://"));
             if !token.is_empty() {
                 builder = builder.with_token(token);
@@ -251,24 +309,13 @@ impl Broker {
             }
             built
         };
-        let mut prefixes = Vec::new();
-        for table in tables {
-            let id = table["id"].as_str().ok_or("a table has no identity")?;
-            let folder = storage["tables"][id]["folder"]
-                .as_str()
-                .ok_or("a table has no folder")?;
-            let parsed = ObjectPath::parse(folder).map_err(|_| "a table folder is invalid")?;
-            if parsed.as_ref().is_empty() {
-                return Err("a table folder is empty".into());
-            }
-            prefixes.push(format!("{}/", parsed.as_ref().trim_end_matches('/')));
-        }
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         *self.access.write().await = Some(Arc::new(Grant {
             bucket,
             prefixes,
             store,
             generation,
+            immutable,
         }));
         Ok(())
     }
@@ -461,7 +508,8 @@ async fn handle(
     };
     let connection = if close { "close" } else { "keep-alive" };
     let name = format!("{bucket}/{}", path.as_ref());
-    let meta = if let Some(m) = cache.head(&name) {
+    let keep = grant.may_cache(path.as_ref());
+    let meta = if let Some(m) = cache.head(&name).filter(|_| keep) {
         m
     } else {
         let Ok(found) = grant.store.head(&path).await else {
@@ -472,7 +520,9 @@ async fn handle(
             size: found.size,
             etag: found.e_tag.clone(),
         };
-        cache.put_head(&name, m.clone());
+        if keep {
+            cache.put_head(&name, m.clone());
+        }
         m
     };
     if generation.load(Ordering::SeqCst) != grant.generation {
@@ -523,7 +573,11 @@ async fn handle(
     );
 
     // From memory if it has been read before; a small object is read whole, once; a range of a big one is read as asked.
-    let remembered = cache.get(&name, size, start, end);
+    let remembered = if keep {
+        cache.get(&name, size, start, end)
+    } else {
+        None
+    };
     let body = if let Some(b) = remembered {
         Some(b)
     } else if size <= SMALL_OBJECT {
@@ -535,7 +589,9 @@ async fn handle(
             error(stream, 502, "Bad Gateway").await?;
             return Ok(false);
         };
-        cache.put(&name, 0, size, all.clone());
+        if keep {
+            cache.put(&name, 0, size, all.clone());
+        }
         let (a, b) = (
             usize::try_from(start).unwrap_or(0),
             usize::try_from(end).unwrap_or(0),
@@ -546,7 +602,9 @@ async fn handle(
             error(stream, 404, "Not Found").await?;
             return Ok(false);
         };
-        cache.put(&name, start, end, part.clone());
+        if keep {
+            cache.put(&name, start, end, part.clone());
+        }
         Some(part)
     } else {
         None
@@ -616,6 +674,7 @@ mod tests {
             .unwrap();
         let generation = broker.generation.fetch_add(1, Ordering::SeqCst) + 1;
         *broker.access.write().await = Some(Arc::new(Grant {
+            immutable: true,
             bucket: "bucket".into(),
             prefixes: vec!["allowed/".into()],
             store,
@@ -684,6 +743,7 @@ mod tests {
             .unwrap();
         let generation = broker.generation.fetch_add(1, Ordering::SeqCst) + 1;
         *broker.access.write().await = Some(Arc::new(Grant {
+            immutable: true,
             bucket: "bucket".into(),
             prefixes: vec!["allowed/".into()],
             store: store.clone(),

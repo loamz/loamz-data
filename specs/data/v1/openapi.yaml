@@ -2377,6 +2377,15 @@ components:
           items:
             type: string
           description: Table or volume ids, mounted read-only under /inputs/<name>.
+        reads:
+          type: array
+          items:
+            type: string
+          description: >-
+            Volume ids the script reads in place: nothing is downloaded before it starts. Inside, `import loamz` gives
+            `loamz.path(volume name, file)` (an `s3://` address that Polars, DuckDB and pyarrow read by byte range through the
+            machine's storage broker, read-only, only these volumes), `loamz.duckdb()`, `loamz.fs()` and
+            `loamz.fetch(volume name, file)` (one file copied to /tmp). Needs READ on each volume.
         output:
           type: string
           description: 'A volume id: what the script leaves in /workspace is saved there under runs/<run id>/. Leave it out when the job only writes tables.'

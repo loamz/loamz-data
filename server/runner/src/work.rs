@@ -399,8 +399,44 @@ pub const RUN_SQL: &str = include_str!("sandbox/run_sql.py");
 pub const LOAMZ_SQL: &str = include_str!("sandbox/loamz_sql.py");
 /// The local addresses for a write lease's two doors, put beside a job's code.
 pub const LOAMZ_DOORS: &str = include_str!("sandbox/loamz_doors.py");
+/// `import loamz` in a job that may read volumes: their `s3://` addresses and readers, behind the storage broker.
+pub const LOAMZ_PKG: &str = include_str!("sandbox/loamz_pkg.py");
 
 /// Does the work, whatever happens to it, and says how it ended. The run's folder is removed afterwards.
+/// Starts the storage broker for a job that may read volumes: a private socket the sandbox is given, a grant for exactly the folders
+/// the lease names, and the cache every job on this machine shares.
+async fn open_read_broker(
+    lease: &Lease,
+    machine: &Machine,
+    dir: &Path,
+) -> Result<crate::broker::Broker, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let io = |e: std::io::Error| e.to_string();
+    let storage = lease
+        .storage
+        .as_ref()
+        .ok_or("this server cannot give this machine access to storage")?;
+    let user = if machine.gvisor.rootless {
+        User::MappedRoot
+    } else {
+        User::Nobody
+    };
+    tokio::fs::create_dir_all(dir).await.map_err(io)?;
+    if user == User::Nobody {
+        std::os::unix::fs::chown(dir, Some(user.uid()), Some(user.uid())).map_err(io)?;
+    }
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(io)?;
+    let broker =
+        crate::broker::Broker::start_with_cache(dir, crate::broker::shared_cache()).map_err(io)?;
+    let socket = dir.join("socket");
+    if user == User::Nobody {
+        std::os::unix::fs::chown(&socket, Some(user.uid()), Some(user.uid())).map_err(io)?;
+    }
+    std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).map_err(io)?;
+    broker.authorize_reads(storage).await?;
+    Ok(broker)
+}
+
 /// Opens a write lease's two doors in `dir`, from what the server put in the lease: the run's declared tables, and credentials for the
 /// folders it may use.
 async fn open_doors(lease: &Lease, data_url: &str, dir: &Path) -> Result<Doors, String> {
@@ -525,9 +561,29 @@ async fn go(
     } else {
         None
     };
-    let staged = stage(lease, &api, dir, writing).await?;
+    // A job that may read volumes is given the machine's storage broker, authorized for exactly those folders: nothing is downloaded
+    // before it starts, and what the code reads is fetched by range, on demand.
+    let reading = lease.run.kind == "job"
+        && lease.run.spec["reads"]
+            .as_array()
+            .is_some_and(|a| !a.is_empty());
+    let broker = if reading {
+        Some(open_read_broker(lease, machine, &dir.join("broker")).await?)
+    } else {
+        None
+    };
+    let staged = stage(lease, &api, dir, writing, reading).await?;
     let workspace = dir.join("workspace");
     let report = sandboxed(lease, machine, dir, &workspace, staged, stop).await;
+    if let Some(b) = &broker {
+        tracing::info!(
+            run = %lease.run.id,
+            served_bytes = b.bytes_read(),
+            cache_hits = b.cache_hits(),
+            "storage broker for a job"
+        );
+    }
+    drop(broker);
     // The lease ends with the run: from here both doors refuse everything.
     if let Some(doors) = &doors {
         doors.close().await;
@@ -542,7 +598,13 @@ async fn go(
 }
 
 /// Fetches what the work declared, through the API with its own token, and writes the code to run beside it.
-async fn stage(lease: &Lease, api: &Api, dir: &Path, writing: bool) -> Result<Staged, String> {
+async fn stage(
+    lease: &Lease,
+    api: &Api,
+    dir: &Path,
+    writing: bool,
+    reading: bool,
+) -> Result<Staged, String> {
     let io = |e: std::io::Error| e.to_string();
     let spec = &lease.run.spec;
     let code = dir.join("job");
@@ -610,10 +672,29 @@ async fn stage(lease: &Lease, api: &Api, dir: &Path, writing: bool) -> Result<St
             .map_err(io)?;
         mounts.push(("doors".to_owned(), dir.join("doors")));
     }
+    if reading {
+        let storage = lease
+            .storage
+            .as_ref()
+            .ok_or("the lease has no storage access")?;
+        tokio::fs::create_dir_all(code.join("loamz"))
+            .await
+            .map_err(io)?;
+        tokio::fs::write(code.join("loamz").join("__init__.py"), LOAMZ_PKG)
+            .await
+            .map_err(io)?;
+        let config = serde_json::json!({
+            "bucket": storage["bucket"], "region": storage["region"], "volumes": storage["volumes"],
+        });
+        tokio::fs::write(code.join("loamz.json"), config.to_string())
+            .await
+            .map_err(io)?;
+        mounts.push(("broker".to_owned(), dir.join("broker")));
+    }
     Ok(Staged {
         mounts,
         script: "main.py",
-        doors: writing,
+        doors: writing || reading,
     })
 }
 

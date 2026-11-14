@@ -2543,3 +2543,45 @@ async fn a_result_saved_in_a_volume_needs_write_there_and_a_storage_that_can_tak
     assert_eq!(bad.status, 400);
 }
 both!(a_result_saved_in_a_volume_needs_write_there_and_a_storage_that_can_take_it);
+
+async fn a_job_may_read_a_volume_in_place_only_with_read_on_it(s: Server) {
+    let l = lab(&s).await;
+    let (secret, _) = attach(&s).await;
+    s.assign(&l.ws, &[&bob()]).await;
+    s.put(
+        &format!("/api/v1/workspaces/{}/entitlements", l.ws),
+        &ana(),
+        json!({"principal": "user:bob", "entitlement": "compute-create"}),
+    )
+    .await;
+    let url = format!("/api/v1/workspaces/{}/runs", l.ws);
+    let job = |reads: Vec<&str>| json!({"script": "print(1)", "reads": reads, "output": "", "table_writes": [], "timeout_s": 30});
+    // A job needs somewhere to leave results; give it the volume it reads from as output only for ana.
+    let mut body = job(vec![&l.out]);
+    body["output"] = json!(l.out);
+    let ok = s.post(&url, &ana(), body.clone()).await;
+    assert_eq!(ok.status, 202, "{}", ok.text());
+    let spec = &ok.json()["spec"];
+    let _ = spec;
+    // A table is not a volume.
+    let mut table = job(vec![&l.orders]);
+    table["output"] = json!(l.out);
+    let bad = s.post(&url, &ana(), table).await;
+    assert_eq!(bad.status, 400, "{}", bad.text());
+    // Bob has no right on the volume: for him it is not there.
+    let mut theirs = job(vec![&l.out]);
+    theirs["output"] = json!(l.out);
+    assert_eq!(s.post(&url, &bob(), theirs).await.status, 404);
+    // The machine is told which volumes, by name, and nothing is staged for them.
+    let lease = agent(&s, "POST", "/api/v1/agent/lease?wait_s=0", &secret, None).await;
+    if lease.status == 200 {
+        let run = &lease.json()["run"]["spec"];
+        assert_eq!(run["reads"][0]["id"], l.out);
+        assert_eq!(run["reads"][0]["name"], "out");
+        assert!(
+            run["inputs"].as_array().unwrap().is_empty(),
+            "nothing is staged"
+        );
+    }
+}
+both!(a_job_may_read_a_volume_in_place_only_with_read_on_it);
