@@ -47,6 +47,10 @@ nav:
       - DuckDB: connect/duckdb.md
       - Python SDK & CLI: connect/python.md
       - Compute & Runners: connect/compute.md
+  - Management & Automation:
+      - Schedules & Alerts: manage/schedules.md
+      - Table Maintenance: manage/maintenance.md
+      - Storage Locations & Credentials: manage/storage.md
   - Access & Governance:
       - Team Members: access/people.md
       - Service Principals: access/service-principals.md
