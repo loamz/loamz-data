@@ -1,9 +1,10 @@
 # Proposal 0005: the write path on compute
 
 Status: proposed 13 Nov 2026, for Codex's review. Part of the beta (workstream W7 in [0003](0003-beta.md)).
-**Built on 13 Nov (volume file to table, append, and the doors' refusals proven in gVisor against RustFS by `scripts/compute-smoke.py`):** the
-job's `writes`, the narrowed token, write credentials in the lease, both doors, and `POST /imports` from a volume file. **Not built yet:**
-import from an S3 location (a signed https address already works), compaction and snapshot expiry. Built since: import from an `https://` address (`runner/src/fetch.rs`), `replace` mode, and the console's import dialog.
+**Built (13 and 14 Nov):** the job's `table_writes`, the narrowed token, write credentials in the lease, both doors, and `POST /imports`
+from a volume file or an `https://` address (`runner/src/fetch.rs`) with modes create, append and replace; compaction and snapshot
+expiry through `POST /tables/{id}/maintenance`, and schedules for either action; the console's import dialog. All proven in gVisor
+against RustFS by `scripts/compute-smoke.py`. **Not built yet:** import from an S3 location (a signed https address already works).
 
 ## Context
 
@@ -49,9 +50,12 @@ flowchart LR
    existing file route. For an S3 location or a URL, **the runner fetches it before the sandbox starts**, into the run's input folder,
    with these rules: HTTPS only, no redirects to private or link-local addresses, a size cap, a time cap. The sandbox then runs a
    fixed script we write (`read_csv` or `read_parquet` into the attached table); no customer SQL is involved.
-7. **Compaction and snapshot expiry** are system jobs on a schedule or on demand that read a table's small files and write one
-   (rewrite files, then commit a replace), and remove expired snapshots and their now unreferenced files. A rewrite is only committed
-   if the row count and a content checksum equal the input's.
+7. **Compaction and snapshot expiry** are fixed system jobs on demand or on a schedule. Compaction runs DuckDB's rewrite in a
+   transaction and commits only when row count and an order-independent content checksum are unchanged. Expiry commits removal of
+   snapshots older than the requested window, while keeping the current snapshot and every snapshot named by a ref; it removes only
+   data and manifest objects that those removed snapshots referenced and that no retained snapshot uses. Both actions use the normal
+   `MODIFY` and row/column-rule checks at schedule creation and again when the schedule fires. An interrupted expiry may leave
+   unreferenced objects, but cannot make a retained snapshot point at a deleted object.
 
 ## Why not the alternatives
 

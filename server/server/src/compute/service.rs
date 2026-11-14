@@ -932,6 +932,107 @@ fn hex_encode(bytes: &[u8]) -> String {
         })
 }
 
+/// A maintenance target saved in a schedule.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduledMaintenance {
+    pub table_id: String,
+    pub action: String,
+    pub older_than: Option<i64>,
+}
+
+/// The program that compacts a table or expires its old snapshots. The values in SPEC are validated before they are embedded.
+const MAINTENANCE_JOB: &str = include_str!("maintenance_job.py");
+
+/// Builds the server-authored maintenance job after checking its target and the caller's table rights.
+///
+/// # Errors
+/// The target is not a visible table, the action/window is invalid, or the caller cannot modify it.
+pub async fn prepare_maintenance(
+    app: &App,
+    ctx: &Ctx<'_>,
+    table_id: &str,
+    action: &str,
+    older_than: Option<i64>,
+) -> Result<JobRequest> {
+    if !matches!(action, "compact" | "expire") {
+        return Err(Error::Invalid("action is compact or expire".into()));
+    }
+    if older_than.is_some_and(|n| !(1..=31_536_000).contains(&n))
+        || (action == "compact" && older_than.is_some())
+    {
+        return Err(Error::Invalid(
+            "older_than is a positive number of seconds up to one year, and only applies to expire"
+                .into(),
+        ));
+    }
+    let (table, _) =
+        catalogs::target_in(app, &ctx.workspace.id, &ctx.workspace.org_id, table_id).await?;
+    if table.kind != Kind::Table {
+        return Err(Error::NotFound("not found".into()));
+    }
+    let (schema, _) = catalogs::target_in(
+        app,
+        &ctx.workspace.id,
+        &ctx.workspace.org_id,
+        &table.parent_id,
+    )
+    .await?;
+    if schema.kind != Kind::Schema {
+        return Err(Error::NotFound("not found".into()));
+    }
+    let (catalog, _) = catalogs::target_in(
+        app,
+        &ctx.workspace.id,
+        &ctx.workspace.org_id,
+        &schema.parent_id,
+    )
+    .await?;
+    if catalog.kind != Kind::Catalog {
+        return Err(Error::NotFound("not found".into()));
+    }
+    let target = format!("{}.{}.{}", catalog.name, schema.name, table.name);
+    checked_table_writes(app, ctx, std::slice::from_ref(&target)).await?;
+    let spec = json!({
+        "target": target,
+        "workspace": ctx.workspace.id,
+        "action": action,
+        "older_than": older_than.unwrap_or(604_800),
+    });
+    let script = MAINTENANCE_JOB.replace("__SPEC__", &hex_encode(spec.to_string().as_bytes()));
+    Ok(JobRequest {
+        title: format!(
+            "{} {}",
+            if action == "compact" {
+                "Compact"
+            } else {
+                "Expire snapshots for"
+            },
+            target
+        ),
+        script,
+        inputs: Vec::new(),
+        output: String::new(),
+        table_writes: vec![target],
+        target: None,
+        memory_mb: None,
+        cpu_millis: None,
+        timeout_s: Some(600),
+    })
+}
+
+/// Queues a server-authored compaction or snapshot-expiry job through normal write authorization.
+pub async fn submit_maintenance(
+    app: &App,
+    ctx: &Ctx<'_>,
+    table_id: &str,
+    action: &str,
+    older_than: Option<i64>,
+) -> Result<Run> {
+    let job = prepare_maintenance(app, ctx, table_id, action, older_than).await?;
+    submit_job(app, ctx, job).await
+}
+
 /// The program a file import runs, with its few values filled in: it is ours, never the person's.
 const IMPORT_JOB: &str = include_str!("import_job.py");
 

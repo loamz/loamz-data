@@ -2075,6 +2075,96 @@ both!(a_policy_added_after_job_submission_blocks_raw_table_input);
 
 // ---- jobs that write tables, and file import ----------------------------------------------------------------------
 
+async fn maintenance_queues_a_fixed_job_scoped_to_one_table(s: Server) {
+    let l = lab(&s).await;
+    let (secret, _) = attach(&s).await;
+    let response = s
+        .post(
+            &format!(
+                "/api/v1/workspaces/{}/tables/{}/maintenance",
+                l.ws, l.orders
+            ),
+            &ana(),
+            json!({"action": "compact"}),
+        )
+        .await;
+    assert_eq!(response.status, 202, "{}", response.text());
+
+    let lease = agent(&s, "POST", "/api/v1/agent/lease", &secret, None)
+        .await
+        .json();
+    let spec = &lease["run"]["spec"];
+    assert_eq!(spec["table_writes"].as_array().unwrap().len(), 1);
+    assert_eq!(spec["table_writes"][0]["id"], l.orders);
+    assert_eq!(spec["inputs"].as_array().unwrap().len(), 0);
+    assert!(
+        spec["script"]
+            .as_str()
+            .unwrap()
+            .contains("iceberg_rewrite_data_files")
+    );
+    assert!(
+        !spec["script"]
+            .as_str()
+            .unwrap()
+            .contains("caller-controlled")
+    );
+}
+both!(maintenance_queues_a_fixed_job_scoped_to_one_table);
+
+async fn maintenance_requires_modify_and_refuses_tables_with_rules(s: Server) {
+    let l = lab(&s).await;
+    let _ = attach(&s).await;
+    s.assign(&l.ws, &[&bob()]).await;
+    s.put(
+        &format!("/api/v1/workspaces/{}/entitlements", l.ws),
+        &ana(),
+        json!({"principal": "user:bob", "entitlement": "compute-create"}),
+    )
+    .await;
+    s.grant(&l.ws, &ana(), &l.orders, "user:bob", "reader")
+        .await;
+    let path = format!(
+        "/api/v1/workspaces/{}/tables/{}/maintenance",
+        l.ws, l.orders
+    );
+    for body in [
+        json!({"action": "execute"}),
+        json!({"action": "expire", "older_than": 0}),
+        json!({"action": "compact", "older_than": 1}),
+    ] {
+        assert_eq!(
+            s.post(&path, &ana(), body.clone()).await.status,
+            400,
+            "{body}"
+        );
+    }
+    assert_eq!(
+        s.post(&path, &bob(), json!({"action": "compact"}))
+            .await
+            .status,
+        403,
+        "a visible table still requires MODIFY"
+    );
+
+    s.grant(&l.ws, &ana(), &l.orders, "user:bob", "contributor")
+        .await;
+    assert_eq!(
+        s.put(
+            &format!("/api/v1/workspaces/{}/securables/{}/policy", l.ws, l.orders),
+            &ana(),
+            json!({"row_filter": "region = 'EU'"}),
+        )
+        .await
+        .status,
+        204
+    );
+    let refused = s.post(&path, &bob(), json!({"action": "compact"})).await;
+    assert_eq!(refused.status, 400, "{}", refused.text());
+    assert!(refused.text().contains("row or column rules"));
+}
+both!(maintenance_requires_modify_and_refuses_tables_with_rules);
+
 async fn a_job_that_writes_tables_reaches_only_those_tables(s: Server) {
     let l = lab(&s).await;
     let (secret, _) = attach(&s).await;

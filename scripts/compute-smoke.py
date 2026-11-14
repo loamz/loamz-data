@@ -149,6 +149,7 @@ try:
         print(json.dumps({k: done[k] for k in ("state", "error", "stderr", "stdout")}))
         print(open(f"{work}/agent.log").read()[-2000:])
         sys.exit("the import failed")
+    people = next(i["id"] for i in call("GET", f"{S}/securables?parent_id={sch}", ana)[1]["items"] if i["name"] == "people")
     step(f"a CSV in a volume was imported as shop.main.people through the doors: {done['stdout'].strip()}")
     _, cnt = call("POST", f"{S}/sql/statements", ana, {"sql": "SELECT count(*) AS n, sum(age) AS ages FROM shop.main.people", "wait_s": 60})
     step(f"and a statement reads it back: {cnt['result']['rows']}")
@@ -161,6 +162,36 @@ try:
     _, cnt2 = call("POST", f"{S}/sql/statements", ana, {"sql": "SELECT count(*) FROM shop.main.people", "wait_s": 60})
     step(f"an append added a row: {cnt2['result']['rows']}")
     assert cnt2["result"]["rows"] == [[4]], cnt2
+
+    _, compact_run = call(
+        "POST",
+        f"{S}/tables/{people}/maintenance",
+        ana,
+        {"action": "compact"},
+    )
+    compacted = wait_run(compact_run["id"])
+    if compacted["state"] != "succeeded":
+        sys.exit("compaction failed: " + json.dumps({k: compacted[k] for k in ("state", "error", "stderr")})[:6000])
+    step(f"compaction rewrote the table without changing its rows: {compacted['stdout'].strip()}")
+
+    time.sleep(2)
+    call("PUT", f"{S}/volumes/{out}/files/last.csv", ana, raw=b"id,name,age\n5,Eli,38\n")
+    _, imp3 = call("POST", f"{S}/imports", ana, {"target": "shop.main.people", "volume": out, "path": "last.csv", "mode": "append"})
+    appended_again = wait_run(imp3["id"])
+    if appended_again["state"] != "succeeded":
+        sys.exit("the second append failed: " + json.dumps({k: appended_again[k] for k in ("state", "error", "stderr")})[:1500])
+    _, expire_run = call(
+        "POST",
+        f"{S}/tables/{people}/maintenance",
+        ana,
+        {"action": "expire", "older_than": 1},
+    )
+    expired = wait_run(expire_run["id"])
+    if expired["state"] != "succeeded":
+        sys.exit("snapshot expiry failed: " + json.dumps({k: expired[k] for k in ("state", "error", "stderr")})[:6000])
+    _, after_expiry = call("POST", f"{S}/sql/statements", ana, {"sql": "SELECT count(*) FROM shop.main.people", "wait_s": 60})
+    assert after_expiry["result"]["rows"] == [[5]], after_expiry
+    step(f"expiry kept the live snapshot readable: {expired['stdout'].strip()} rows={after_expiry['result']['rows'][0][0]}")
 
     # Replace swaps the rows; an address on the machine's own network is refused before anything is fetched.
     call("PUT", f"{S}/volumes/{out}/files/fresh.csv", ana, raw=b"id,name,age\n9,Zed,60\n8,Yan,20\n")
