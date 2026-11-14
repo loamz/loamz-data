@@ -272,6 +272,44 @@ impl Places {
 mod tests {
     use super::*;
 
+    struct Versions {
+        generation: std::sync::atomic::AtomicI64,
+        opens: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl LocationSource for Versions {
+        async fn generation(&self, _: &str) -> Result<Option<i64>, String> {
+            let generation = self.generation.load(std::sync::atomic::Ordering::SeqCst);
+            Ok((generation >= 0).then_some(generation))
+        }
+
+        async fn open(&self, _: &str) -> Result<Opened, String> {
+            use loamz_lake::location::{LocationCredential, LocationSecret, build_location};
+
+            self.opens.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let generation = self.generation.load(std::sync::atomic::Ordering::SeqCst);
+            let credential = LocationCredential {
+                provider: "rustfs".into(),
+                endpoint: "http://127.0.0.1:9000".into(),
+                region: "auto".into(),
+                bucket: "bucket".into(),
+                prefix: "team".into(),
+                generation,
+                allow_private: true,
+                allow_http: true,
+            };
+            let secret = LocationSecret::new("key".into(), "secret".into(), None);
+            let handle = build_location(&credential, &secret)
+                .await
+                .map_err(|error| format!("{error:?}"))?;
+            Ok(Opened {
+                handle,
+                prefix: "team".into(),
+            })
+        }
+    }
+
     #[test]
     fn a_folder_on_a_location_says_so_in_its_first_segment() {
         let id = "0b9c5e44-7a2f-4a4b-9d0a-0123456789ab";
@@ -283,14 +321,8 @@ mod tests {
         // Only the marker and an id make it a location: a bare marker is an ordinary folder name.
         assert_eq!(location_of("loc-"), None);
         assert_eq!(location_of(&root_of(id)), Some(id));
-        assert_eq!(
-            results_of(&on, "run-1"),
-            format!("loc-{id}/results/run-1")
-        );
-        assert_eq!(
-            results_of("wk-1/cat/tbl", "run-1"),
-            "results/run-1"
-        );
+        assert_eq!(results_of(&on, "run-1"), format!("loc-{id}/results/run-1"));
+        assert_eq!(results_of("wk-1/cat/tbl", "run-1"), "results/run-1");
     }
 
     #[test]
@@ -298,5 +330,35 @@ mod tests {
         let id = "0b9c5e44-7a2f-4a4b-9d0a-0123456789ab";
         let on = format!("{}/cat/tbl", root_of(id));
         assert_ne!(results_of(&on, "run-1"), results_of(&on, "run-2"));
+    }
+
+    #[tokio::test]
+    async fn rotation_and_deletion_invalidate_cached_location_handles() {
+        let source = Arc::new(Versions {
+            generation: std::sync::atomic::AtomicI64::new(1),
+            opens: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let places = Places::new(Store::folder(std::env::temp_dir()), None);
+        places.attach(source.clone());
+
+        places.spot("loc-location/catalog").await.unwrap();
+        places.spot("loc-location/catalog").await.unwrap();
+        assert_eq!(source.opens.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        source
+            .generation
+            .store(2, std::sync::atomic::Ordering::SeqCst);
+        places.spot("loc-location/catalog").await.unwrap();
+        assert_eq!(source.opens.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+        source
+            .generation
+            .store(-1, std::sync::atomic::Ordering::SeqCst);
+        assert!(places.spot("loc-location/catalog").await.is_err());
+        source
+            .generation
+            .store(2, std::sync::atomic::Ordering::SeqCst);
+        places.spot("loc-location/catalog").await.unwrap();
+        assert_eq!(source.opens.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 }

@@ -73,6 +73,7 @@ async fn customer_storage_secrets_are_write_only_and_rotation_is_fenced(s: Serve
     assert_eq!(made.cache_control, "no-store");
     assert!(!made.text().contains("CANARY_"));
     assert!(!made.text().contains("secret_ref"));
+    assert!(!made.text().contains("customer-storage/"));
     let credential = made.json()["id"].as_str().unwrap().to_owned();
     assert_eq!(made.json()["generation"], 1);
     let service = s
@@ -111,6 +112,7 @@ async fn customer_storage_secrets_are_write_only_and_rotation_is_fenced(s: Serve
     let listed = s.get(&base, &ana()).await;
     assert!(!listed.text().contains("CANARY_"));
     assert!(!listed.text().contains("secret_ref"));
+    assert!(!listed.text().contains("customer-storage/"));
     assert_eq!(
         s.post(&format!("{base}/{credential}/check"), &ana(), json!({}))
             .await
@@ -169,6 +171,7 @@ async fn customer_storage_secrets_are_write_only_and_rotation_is_fenced(s: Serve
     assert_eq!(again.json()["generation"], 2);
     assert_eq!(again.etag, "\"2\"");
     assert!(!again.text().contains("CANARY_"));
+    assert!(!again.text().contains("customer-storage/"));
     let (vault_path, pinned_version, generation): (String, i64, i64) = sqlx::query_as(
         "SELECT secret_path, secret_version, generation FROM storage_credentials WHERE id = $1",
     )
@@ -220,6 +223,7 @@ async fn customer_storage_secrets_are_write_only_and_rotation_is_fenced(s: Serve
         .await;
     assert_eq!(failed.status, 503);
     assert!(!failed.text().contains("CANARY"));
+    assert!(!failed.text().contains("customer-storage/"));
     assert_eq!(
         s.get(&format!("{base}/{credential}"), &ana()).await.json()["generation"],
         3
@@ -237,6 +241,7 @@ async fn customer_storage_secrets_are_write_only_and_rotation_is_fenced(s: Serve
         .await;
     assert_eq!(cleanup_failed.status, 503);
     assert!(!cleanup_failed.text().contains("CANARY"));
+    assert!(!cleanup_failed.text().contains("customer-storage/"));
     assert_eq!(
         s.get(&format!("{base}/{credential}"), &ana()).await.json()["generation"],
         4
@@ -260,6 +265,11 @@ async fn customer_storage_secrets_are_write_only_and_rotation_is_fenced(s: Serve
         .await
         .unwrap();
     assert!(audits.iter().all(|line| !line.contains("CANARY_")));
+    assert!(
+        audits
+            .iter()
+            .all(|line| !line.contains("customer-storage/"))
+    );
     assert!(vault.read_version(&vault_path, 5).await.is_ok());
     assert_eq!(
         s.delete(&format!("{base}/{credential}"), &ana())
@@ -1416,6 +1426,17 @@ async fn storage_is_set_per_workspace(s: Server) {
         .await;
     assert_eq!(team_a.status, 201, "{}", team_a.text());
     assert_eq!(team_a.json()["prefix"], "team-a");
+    assert_eq!(
+        s.post(
+            &format!("/api/v1/workspaces/{other}/securables"),
+            &ana(),
+            json!({"kind":"catalog", "name":"borrowed", "location":"team-a"})
+        )
+        .await
+        .status,
+        404,
+        "a workspace cannot name another workspace's storage location"
+    );
     for (name, prefix) in [("inside", "team-a/raw"), ("whole", ""), ("same", "team-a")] {
         let r = s
             .post(
