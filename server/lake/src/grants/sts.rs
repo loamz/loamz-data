@@ -22,6 +22,7 @@ pub struct StsIssuer {
     secret: String,
     region: String,
     role_arn: Option<String>,
+    root_prefix: String,
 }
 
 impl StsIssuer {
@@ -38,6 +39,27 @@ impl StsIssuer {
         secret: &str,
         role_arn: Option<&str>,
     ) -> Result<Self, FileError> {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| provider_error(e.to_string()))?;
+        Self::with_client(endpoint, region, bucket, key_id, secret, role_arn, http)
+    }
+
+    /// Constructs an issuer using an already validated and pinned client.
+    ///
+    /// # Errors
+    /// The endpoint is not a URL.
+    pub fn with_client(
+        endpoint: &str,
+        region: &str,
+        bucket: &str,
+        key_id: &str,
+        secret: &str,
+        role_arn: Option<&str>,
+        http: reqwest::Client,
+    ) -> Result<Self, FileError> {
         let url = reqwest::Url::parse(endpoint)
             .map_err(|_| FileError::BadPath("the STS endpoint is not a URL"))?;
         let host = match (url.host_str(), url.port()) {
@@ -46,10 +68,7 @@ impl StsIssuer {
             _ => return Err(FileError::BadPath("the STS endpoint has no host")),
         };
         Ok(Self {
-            http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(20))
-                .build()
-                .map_err(|e| provider_error(e.to_string()))?,
+            http,
             url,
             host,
             bucket: bucket.to_owned(),
@@ -57,8 +76,43 @@ impl StsIssuer {
             secret: secret.to_owned(),
             region: region.to_owned(),
             role_arn: role_arn.map(str::to_owned),
+            root_prefix: String::new(),
         })
     }
+    /// Restricts issuance to folders under the location's already validated root.
+    #[must_use]
+    pub fn with_prefix(mut self, prefix: &str) -> Self {
+        prefix.clone_into(&mut self.root_prefix);
+        self
+    }
+}
+
+fn assume_role_body(
+    role: Option<&str>,
+    external_id: Option<&str>,
+    policy: &str,
+    seconds: u64,
+) -> Result<String, FileError> {
+    if role.is_some() && external_id.is_none_or(str::is_empty) {
+        return Err(FileError::BadPath("AWS role needs an external ID"));
+    }
+    let duration = seconds.to_string();
+    let mut form = vec![
+        ("Action", "AssumeRole"),
+        ("Version", "2011-06-15"),
+        ("RoleSessionName", "loamz"),
+        ("DurationSeconds", duration.as_str()),
+        ("Policy", policy),
+    ];
+    if let Some(role) = role {
+        form.push(("RoleArn", role));
+    }
+    if let Some(external) = external_id {
+        form.push(("ExternalId", external));
+    }
+    let url = reqwest::Url::parse_with_params("http://example.invalid/", &form)
+        .map_err(|_| provider_error("could not construct STS request"))?;
+    Ok(url.query().unwrap_or_default().to_owned())
 }
 
 #[async_trait]
@@ -69,24 +123,16 @@ impl Issuer for StsIssuer {
         write: bool,
         ttl: Duration,
     ) -> Result<Credentials, FileError> {
-        let folders = folders(volumes)?;
-        let policy = session_policy(&self.bucket, &folders, write).to_string();
-        let seconds = ttl.as_secs().clamp(MIN_TTL, MAX_TTL).to_string();
-        let mut form = vec![
-            ("Action", "AssumeRole"),
-            ("Version", "2011-06-15"),
-            ("RoleSessionName", "loamz"),
-            ("DurationSeconds", &seconds),
-            ("Policy", &policy),
-        ];
-        if let Some(arn) = &self.role_arn {
-            form.push(("RoleArn", arn));
+        let mut folders = folders(volumes)?;
+        if !self.root_prefix.is_empty() {
+            folders = folders
+                .into_iter()
+                .map(|folder| format!("{}/{folder}", self.root_prefix))
+                .collect();
         }
-        let body = reqwest::Url::parse_with_params("http://x/", &form)
-            .map_err(|e| provider_error(e.to_string()))?
-            .query()
-            .unwrap_or_default()
-            .to_owned();
+        let policy = session_policy(&self.bucket, &folders, write).to_string();
+        let seconds = ttl.as_secs().clamp(MIN_TTL, MAX_TTL);
+        let body = assume_role_body(self.role_arn.as_deref(), None, &policy, seconds)?;
         let date = sigv4::amz_date(SystemTime::now());
         let content_type = "application/x-www-form-urlencoded";
         let authorization = sigv4::Signer {
@@ -107,6 +153,9 @@ impl Issuer for StsIssuer {
             body.as_bytes(),
             &date,
         );
+        let mut authorization = reqwest::header::HeaderValue::from_str(&authorization)
+            .map_err(|_| provider_error("could not authorize STS request"))?;
+        authorization.set_sensitive(true);
         let reply = self
             .http
             .post(self.url.clone())
@@ -123,10 +172,7 @@ impl Issuer for StsIssuer {
             .await
             .map_err(|e| provider_error(e.to_string()))?;
         if !status.is_success() {
-            let why = tag(&xml, "Message").unwrap_or("no reason given");
-            return Err(provider_error(format!(
-                "the store refused to issue credentials ({status}): {why}"
-            )));
+            return Err(provider_error("the store refused to issue credentials"));
         }
         let get = |name: &str| {
             tag(&xml, name)
@@ -150,8 +196,26 @@ fn tag<'a>(xml: &'a str, name: &str) -> Option<&'a str> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
-    use super::tag;
+    use super::{assume_role_body, tag};
+
+    #[test]
+    fn aws_request_has_role_external_id_and_scoped_policy() {
+        let body = assume_role_body(
+            Some("arn:aws:iam::123:role/customer"),
+            Some("external-test"),
+            "{\"statement\":[]}",
+            900,
+        )
+        .unwrap();
+        let url = reqwest::Url::parse(&format!("https://example.test/?{body}")).unwrap();
+        let pairs: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(pairs["RoleArn"], "arn:aws:iam::123:role/customer");
+        assert_eq!(pairs["ExternalId"], "external-test");
+        assert_eq!(pairs["Policy"], "{\"statement\":[]}");
+        assert!(assume_role_body(Some("arn:aws:iam::123:role/customer"), None, "{}", 900).is_err());
+    }
 
     #[test]
     fn finds_a_value_in_an_sts_answer() {

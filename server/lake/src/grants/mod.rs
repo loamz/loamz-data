@@ -7,7 +7,7 @@
 
 mod policy;
 mod r2;
-mod sigv4;
+pub(crate) mod sigv4;
 mod sts;
 
 use std::time::Duration;
@@ -22,7 +22,7 @@ pub use r2::R2Issuer;
 pub use sts::StsIssuer;
 
 /// What a machine is given: an S3 key pair and session token, good until they expire.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Credentials {
     #[serde(rename = "accessKeyId")]
     pub key_id: String,
@@ -30,6 +30,12 @@ pub struct Credentials {
     pub secret: String,
     #[serde(rename = "sessionToken")]
     pub session_token: String,
+}
+
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Credentials([REDACTED])")
+    }
 }
 
 /// Gives out credentials limited to some volume folders.

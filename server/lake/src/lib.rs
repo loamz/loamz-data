@@ -4,3 +4,7 @@ pub mod files;
 pub mod grants;
 pub mod objects;
 pub mod sql;
+
+pub mod endpoint;
+
+pub mod location;

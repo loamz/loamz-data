@@ -28,6 +28,26 @@ struct Ask<'a> {
     prefixes: &'a [String],
 }
 
+fn make_ask<'a>(
+    bucket: &'a str,
+    parent: &'a str,
+    prefixes: &'a [String],
+    write: bool,
+    ttl: Duration,
+) -> Ask<'a> {
+    Ask {
+        bucket,
+        parent_access_key_id: parent,
+        permission: if write {
+            "object-read-write"
+        } else {
+            "object-read-only"
+        },
+        ttl_seconds: ttl.as_secs().clamp(60, 900),
+        prefixes,
+    }
+}
+
 #[derive(Deserialize)]
 struct Answer {
     success: bool,
@@ -74,17 +94,7 @@ impl Issuer for R2Issuer {
         ttl: Duration,
     ) -> Result<Credentials, FileError> {
         let prefixes = folders(volumes)?;
-        let ask = Ask {
-            bucket: &self.bucket,
-            parent_access_key_id: &self.parent_key_id,
-            permission: if write {
-                "object-read-write"
-            } else {
-                "object-read-only"
-            },
-            ttl_seconds: ttl.as_secs().clamp(60, 3600),
-            prefixes: &prefixes,
-        };
+        let ask = make_ask(&self.bucket, &self.parent_key_id, &prefixes, write, ttl);
         let reply = self
             .http
             .post(&self.url)
@@ -92,18 +102,39 @@ impl Issuer for R2Issuer {
             .json(&ask)
             .send()
             .await
-            .map_err(|e| provider_error(e.to_string()))?;
+            .map_err(|_| provider_error("provider unavailable"))?;
         let status = reply.status();
-        let answer: Answer = reply.json().await.map_err(|e| {
-            provider_error(format!(
-                "the provider answered {status} with something unreadable: {e}"
-            ))
-        })?;
+        let answer: Answer = reply
+            .json()
+            .await
+            .map_err(|_| provider_error("invalid provider response"))?;
         match answer.result {
             Some(c) if answer.success => Ok(c),
             _ => Err(provider_error(format!(
                 "the provider refused to issue credentials ({status})"
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_is_scoped_and_never_exceeds_fifteen_minutes() {
+        let prefixes = vec!["folder/".to_owned()];
+        let ask = make_ask(
+            "bucket",
+            "parent-key",
+            &prefixes,
+            false,
+            Duration::from_hours(1),
+        );
+        let json = serde_json::to_value(ask).unwrap();
+        assert_eq!(json["permission"], "object-read-only");
+        assert_eq!(json["ttlSeconds"], 900);
+        assert_eq!(json["prefixes"], serde_json::json!(["folder/"]));
     }
 }
