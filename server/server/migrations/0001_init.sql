@@ -186,8 +186,11 @@ CREATE TABLE runs (
     schedule_task_id TEXT UNIQUE,
     -- a statement's whole result kept as an Arrow file in the data's own storage: its size and the folder it is in (0 and empty: none)
     result_bytes  BIGINT NOT NULL DEFAULT 0,
-    result_folder TEXT NOT NULL DEFAULT ''
+    result_folder TEXT NOT NULL DEFAULT '',
+    -- a key a person may send with a request so that sending it again returns this run instead of making another
+    idempotency_key TEXT NOT NULL DEFAULT ''
 );
+CREATE UNIQUE INDEX runs_idempotency ON runs (workspace_id, requested_by, idempotency_key) WHERE idempotency_key <> '';
 CREATE INDEX runs_workspace ON runs (workspace_id, created_ms);
 CREATE INDEX runs_due ON runs (state, target_id, created_ms);
 

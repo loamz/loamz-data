@@ -406,6 +406,45 @@ pub async fn heartbeat<'e, E: Executor<'e, Database = Any>>(
     })
 }
 
+/// The run a person already made with this key, if any.
+pub async fn run_for_key<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    workspace: &str,
+    requested_by: &str,
+    key: &str,
+) -> Result<Option<String>> {
+    let r = sqlx::query(
+        "SELECT id FROM runs WHERE workspace_id = $1 AND requested_by = $2 AND idempotency_key = $3",
+    )
+    .bind(workspace)
+    .bind(requested_by)
+    .bind(key)
+    .fetch_optional(e)
+    .await?;
+    Ok(match r {
+        Some(row) => Some(row.try_get::<String, _>("id")?),
+        None => None,
+    })
+}
+
+/// Gives a run its key. False if the person already used the key for another run (a request sent twice at once).
+pub async fn set_idempotency_key<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    id: &str,
+    key: &str,
+) -> Result<bool> {
+    match sqlx::query("UPDATE runs SET idempotency_key = $2 WHERE id = $1")
+        .bind(id)
+        .bind(key)
+        .execute(e)
+        .await
+    {
+        Ok(_) => Ok(true),
+        Err(sqlx::Error::Database(d)) if d.is_unique_violation() => Ok(false),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Records that a run's whole result is kept in `folder` (its size), or no longer is (0 and empty).
 pub async fn set_result<'e, E: Executor<'e, Database = Any>>(
     e: E,

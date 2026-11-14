@@ -2,7 +2,7 @@
 
 use std::io::{self, BufRead, Write};
 
-use loamz_worker::{Access, Export, Session, SessionKey, Table};
+use loamz_worker::{Access, Export, Format, Session, SessionKey, Table};
 use serde_json::{Value, json};
 
 mod proxy;
@@ -83,9 +83,17 @@ fn parse(request: &Value, proxy_port: u16) -> Result<Request, String> {
             Some(field("bucket")?),
         )
     };
-    let export = (spec["export"] == true).then(|| Export {
-        path: "/workspace/result.arrow".into(),
-        max_bytes: 1 << 30,
+    let export = (spec["export"] == true).then(|| {
+        let (format, name) = if spec["export_format"] == "parquet" {
+            (Format::Parquet, "result.parquet")
+        } else {
+            (Format::Arrow, "result.arrow")
+        };
+        Export {
+            path: std::path::Path::new("/workspace").join(name),
+            max_bytes: 1 << 30,
+            format,
+        }
     });
     Ok(Request {
         sql,

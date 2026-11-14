@@ -259,16 +259,17 @@ pub async fn upload_result(storage: &Value, file: &Path) -> Result<(), String> {
             .ok_or_else(|| format!("the lease has no result {k}"))
     };
     let result = &storage["result"];
-    let endpoint = text(storage, "endpoint")?;
+    // The result may go to a different store than the tables (a person's volume): it names its own place.
+    let endpoint = text(result, "endpoint")?;
     let s3 = AmazonS3Builder::new()
         .with_endpoint(&endpoint)
         // A local store (RustFS in development) is plain http.
         .with_allow_http(endpoint.starts_with("http://"))
-        .with_bucket_name(text(storage, "bucket")?)
+        .with_bucket_name(text(result, "bucket")?)
         .with_access_key_id(text(result, "key_id")?)
         .with_secret_access_key(text(result, "secret")?)
         .with_token(text(result, "session_token")?)
-        .with_region(storage["region"].as_str().unwrap_or("auto"))
+        .with_region(result["region"].as_str().unwrap_or("auto"))
         .build()
         .map_err(|e| e.to_string())?;
     let mut writer = BufWriter::new(

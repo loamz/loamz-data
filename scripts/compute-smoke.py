@@ -227,6 +227,25 @@ try:
     code, _ = call("GET", f"{S}/runs/{big['id']}/result", "not-a-token", ok=(401,))
     step(f"and the address is only given to someone with a token ({code})")
 
+    # A whole result saved as Parquet in the person's volume, by the machine, with a key that makes sending it again harmless.
+    home = mk("volume", sch, "agent_files")
+    body = {"sql": f"SELECT t0.order_id, t0.region, t0.amount FROM {many}", "save": {"volume": home, "thread": "t1"}, "idempotency_key": "turn-1", "wait_s": 90}
+    t2 = time.time()
+    _, saved = call("POST", f"{S}/sql/statements", ana, body)
+    if saved["state"] != "succeeded":
+        print(open(f"{work}/agent.log").read()[-1500:])
+        sys.exit("saving the result failed: " + json.dumps({k: saved[k] for k in ("state", "error", "stderr")})[:800])
+    kept = saved["result"]["export"]
+    assert kept["format"] == "parquet" and kept["volume"] == home and kept["path"] == f"threads/t1/results/{saved['id']}.parquet" and kept["rows"] == 5 ** 6, kept
+    assert len(saved["result"]["rows"]) == 20, "the preview"
+    _, again = call("POST", f"{S}/sql/statements", ana, body)
+    assert again["id"] == saved["id"], "the same key is the same run"
+    import io, pyarrow.parquet as pq
+    _, raw = call("GET", f"{S}/volumes/{home}/files/{kept['path']}", ana)
+    table = pq.read_table(io.BytesIO(raw))
+    assert table.num_rows == 5 ** 6 and table.schema.names == ["order_id", "region", "amount"], table.schema
+    step(f"a whole result ({kept['rows']} rows, {kept['bytes']} bytes) was saved as Parquet in the person's volume at {kept['path']} in {time.time() - t2:.1f} s; sending it again returned the same run")
+
     # A catalog on a customer's storage location: its bytes are read and written with the location's own credential, in its own
     # folder of the bucket (here the same RustFS, a folder of its own), and nothing of it is in the installation's default storage.
     _, cred = call("POST", f"{S}/storage/credentials", ana, {"name": "rustfs", "provider": "rustfs", "endpoint": S3,

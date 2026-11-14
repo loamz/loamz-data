@@ -44,17 +44,20 @@ impl Worker {
 
     /// Moves a statement's result file (the worker wrote it in its own `/workspace`) to a folder of the runner's, named for the run, so
     /// the next statement on this worker cannot touch it. None: there is no such file.
-    pub async fn take_export(&self, run: &str) -> Option<std::path::PathBuf> {
+    pub async fn take_export(&self, run: &str, extension: &str) -> Option<std::path::PathBuf> {
         if run.is_empty() || !run.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
             return None;
         }
         let dir = self.directory.as_ref()?;
         let to_dir = dir.parent()?.join("exports");
         tokio::fs::create_dir_all(&to_dir).await.ok()?;
-        let to = to_dir.join(format!("{run}.arrow"));
-        tokio::fs::rename(dir.join("workspace").join("result.arrow"), &to)
-            .await
-            .ok()?;
+        let to = to_dir.join(format!("{run}.{extension}"));
+        tokio::fs::rename(
+            dir.join("workspace").join(format!("result.{extension}")),
+            &to,
+        )
+        .await
+        .ok()?;
         Some(to)
     }
 

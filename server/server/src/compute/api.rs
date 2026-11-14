@@ -208,6 +208,9 @@ struct StatementBody {
     /// Keep the whole result as an Arrow file, read from `/runs/{id}/result`.
     #[serde(default)]
     export: bool,
+    /// Keep the whole result as a Parquet file in one of the person's volumes.
+    save: Option<service::SaveTo>,
+    idempotency_key: Option<String>,
     /// How long to wait for the answer, in seconds, before getting the run back to ask about later.
     wait_s: Option<u64>,
 }
@@ -224,6 +227,8 @@ async fn statement(State(app): State<Shared>, c: WsCtx, body: Bytes) -> Result<R
             limit: req.limit,
             target: req.target,
             export: req.export,
+            save: req.save,
+            idempotency_key: req.idempotency_key,
         },
     )
     .await?;

@@ -2450,3 +2450,96 @@ async fn a_whole_result_needs_a_table_and_a_storage_that_can_keep_it(s: Server) 
     assert_eq!(s.get(&path, &bob()).await.status, 404);
 }
 both!(a_whole_result_needs_a_table_and_a_storage_that_can_keep_it);
+
+async fn a_result_saved_in_a_volume_needs_write_there_and_a_storage_that_can_take_it(s: Server) {
+    let l = lab(&s).await;
+    let _ = attach(&s).await;
+    s.assign(&l.ws, &[&bob()]).await;
+    s.put(
+        &format!("/api/v1/workspaces/{}/entitlements", l.ws),
+        &ana(),
+        json!({"principal": "user:bob", "entitlement": "sql-access"}),
+    )
+    .await;
+    s.grant(&l.ws, &ana(), &l.orders, "user:bob", "reader")
+        .await;
+    let statements = format!("/api/v1/workspaces/{}/sql/statements", l.ws);
+    let ask = |who: common::Who, body: serde_json::Value| {
+        let (s, url) = (&s, statements.clone());
+        async move { s.post(&url, &who, body).await }
+    };
+    let sql = "SELECT * FROM sales.raw.orders";
+    // The thread is a plain name, and the volume must be a volume.
+    for (save, status) in [
+        (json!({"volume": l.out, "thread": ""}), 400),
+        (json!({"volume": l.out, "thread": "../x"}), 400),
+        (json!({"volume": l.out, "thread": "a/b"}), 400),
+        (json!({"volume": l.orders, "thread": "t1"}), 400),
+        // Bob reads the table but has no right to write in the volume: it is not there for him.
+        (json!({"volume": l.out, "thread": "t1"}), 404),
+    ] {
+        let who = if status == 404 { bob() } else { ana() };
+        let r = ask(who, json!({"sql": sql, "save": save, "wait_s": 0})).await;
+        assert_eq!(r.status, status, "{save}: {}", r.text());
+    }
+    // A signed-address export and a save are two different places: not both.
+    let both = ask(
+        ana(),
+        json!({"sql": sql, "export": true, "save": {"volume": l.out, "thread": "t1"}, "wait_s": 0}),
+    )
+    .await;
+    assert_eq!(both.status, 400, "{}", both.text());
+    // Ana may write there, but this test's storage is a plain folder, which cannot hand out credentials.
+    let folder = ask(
+        ana(),
+        json!({"sql": sql, "save": {"volume": l.out, "thread": "t1"}, "wait_s": 0}),
+    )
+    .await;
+    assert_eq!(folder.status, 400, "{}", folder.text());
+    assert!(
+        folder.text().contains("cannot take a saved result"),
+        "{}",
+        folder.text()
+    );
+
+    // A request sent again with the same key is the same run; another person's key is their own.
+    let first = ask(
+        ana(),
+        json!({"sql": sql, "idempotency_key": "turn-1", "wait_s": 0}),
+    )
+    .await;
+    assert_eq!(first.status, 202, "{}", first.text());
+    let again = ask(
+        ana(),
+        json!({"sql": sql, "idempotency_key": "turn-1", "wait_s": 0}),
+    )
+    .await;
+    assert_eq!(
+        again.json()["id"],
+        first.json()["id"],
+        "the same key, the same run"
+    );
+    let other = ask(
+        ana(),
+        json!({"sql": sql, "idempotency_key": "turn-2", "wait_s": 0}),
+    )
+    .await;
+    assert_ne!(other.json()["id"], first.json()["id"]);
+    let theirs = ask(
+        bob(),
+        json!({"sql": sql, "idempotency_key": "turn-1", "wait_s": 0}),
+    )
+    .await;
+    assert_ne!(
+        theirs.json()["id"],
+        first.json()["id"],
+        "keys are per person"
+    );
+    let bad = ask(
+        ana(),
+        json!({"sql": sql, "idempotency_key": "a b/c", "wait_s": 0}),
+    )
+    .await;
+    assert_eq!(bad.status, 400);
+}
+both!(a_result_saved_in_a_volume_needs_write_there_and_a_storage_that_can_take_it);

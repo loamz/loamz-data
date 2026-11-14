@@ -99,10 +99,20 @@ fn answer(connection: &Connection, sql: &str, limit: usize) -> Result<Json> {
     }
 }
 
-/// A whole result asked for as an Arrow file: where to write it and the most it may be.
+/// What a whole result is written as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Format {
+    /// An Arrow IPC stream: what a reader elsewhere fetches by a signed address.
+    Arrow,
+    /// Parquet, for a result kept in a person's volume that code reads later with Polars, `DuckDB` or pyarrow.
+    Parquet,
+}
+
+/// A whole result asked for as a file: where to write it, how, and the most it may be.
 pub struct Export {
     pub path: std::path::PathBuf,
     pub max_bytes: u64,
+    pub format: Format,
 }
 
 /// Counts what is written, and refuses to go past the most the file may be.
@@ -128,12 +138,23 @@ impl<W: std::io::Write> std::io::Write for Capped<W> {
     }
 }
 
-/// Runs a read-only statement and writes every row to `export.path` as an Arrow IPC stream. The answer has the columns and the size,
-/// no rows. The file is removed if anything goes wrong.
-fn export_arrow(connection: &Connection, sql: &str, export: &Export) -> Result<Json> {
+/// Runs a read-only statement and writes every row to `export.path`, as an Arrow IPC stream or as Parquet. The answer has the columns
+/// and the size and no rows (a Parquet export also has the first `preview` rows). The file is removed if anything goes wrong.
+fn export_file(
+    connection: &Connection,
+    sql: &str,
+    export: &Export,
+    preview: usize,
+) -> Result<Json> {
     let sql = sql.trim().trim_end_matches(';');
     let other = |e: &dyn std::fmt::Display| duckdb::Error::InvalidParameterName(e.to_string());
     let done = || -> Result<Json> {
+        // The first rows, for whoever asked to see what came back without opening the file.
+        let shown = if preview > 0 {
+            Some(answer(connection, sql, preview)?)
+        } else {
+            None
+        };
         let mut stmt = connection.prepare(&format!("SELECT * FROM ({sql}) AS loamz_result"))?;
         let batches = stmt.query_arrow([])?;
         let schema = batches.get_schema();
@@ -149,17 +170,42 @@ fn export_arrow(connection: &Connection, sql: &str, export: &Export) -> Result<J
             max: export.max_bytes,
         };
         let mut rows = 0_u64;
-        {
-            let mut writer = arrow_ipc::writer::StreamWriter::try_new(&mut capped, &schema)
-                .map_err(|e| other(&e))?;
-            for batch in batches {
-                rows = rows.saturating_add(batch.num_rows() as u64);
-                writer.write(&batch).map_err(|e| other(&e))?;
+        match export.format {
+            Format::Arrow => {
+                let mut writer = arrow_ipc::writer::StreamWriter::try_new(&mut capped, &schema)
+                    .map_err(|e| other(&e))?;
+                for batch in batches {
+                    rows = rows.saturating_add(batch.num_rows() as u64);
+                    writer.write(&batch).map_err(|e| other(&e))?;
+                }
+                writer.finish().map_err(|e| other(&e))?;
             }
-            writer.finish().map_err(|e| other(&e))?;
+            Format::Parquet => {
+                let props = parquet::file::properties::WriterProperties::builder()
+                    .set_compression(parquet::basic::Compression::SNAPPY)
+                    .build();
+                let mut writer =
+                    parquet::arrow::ArrowWriter::try_new(&mut capped, schema.clone(), Some(props))
+                        .map_err(|e| other(&e))?;
+                for batch in batches {
+                    rows = rows.saturating_add(batch.num_rows() as u64);
+                    writer.write(&batch).map_err(|e| other(&e))?;
+                }
+                writer.close().map_err(|e| other(&e))?;
+            }
         }
         std::io::Write::flush(&mut capped).map_err(|e| other(&e))?;
-        Ok(json!({"columns": columns, "rows": [], "truncated": false, "export": {"rows": rows, "bytes": capped.written}}))
+        let kind = match export.format {
+            Format::Arrow => "arrow",
+            Format::Parquet => "parquet",
+        };
+        let (preview_rows, truncated) = shown.as_ref().map_or((json!([]), false), |s| {
+            (s["rows"].clone(), s["truncated"] == true)
+        });
+        Ok(json!({
+            "columns": columns, "rows": preview_rows, "truncated": truncated,
+            "export": {"rows": rows, "bytes": capped.written, "format": kind},
+        }))
     };
     let answer = done();
     if answer.is_err() {
@@ -287,7 +333,12 @@ impl Session {
         let result = Self::prepare(&conn, tables, access, &mut undo).and_then(|()| {
             prepared = began.elapsed();
             match export {
-                Some(export) => export_arrow(&conn, sql, export),
+                Some(export) => export_file(
+                    &conn,
+                    sql,
+                    export,
+                    if export.format == Format::Parquet { 20 } else { 0 },
+                ),
                 None => answer(&conn, sql, limit),
             }
         });
@@ -506,11 +557,13 @@ mod tests {
         let export = Export {
             path: dir.join("r.arrow"),
             max_bytes: 1 << 20,
+            format: super::Format::Arrow,
         };
-        let answer = super::export_arrow(
+        let answer = super::export_file(
             &engine.connection,
             "SELECT i AS n, 'x' || i::VARCHAR AS s FROM range(5000) t(i);",
             &export,
+            0,
         )
         .unwrap();
         assert_eq!(answer["export"]["rows"], 5000);
@@ -525,10 +578,52 @@ mod tests {
         let small = Export {
             path: dir.join("big.arrow"),
             max_bytes: 1024,
+            format: super::Format::Arrow,
         };
-        let refused = super::export_arrow(&engine.connection, "SELECT * FROM range(100000)", &small);
+        let refused =
+            super::export_file(&engine.connection, "SELECT * FROM range(100000)", &small, 0);
         assert!(refused.is_err());
         assert!(!small.path.exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_result_can_be_written_as_parquet_with_its_types_and_a_preview() {
+        let engine = Engine::start(&[]).unwrap();
+        let dir = std::env::temp_dir().join(format!("loamz-parquet-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let export = Export {
+            path: dir.join("r.parquet"),
+            max_bytes: 1 << 20,
+            format: super::Format::Parquet,
+        };
+        let answer = super::export_file(
+            &engine.connection,
+            "SELECT i AS n, i::DECIMAL(10,2) AS d, 'x' || i::VARCHAR AS s, DATE '2026-01-01' + i::INTEGER AS day FROM range(5000) t(i)",
+            &export,
+            20,
+        )
+        .unwrap();
+        assert_eq!(answer["export"]["rows"], 5000);
+        assert_eq!(answer["export"]["format"], "parquet");
+        assert_eq!(answer["rows"].as_array().unwrap().len(), 20, "the preview");
+        assert_eq!(answer["truncated"], true);
+        // Read back by DuckDB itself: types survive (a decimal is a decimal, a date a date).
+        let check = Engine::start(&[]).unwrap();
+        let types = check
+            .answer(
+                &format!("SELECT typeof(d), typeof(day), count(*) FROM read_parquet('{}') GROUP BY ALL", export.path.display()),
+                5,
+            );
+        // The engine is locked down, so it cannot read files: the round trip is checked with parquet's own reader instead.
+        assert!(types.is_err());
+        let file = std::fs::File::open(&export.path).unwrap();
+        let reader = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
+        let schema = reader.schema().clone();
+        assert_eq!(schema.field(1).data_type().to_string(), "Decimal128(10, 2)");
+        assert!(schema.field(3).data_type().to_string().starts_with("Date32"));
+        let rows: usize = reader.build().unwrap().map(|b| b.unwrap().num_rows()).sum();
+        assert_eq!(rows, 5000);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

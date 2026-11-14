@@ -655,6 +655,8 @@ async fn run_schedule(app: &App, task: &Task) -> Result<()> {
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned),
             export: false,
+            save: None,
+            idempotency_key: None,
         };
         compute::submit_sql(app, &ctx, request).await.map(|_| ())
     } else if let Some(maintenance) = definition.get("maintenance") {

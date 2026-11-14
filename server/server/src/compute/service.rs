@@ -419,6 +419,20 @@ pub struct SqlRequest {
     /// columns and the size, not the rows.
     #[serde(default)]
     pub export: bool,
+    /// Keep the whole result as a Parquet file in one of the person's volumes, at `threads/<thread>/results/<run id>.parquet`: for code
+    /// that reads it later (Polars, `DuckDB`, pyarrow) without the rows ever passing through this server. Needs `WRITE` on the volume.
+    pub save: Option<SaveTo>,
+    /// A key that makes the request safe to send again: the same key from the same person returns the run it made the first time.
+    pub idempotency_key: Option<String>,
+}
+
+/// Where a statement's whole result is saved.
+#[derive(Deserialize)]
+pub struct SaveTo {
+    /// The volume's id.
+    pub volume: String,
+    /// A conversation or work thread: letters, digits, dashes and underscores, up to 64. Results are grouped by it.
+    pub thread: String,
 }
 
 #[derive(Deserialize)]
@@ -725,12 +739,104 @@ async fn readable_table(
     Ok((entry.id, rel.join("."), entry.classification))
 }
 
+/// A whole result kept beside the data it came from, in that storage: it needs a table, and a storage that can sign. Returns the
+/// folder it goes in.
+async fn checked_export(app: &App, ctx: &Ctx<'_>, tables: &[Value]) -> Result<String> {
+    let first = tables
+        .first()
+        .and_then(|t| t["id"].as_str())
+        .ok_or_else(|| {
+            Error::Invalid("a whole result is kept beside a table: read at least one".into())
+        })?;
+    let (_, _, folder) = tables::locate(app, &ctx.workspace.org_id, first).await?;
+    let result_folder = crate::kernel::places::results_of(&folder);
+    let spot = app
+        .places
+        .spot(&result_folder)
+        .await
+        .map_err(|e| Error::Unavailable(e.to_string()))?;
+    if spot.issuer.is_none() || spot.place.is_none() {
+        return Err(Error::Invalid(
+            "this storage cannot keep a whole result".into(),
+        ));
+    }
+    Ok(result_folder)
+}
+
+/// A result saved in a person's volume: they need `WRITE` on it, and it must be a place the data may go. Returns what the run's spec
+/// keeps: the volume, its folder, and the thread.
+async fn checked_save(app: &App, ctx: &Ctx<'_>, to: &SaveTo, personal: bool) -> Result<Value> {
+    if to.thread.is_empty()
+        || to.thread.len() > 64
+        || !to
+            .thread
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+    {
+        return Err(Error::Invalid(
+            "a thread is letters, digits, dashes and underscores, up to 64".into(),
+        ));
+    }
+    let org = &ctx.workspace.org_id;
+    let (entry, target) = catalogs::target_in(app, &ctx.workspace.id, org, &to.volume).await?;
+    if entry.kind != Kind::Volume {
+        return Err(Error::Invalid("save needs a volume".into()));
+    }
+    iam::require(
+        app,
+        ctx.identity,
+        org,
+        ctx.sides,
+        Privilege::WriteVolume,
+        &target,
+    )
+    .await?;
+    if entry.classification == "sealed" {
+        return Err(Error::Invalid("compute cannot write to sealed data".into()));
+    }
+    if personal && entry.classification != "personal" {
+        return Err(Error::Invalid(
+            "personal data can only be saved in a personal volume".into(),
+        ));
+    }
+    let spot = app
+        .places
+        .spot(&entry.folder)
+        .await
+        .map_err(|e| Error::Unavailable(e.to_string()))?;
+    if spot.issuer.is_none() || spot.place.is_none() {
+        return Err(Error::Invalid(
+            "this volume's storage cannot take a saved result".into(),
+        ));
+    }
+    Ok(json!({"volume": entry.id, "volume_folder": entry.folder, "thread": to.thread}))
+}
+
 /// Asks for a SQL statement to be run. Everything it reads is checked now, against the person's rights.
 ///
 /// # Errors
 /// Not allowed, the statement is refused, or no compute is answering.
 pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run> {
     entitled(app, ctx, "sql-access").await?;
+    let requester = Who::of(ctx.identity).actor;
+    let key = req.idempotency_key.as_deref().filter(|k| !k.is_empty());
+    if let Some(key) = key {
+        if key.len() > 128
+            || !key
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        {
+            return Err(Error::Invalid(
+                "an idempotency key is letters, digits, dashes, underscores and dots, up to 128"
+                    .into(),
+            ));
+        }
+        if let Some(id) =
+            store::run_for_key(app.db.pool(), &ctx.workspace.id, &requester, key).await?
+        {
+            return get(app, ctx, &id).await;
+        }
+    }
     if req.sql.len() > 100_000 {
         return Err(Error::Invalid("the statement is too long".into()));
     }
@@ -738,9 +844,11 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
     let mut tables = Vec::new();
     // Data classified above normal never leaves the organization's own machines.
     let mut private = false;
+    let mut personal = false;
     for rel in &analysis.relations {
         let (id, name, class) = readable_table(app, ctx, rel).await?;
         private |= class != "normal";
+        personal |= class == "personal";
         tables.push(json!({"id": id, "name": name}));
     }
     // A table with row or column rules is read through them: the statement itself is rewritten here, once, so every kind of
@@ -756,28 +864,22 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
     }
     let statement = sql::guard(&req.sql, &rules).map_err(Error::Invalid)?;
     let limit = req.limit.unwrap_or(DEFAULT_ROWS).clamp(1, MAX_ROWS);
-    // The whole result is kept beside the data it came from, in that storage: so it needs a table, and a storage that can sign.
-    let mut result_folder = String::new();
-    if req.export {
-        let first = tables
-            .first()
-            .and_then(|t| t["id"].as_str())
-            .ok_or_else(|| {
-                Error::Invalid("a whole result is kept beside a table: read at least one".into())
-            })?;
-        let (_, _, folder) = tables::locate(app, &ctx.workspace.org_id, first).await?;
-        result_folder = crate::kernel::places::results_of(&folder);
-        let spot = app
-            .places
-            .spot(&result_folder)
-            .await
-            .map_err(|e| Error::Unavailable(e.to_string()))?;
-        if spot.issuer.is_none() || spot.place.is_none() {
+    let result_folder = if req.export {
+        checked_export(app, ctx, &tables).await?
+    } else {
+        String::new()
+    };
+    let save = match &req.save {
+        Some(to) if req.export => {
+            let _ = to;
             return Err(Error::Invalid(
-                "this storage cannot keep a whole result".into(),
+                "keep a result for a signed address (export) or in a volume (save), not both"
+                    .into(),
             ));
         }
-    }
+        Some(to) => checked_save(app, ctx, to, personal).await?,
+        None => Value::Null,
+    };
     let mut policies = Vec::new();
     for t in &tables {
         let id = t["id"].as_str().unwrap_or_default();
@@ -794,9 +896,20 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
     )
     .await?;
     let limits = limits_for(&target, None, None, None, 120).map_err(Error::Invalid)?;
-    let spec = json!({"as": As::of(ctx.identity), "source_sql": req.sql, "sql": statement, "limit": limit, "tables": tables, "export": req.export, "result_folder": result_folder, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
+    let spec = json!({"as": As::of(ctx.identity), "source_sql": req.sql, "sql": statement, "limit": limit, "tables": tables, "export": req.export || !save.is_null(), "export_format": if save.is_null() { "arrow" } else { "parquet" }, "save": save, "result_folder": result_folder, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
     let run = new_run(ctx, "sql", &req.sql, &target, &spec);
     queue(app, ctx, &run, "sql.submit").await?;
+    if let Some(key) = key
+        && !store::set_idempotency_key(app.db.pool(), &run.id, key).await?
+    {
+        // The same request arrived twice at once and the other one got the key first: stop this one and give back that one.
+        let _ = cancel(app, ctx, &run.id).await;
+        if let Some(id) =
+            store::run_for_key(app.db.pool(), &ctx.workspace.id, &requester, key).await?
+        {
+            return get(app, ctx, &id).await;
+        }
+    }
     Ok(run)
 }
 
@@ -1624,7 +1737,6 @@ async fn guarded_sql(app: &App, identity: &Identity, run: &Run, spec: &Value) ->
 async fn storage_for(
     app: &App,
     org: &str,
-    run_id: &str,
     ids: &[String],
     spec: &Value,
     timeout_s: i64,
@@ -1679,23 +1791,75 @@ async fn storage_for(
     let place = vended
         .place
         .ok_or_else(|| Error::Unavailable("this server's storage is not a bucket".into()))?;
-    let mut out = json!({
+    let out = json!({
         "endpoint": place.endpoint, "region": place.region, "bucket": place.bucket, "key_id": creds.key_id, "secret": creds.secret,
         "session_token": creds.session_token, "tables": located,
         "mode": if writing { "write" } else { "read" },
         "read_prefixes": read_prefixes, "write_prefixes": write_prefixes, "create_roots": create_roots,
     });
-    // A statement that asked for its whole result may write one file, and only that file: its own credential, apart from the tables'.
-    if spec["export"] == true
-        && let Some(folder) = spec["result_folder"].as_str()
-    {
-        let v = tables::vend(app, &[folder], true, ttl).await?;
-        out["result"] = json!({
-            "key_id": v.credentials.key_id, "secret": v.credentials.secret, "session_token": v.credentials.session_token,
-            "key": result_key(app, folder, run_id).await?,
-        });
-    }
     Ok(Some(out))
+}
+
+/// Where a statement that asked for its whole result may put it, and the credential for that one key, apart from the tables' own:
+/// beside the first table (a file for a signed address, kept a day), or in a person's volume (Parquet, kept until they delete it).
+/// None: this storage cannot hand out credentials.
+async fn result_grant(
+    app: &App,
+    spec: &Value,
+    run_id: &str,
+    ttl: Duration,
+) -> Result<Option<Value>> {
+    let (folder, rel) = if let Some(save) = spec.get("save").filter(|v| v.is_object()) {
+        let thread = save["thread"].as_str().unwrap_or_default();
+        (
+            save["volume_folder"].as_str().unwrap_or_default(),
+            format!("threads/{thread}/results/{run_id}.parquet"),
+        )
+    } else {
+        (
+            spec["result_folder"].as_str().unwrap_or_default(),
+            result_name(run_id),
+        )
+    };
+    if folder.is_empty() {
+        return Ok(None);
+    }
+    if app.places.spot(folder).await?.issuer.is_none() {
+        return Ok(None);
+    }
+    let v = tables::vend(app, &[folder], true, ttl).await?;
+    let place = v
+        .place
+        .ok_or_else(|| Error::Unavailable("this storage is not a bucket".into()))?;
+    Ok(Some(json!({
+        "endpoint": place.endpoint, "region": place.region, "bucket": place.bucket,
+        "key_id": v.credentials.key_id, "secret": v.credentials.secret, "session_token": v.credentials.session_token,
+        "key": format!("{}/{rel}", tables::key_of(app, folder).await?),
+    })))
+}
+
+/// Everything a machine needs from storage for one run: its tables, and where its whole result goes if it asked for one.
+async fn lease_storage(
+    app: &App,
+    run: &Run,
+    ids: &[String],
+    spec: &Value,
+    writing: bool,
+    timeout_s: i64,
+) -> Result<Option<Value>> {
+    let mut storage = if ids.is_empty() && !writing {
+        None
+    } else {
+        storage_for(app, &run.org_id, ids, spec, timeout_s).await?
+    };
+    if spec["export"] == true {
+        let ttl = Duration::from_secs(u64::try_from(timeout_s).unwrap_or(120) + 300);
+        let grant = result_grant(app, spec, &run.id, ttl)
+            .await?
+            .ok_or_else(|| Error::Invalid("this storage cannot keep a whole result".into()))?;
+        storage.get_or_insert_with(|| json!({}))["result"] = grant;
+    }
+    Ok(storage)
 }
 
 /// Check the current workspace, entitlements, object grants and table rules before handing a run to a worker.
@@ -1997,13 +2161,13 @@ pub async fn lease(app: &App, target: &Target) -> Result<Option<Lease>> {
     let writing = spec["table_writes"]
         .as_array()
         .is_some_and(|a| !a.is_empty());
-    let storage = if ids.is_empty() && !writing {
+    let storage = if ids.is_empty() && !writing && spec["export"] != true {
         None
     } else {
         // The credentials come from the storage provider over the network: one more try before giving up on a slow answer.
-        let mut got = storage_for(app, &run.org_id, &run.id, &ids, &spec, limits.timeout_s).await;
+        let mut got = lease_storage(app, &run, &ids, &spec, writing, limits.timeout_s).await;
         if got.is_err() {
-            got = storage_for(app, &run.org_id, &run.id, &ids, &spec, limits.timeout_s).await;
+            got = lease_storage(app, &run, &ids, &spec, writing, limits.timeout_s).await;
         }
         match got {
             Ok(s) => s,
@@ -2078,6 +2242,22 @@ pub async fn complete(app: &App, target: &Target, id: &str, report: Report) -> R
         .await?
         .filter(|r| r.target_id == target.id)
         .ok_or_else(|| Error::NotFound("no such run".into()))?;
+    let mut report = report;
+    // A result saved in a volume: say where, so the agent can read it (the volume, and the path in it).
+    if report.state == "succeeded"
+        && let Ok(spec) = serde_json::from_str::<Value>(&run.spec)
+        && let Some(volume) = spec["save"]["volume"].as_str()
+        && let Ok(mut kept) = serde_json::from_str::<Value>(&report.result)
+        && kept["export"].is_object()
+    {
+        kept["export"]["volume"] = json!(volume);
+        kept["export"]["path"] = json!(format!(
+            "threads/{}/results/{}.parquet",
+            spec["save"]["thread"].as_str().unwrap_or_default(),
+            run.id
+        ));
+        report.result = kept.to_string();
+    }
     let (stdout, stderr, error) = (
         cap(&report.stdout, MAX_OUTPUT),
         cap(&report.stderr, MAX_OUTPUT),
@@ -2102,7 +2282,7 @@ pub async fn complete(app: &App, target: &Target, id: &str, report: Report) -> R
     if report.state == "succeeded"
         && let Ok(spec) = serde_json::from_str::<Value>(&run.spec)
         && spec["export"] == true
-        && let Some(folder) = spec["result_folder"].as_str()
+        && let Some(folder) = spec["result_folder"].as_str().filter(|f| !f.is_empty())
         && let Ok(kept) = serde_json::from_str::<Value>(&report.result)
         && let Some(bytes) = kept["export"]["bytes"].as_i64().filter(|b| *b > 0)
     {
@@ -2210,15 +2390,6 @@ pub const RESULT_LINK_MS: i64 = 5 * 60 * 1000;
 
 fn result_name(run: &str) -> String {
     format!("{run}.arrow")
-}
-
-/// Where the machine puts a statement's whole result: the key the run's own write credential is limited to.
-async fn result_key(app: &App, folder: &str, run: &str) -> Result<String> {
-    Ok(format!(
-        "{}/{}",
-        tables::key_of(app, folder).await?,
-        result_name(run)
-    ))
 }
 
 /// A statement's whole result, as a short-lived signed address into the storage the data is in: the bytes never pass through this

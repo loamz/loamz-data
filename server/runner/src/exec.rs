@@ -156,7 +156,12 @@ async fn with_export(
     mut report: crate::work::Report,
 ) -> crate::work::Report {
     if report.state == "succeeded" && lease.run.spec["export"] == true {
-        match worker.take_export(&lease.run.id).await {
+        let extension = if lease.run.spec["export_format"] == "parquet" {
+            "parquet"
+        } else {
+            "arrow"
+        };
+        match worker.take_export(&lease.run.id, extension).await {
             Some(path) => report.file = Some(path),
             None => {
                 report = crate::work::Report::failed("the statement produced no result file");
