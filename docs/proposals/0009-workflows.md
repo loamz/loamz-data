@@ -33,7 +33,7 @@ flowchart LR
   task instances, clear and cancel a run. Never forwarded: connections, variables, pools, configuration, plugins, providers, users and
   roles, the UI, and anything unreviewed. Task logs are not Airflow's: a run's output is what the Loamz run API already returns under the
   same rights. Airflow's own login is internal only: the gateway holds one service credential (in `OpenBao`), the caller never sees it.
-- **Names:** Airflow's DAG id is `<workspace id>.<catalog.schema.name>`, so two workspaces can use the same name.
+- **Names:** Airflow's DAG id is a server-generated opaque ID mapped to the organization, workspace and pipeline; user names never choose it.
 - **Alerts:** the failure alert of 0003 W8 (a webhook held in the vault) is reused: a failed pipeline run writes the same alert row.
 - **Schedules stay.** Simple cron and interval jobs (built, W8) keep working; a pipeline is for several steps. Later, a schedule can be
   stored as a one-step pipeline.
@@ -61,3 +61,15 @@ share a transaction (the same operation-state rules as 0008); Airflow's UI or AP
 3. Triggers, pause and resume, run history, alerts; drop and erase of a pipeline durable across both databases.
 4. Console: pipeline screens (definition, runs, trigger, pause); SDK: `loamz pipelines`.
 5. One integration pass with the stock Airflow client, then a hostile review round and Codex's final pass.
+
+## Review amendments and first-customer gates
+
+The [security review](../../notes/0009-review.md) qualifies this design:
+
+1. **The definition is strictly data.** Use a closed, versioned schema and fixed, non-templated operators; reject user code, imports, callbacks, shell, Jinja, arbitrary URLs, API paths and Airflow configuration. Python runs only as an isolated Loamz job. Pin each run to an immutable definition and owner generation.
+2. **Authorize every dispatch.** Scope pipeline, run, step and all referenced inputs and outputs to the organization and workspace; the operator never chooses the owner or tenant. Loamz verifies the dispatch and rechecks the owner's current rights at each attempt and governed access. EXECUTE explicitly delegates running as the owner and is audited. Fence stale workers and make submissions idempotent.
+3. **Pin and restrict Airflow.** Pin Airflow 3.1.1, image digest, providers, auth manager and public `/api/v2` schema. The review names candidate exact methods and paths; allow each only after its fields, mapping and security tests are reviewed. No UI, execution API, logs, XCom, admin, arbitrary configuration, backfill or unknown route. Clear and cancel require Loamz authorization, fencing and Loamz job cancellation; an Airflow state change alone is not cancellation.
+4. **Use separate service identities.** The gateway holds a dedicated Airflow service login in OpenBao and exchanges it for a short-lived API JWT. The operator uses its own authenticated workload identity to request a narrowly scoped, expiring step capability from Loamz; it never holds the owner's credential. The broker and delegation checks must be built and tested. Never put secrets, credentials or customer data in DAG definitions, Airflow logs or XCom.
+5. **Make cross-database operations durable.** Create inactive, activate only after the exact DAG generation is acknowledged; drop and erase fence first, cancel and verify Loamz runs, then remove Airflow and Loamz copies with idempotent retries and audit. Reconcile after crashes, and replay erasure tombstones on restore.
+6. **Owner and rights changes fence work.** Owner transfer requires explicit acceptance, dependency checks and an audited generation change; cancel or fence old work. Erasure disables the pipeline, with no automatic takeover. Recheck rights during execution and result access; cancel work after revocation, and document the actual expiry bound for already-issued storage credentials. Fail closed when authorization is unavailable.
+7. **Bound abuse and prove the boundary.** Enforce the review's step, retry, time, trigger, queue and concurrency ceilings across replicas. Disable catchup and backfills by default. Before the first customer, test tenant isolation, operator and broker credentials, secret-free logs, cancellation, revocation, crash/retry/restore, durable erasure and the pinned API contract end to end.
