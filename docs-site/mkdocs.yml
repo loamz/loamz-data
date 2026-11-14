@@ -46,6 +46,7 @@ nav:
       - Bring Data In: connect/bring-data-in.md
       - DuckDB: connect/duckdb.md
       - Python SDK & CLI: connect/python.md
+      - Compute & Runners: connect/compute.md
   - Access & Governance:
       - Team Members: access/people.md
       - Service Principals: access/service-principals.md
