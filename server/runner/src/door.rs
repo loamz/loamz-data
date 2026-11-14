@@ -399,6 +399,12 @@ pub fn catalog_allows(grant: &CatalogGrant, method: &str, path: &str) -> bool {
         return false;
     }
     let parts: Vec<String> = rest.split('/').map(pct_decode).collect();
+    if parts
+        .iter()
+        .any(|part| matches!(part.as_str(), "." | "..") || part.contains(['/', '\\']))
+    {
+        return false;
+    }
     // `config`, or `<catalog>/...`
     let reading = matches!(method, "GET" | "HEAD");
     if parts.first().is_some_and(|p| p == "config") {
@@ -710,10 +716,9 @@ async fn forward_storage(
 ) -> Answer {
     let made = learned.read().await.clone();
     let bulk_delete = asked.method == "POST"
-        && asked
-            .query
-            .split('&')
-            .any(|p| p == "delete" || p.starts_with("delete="));
+        && parse_query(&asked.query)
+            .iter()
+            .any(|(key, _)| key == "delete");
     if bulk_delete && !delete_keys_allowed(grant, &made, &asked.path, &asked.body) {
         tracing::warn!(
             path = asked.path,
@@ -1093,6 +1098,7 @@ mod tests {
             ("GET", "/lake/ws/cat/other/x", ""),
             ("GET", "/lake/ws/cat/tbl/../other/x", ""),
             ("GET", "/lake/ws/cat/tbl/%2e%2e/other/x", ""),
+            ("GET", "/lake/ws/cat/tbl/%2e%2e%2fother/x", ""),
             ("GET", "/lake/ws/cat/tbl", ""),
             ("PUT", "/lake/ws/cat/tbl/x", "acl"),
             ("GET", "/lake/ws/cat/tbl/x", "versions"),
@@ -1138,6 +1144,12 @@ mod tests {
             ("GET", "/api/v1/workspaces/w2/iceberg/v1/config".into()),
             ("GET", "/api/v1/workspaces/w1/securables".into()),
             ("GET", format!("{base}/sales/namespaces/raw/tables/../../x")),
+            ("GET", format!("{base}/%2e%2e/namespaces/raw/tables/orders")),
+            ("GET", format!("{base}/sales/namespaces/raw/tables/%2e%2e")),
+            (
+                "GET",
+                format!("{base}/sales/namespaces/raw%5c..%5ctables/orders"),
+            ),
             ("POST", format!("{base}/transactions/commit")),
         ] {
             assert!(!yes(m, &p), "{m} {p}");
@@ -1257,5 +1269,86 @@ mod tests {
         // A bulk delete is allowed to start only on the bucket itself.
         assert!(storage_allows(&g, &[], "POST", "/lake", "delete").is_ok());
         assert!(storage_allows(&g, &[], "POST", "/lake/ws/cat/tbl/x", "delete").is_err());
+    }
+
+    #[tokio::test]
+    async fn transfer_encoding_and_expect_cannot_smuggle_a_second_request_body() {
+        for header in ["Transfer-Encoding: chunked", "Expect: 100-continue"] {
+            let (mut client, mut door) = UnixStream::pair().unwrap();
+            client
+                .write_all(
+                    format!(
+                        "POST /lake/ws/cat/tbl/x HTTP/1.1\r\nHost: local\r\nContent-Length: 1\r\n{header}\r\n\r\n0"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            assert!(
+                matches!(read_request(&mut door).await, Err(411)),
+                "{header}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_storage_door_rejects_a_declared_body_over_its_limit() {
+        let (mut client, mut door) = UnixStream::pair().unwrap();
+        client
+            .write_all(
+                format!(
+                    "PUT /lake/ws/cat/tbl/x HTTP/1.1\r\nHost: local\r\nContent-Length: {}\r\n\r\n",
+                    MAX_BODY + 1
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(read_request(&mut door).await, Err(413)));
+    }
+
+    #[tokio::test]
+    async fn encoded_bulk_delete_cannot_delete_a_read_only_input() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let upstream = tokio::spawn(async move {
+            let Ok(Ok((mut stream, _))) =
+                tokio::time::timeout(Duration::from_millis(250), listener.accept()).await
+            else {
+                return false;
+            };
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request).await;
+            let _ = stream
+                .write_all(
+                    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await;
+            true
+        });
+        let mut grant = storage();
+        grant.endpoint = endpoint;
+        let body = b"<Delete><Object><Key>ws/cat/in/secret</Key></Object></Delete>".to_vec();
+        let answer = forward_storage(
+            &reqwest::Client::new(),
+            &grant,
+            &RwLock::new(Vec::new()),
+            Asked {
+                method: "POST".into(),
+                path: "/lake".into(),
+                query: "%64elete".into(),
+                content_type: Some("application/xml".into()),
+                range: None,
+                md5: None,
+                body,
+                close: true,
+            },
+        )
+        .await;
+        assert_eq!(answer.status, 403);
+        assert!(
+            !upstream.await.unwrap(),
+            "the refused request reached storage"
+        );
     }
 }

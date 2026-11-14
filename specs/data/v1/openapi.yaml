@@ -1973,17 +1973,37 @@ paths:
           $ref: '#/components/responses/Problem'
   /api/v1/workspaces/{ws}/runs/{id}/result:
     get:
-      summary: The whole result of a statement that was run with `export`, as a short-lived signed address.
-      description: >-
-        Needs the same right as the run's detail. The answer is `{url, bytes, format, expires_ms}`: fetch `url` with no credential
-        (the bytes go from the storage to the reader, never through this server). The file is an Arrow IPC stream and is removed 24 hours
-        after the run ends, or at once if the person who ran it is erased.
+      summary: Get a short-lived address for a run's complete Arrow result.
+      description: Requires current run-detail access. The address expires after a short time and is not included in run views.
       parameters:
       - *id007
       - *id008
       responses:
         '200':
-          description: The signed address
+          description: The signed address, byte count, format, and expiry time.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - url
+                - bytes
+                - format
+                - expires_ms
+                properties:
+                  url:
+                    type: string
+                    format: uri
+                  bytes:
+                    type: integer
+                    format: int64
+                  format:
+                    type: string
+                    enum:
+                    - application/vnd.apache.arrow.stream
+                  expires_ms:
+                    type: integer
+                    format: int64
         '401':
           $ref: '#/components/responses/Problem'
         '404':

@@ -1460,6 +1460,23 @@ async fn completed_results_require_current_input_access(s: Server) {
             && view.get("stderr").is_none()
             && view.get("result").is_none()
     );
+    let result_folder = format!("results/{id}");
+    sqlx::query("UPDATE runs SET result_bytes = 1, result_folder = $2 WHERE id = $1")
+        .bind(&id)
+        .bind(result_folder)
+        .execute(s.app.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        s.get(
+            &format!("/api/v1/workspaces/{}/runs/{id}/result", l.ws),
+            &bob()
+        )
+        .await
+        .status,
+        404,
+        "a hidden run must not yield a signed result link"
+    );
     s.assign(&l.ws, &[&bob(), &cy()]).await;
     assert_eq!(
         s.get(&path, &cy()).await.status,
@@ -2376,7 +2393,7 @@ async fn an_import_from_an_address_is_downloaded_by_the_machine_and_never_shown_
     assert_eq!(r.status, 202, "{}", r.text());
     let run = r.json();
     let title = run["title"].as_str().unwrap();
-    assert!(title.contains("files.example.com"), "{title}");
+    assert!(!title.contains("files.example.com"), "{title}");
     assert!(
         !title.contains("exports") && !title.contains("topsecret"),
         "{title}"
@@ -2410,6 +2427,14 @@ async fn an_import_from_an_address_is_downloaded_by_the_machine_and_never_shown_
     assert_eq!(shown.status, 200);
     assert!(!shown.text().contains("topsecret"), "{}", shown.text());
     assert_eq!(shown.json()["spec"]["fetch"], true);
+    let audit = s
+        .get(&format!("/api/v1/orgs/{ACME}/audit?limit=500"), &ana())
+        .await;
+    assert!(
+        !audit.text().contains("topsecret") && !audit.text().contains("files.example.com"),
+        "{}",
+        audit.text()
+    );
 }
 both!(an_import_from_an_address_is_downloaded_by_the_machine_and_never_shown_back);
 
@@ -2444,6 +2469,7 @@ async fn a_whole_result_needs_a_table_and_a_storage_that_can_keep_it(s: Server) 
             json!({"sql": "SELECT * FROM sales.raw.orders", "wait_s": 0}),
         )
         .await;
+    assert_eq!(plain.status, 202, "{}", plain.text());
     let id = plain.json()["id"].as_str().unwrap().to_owned();
     let path = format!("/api/v1/workspaces/{}/runs/{id}/result", l.ws);
     assert_eq!(s.get(&path, &ana()).await.status, 404);
@@ -2684,3 +2710,42 @@ async fn threads_hold_one_job_at_a_time_and_a_deleted_thread_is_closed_postgres(
     )
     .await;
 }
+
+async fn expiry_removes_an_unreported_result_file(s: Server) {
+    let l = lab(&s).await;
+    attach(&s).await;
+    let statement = format!("/api/v1/workspaces/{}/sql/statements", l.ws);
+    let run = s
+        .post(
+            &statement,
+            &ana(),
+            json!({"sql": "SELECT * FROM sales.raw.orders", "wait_s": 0}),
+        )
+        .await;
+    assert_eq!(run.status, 202, "{}", run.text());
+    let id = run.json()["id"].as_str().unwrap().to_owned();
+    let file = format!("{id}.arrow");
+    let mut upload = s
+        .app
+        .places
+        .begin_put("results", &file, 1024)
+        .await
+        .unwrap();
+    upload.write(b"uploaded but not reported").await.unwrap();
+    upload.commit().await.unwrap();
+    sqlx::query(
+        "UPDATE runs SET state = 'failed', finished_ms = 1, result_folder = 'results' WHERE id = $1",
+    )
+    .bind(&id)
+    .execute(s.app.db.pool())
+    .await
+    .unwrap();
+
+    compute::expire_results(&s.app, now_ms()).await.unwrap();
+
+    assert!(
+        s.app.places.open("results", &file).await.is_err(),
+        "expiry left an uploaded result whose completion report was never recorded"
+    );
+}
+both!(expiry_removes_an_unreported_result_file);

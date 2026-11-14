@@ -6,7 +6,10 @@ mod common;
 
 use axum::body::Body;
 use common::{ACME, RIVAL, Server, Who, ana, bob, fresh_db, person, server};
-use loamz_data_server::kernel::{hash_secret, new_id};
+use loamz_data_server::{
+    compute::service as compute,
+    kernel::{hash_secret, new_id, now_ms},
+};
 use serde_json::json;
 
 type AuditRow = (
@@ -72,6 +75,7 @@ async fn seed_run(
             "actor": null
         },
         "script": "print('private script')",
+        "inputs": [{"id": output, "kind": "volume"}],
         "output": output
     })
     .to_string();
@@ -340,9 +344,44 @@ async fn run_results_tokens_and_shared_output_files_are_erased(s: Server) {
     .await;
     s.upload(&workspace, &output, "keep.txt", &ana(), b"keep")
         .await;
+    let result_folder = format!("results/{run}");
+    let result_file = format!("{run}.arrow");
+    let mut result = s
+        .app
+        .places
+        .begin_put(&result_folder, &result_file, 1024)
+        .await
+        .unwrap();
+    result.write(b"private Arrow result").await.unwrap();
+    result.commit().await.unwrap();
+    sqlx::query("UPDATE runs SET result_bytes = 20, result_folder = $2 WHERE id = $1")
+        .bind(&run)
+        .bind(&result_folder)
+        .execute(s.app.db.pool())
+        .await
+        .unwrap();
 
     request_erase(&s, &ana(), "user:bob").await;
     s.work().await;
+    assert_eq!(
+        s.get(
+            &format!("/api/v1/workspaces/{workspace}/runs/{run}/result"),
+            &ana()
+        )
+        .await
+        .status,
+        404,
+        "an erased run must not yield a signed result link"
+    );
+    compute::expire_results(&s.app, now_ms()).await.unwrap();
+    assert!(
+        s.app
+            .places
+            .open(&result_folder, &result_file)
+            .await
+            .is_err(),
+        "erase left a whole-result file behind"
+    );
 
     let token_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM run_tokens WHERE run_id = $1")
         .bind(&run)
@@ -460,6 +499,51 @@ async fn an_active_run_cannot_restore_results_after_erase(s: Server) {
     );
 }
 both!(an_active_run_cannot_restore_results_after_erase);
+
+async fn a_late_result_upload_after_erase_is_cleaned(s: Server) {
+    let workspace = s.acme().await;
+    let catalog = s
+        .make(&workspace, &ana(), "catalog", "", "late_result")
+        .await;
+    let schema = s.make(&workspace, &ana(), "schema", &catalog, "main").await;
+    let output = s
+        .make(&workspace, &ana(), "volume", &schema, "output")
+        .await;
+    let run = seed_run(&s, &workspace, "bob", "", "running", "worker", &output).await;
+    let folder = format!("results/{run}");
+    let file = format!("{run}.arrow");
+    sqlx::query("UPDATE runs SET result_folder = $2 WHERE id = $1")
+        .bind(&run)
+        .bind(&folder)
+        .execute(s.app.db.pool())
+        .await
+        .unwrap();
+
+    request_erase(&s, &ana(), "user:bob").await;
+    s.work().await;
+    compute::expire_results(&s.app, now_ms()).await.unwrap();
+
+    let mut upload = s.app.places.begin_put(&folder, &file, 1024).await.unwrap();
+    upload.write(b"late Arrow result").await.unwrap();
+    upload.commit().await.unwrap();
+    compute::expire_results(&s.app, now_ms()).await.unwrap();
+
+    assert!(
+        s.app.places.open(&folder, &file).await.is_err(),
+        "a late upload after erase became an untracked result file"
+    );
+    assert_eq!(
+        s.get(
+            &format!("/api/v1/workspaces/{workspace}/runs/{run}/result"),
+            &ana()
+        )
+        .await
+        .status,
+        404,
+        "an erased run must not yield a result link"
+    );
+}
+both!(a_late_result_upload_after_erase_is_cleaned);
 
 async fn a_last_admin_erase_leaves_owned_data_untouched(s: Server) {
     let workspace = s.acme().await;

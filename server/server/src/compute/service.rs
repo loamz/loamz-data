@@ -614,10 +614,17 @@ async fn pick(
         .ok_or_else(|| too_big(&online))
 }
 
-fn new_run(ctx: &Ctx<'_>, kind: &str, title: &str, target: &Target, spec: &Value) -> Run {
+fn new_run(
+    ctx: &Ctx<'_>,
+    id: String,
+    kind: &str,
+    title: &str,
+    target: &Target,
+    spec: &Value,
+) -> Run {
     let who = Who::of(ctx.identity);
     Run {
-        id: new_id(),
+        id,
         org_id: ctx.workspace.org_id.clone(),
         workspace_id: ctx.workspace.id.clone(),
         kind: kind.into(),
@@ -767,7 +774,12 @@ async fn readable_table(
 
 /// A whole result kept beside the data it came from, in that storage: it needs a table, and a storage that can sign. Returns the
 /// folder it goes in.
-async fn checked_export(app: &App, ctx: &Ctx<'_>, tables: &[Value]) -> Result<String> {
+async fn checked_export(
+    app: &App,
+    ctx: &Ctx<'_>,
+    tables: &[Value],
+    run_id: &str,
+) -> Result<String> {
     let first = tables
         .first()
         .and_then(|t| t["id"].as_str())
@@ -775,7 +787,7 @@ async fn checked_export(app: &App, ctx: &Ctx<'_>, tables: &[Value]) -> Result<St
             Error::Invalid("a whole result is kept beside a table: read at least one".into())
         })?;
     let (_, _, folder) = tables::locate(app, &ctx.workspace.org_id, first).await?;
-    let result_folder = crate::kernel::places::results_of(&folder);
+    let result_folder = crate::kernel::places::results_of(&folder, run_id);
     let spot = app
         .places
         .spot(&result_folder)
@@ -896,8 +908,9 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
     }
     let statement = sql::guard(&req.sql, &rules).map_err(Error::Invalid)?;
     let limit = req.limit.unwrap_or(DEFAULT_ROWS).clamp(1, MAX_ROWS);
+    let run_id = new_id();
     let result_folder = if req.export {
-        checked_export(app, ctx, &tables).await?
+        checked_export(app, ctx, &tables, &run_id).await?
     } else {
         String::new()
     };
@@ -929,7 +942,7 @@ pub async fn submit_sql(app: &App, ctx: &Ctx<'_>, req: SqlRequest) -> Result<Run
     .await?;
     let limits = limits_for(&target, None, None, None, 120).map_err(Error::Invalid)?;
     let spec = json!({"as": As::of(ctx.identity), "source_sql": req.sql, "sql": statement, "limit": limit, "tables": tables, "export": req.export || !save.is_null(), "export_format": if save.is_null() { "arrow" } else { "parquet" }, "save": save, "result_folder": result_folder, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
-    let run = new_run(ctx, "sql", &req.sql, &target, &spec);
+    let run = new_run(ctx, run_id, "sql", &req.sql, &target, &spec);
     queue(app, ctx, &run, "sql.submit").await?;
     if let Some(key) = key
         && !store::set_idempotency_key(app.db.pool(), &run.id, key).await?
@@ -1244,11 +1257,11 @@ impl<'a> Source<'a> {
         }
     }
 
-    /// What titles say about the file: a volume's path, or only the host of an address (its path may carry a secret too).
+    /// What titles say about the file without exposing an address.
     fn label(&self) -> String {
         match self {
             Self::Volume(path) => (*path).to_owned(),
-            Self::Address(url) => url.host_str().unwrap_or_default().to_owned(),
+            Self::Address(_) => "remote file".to_owned(),
         }
     }
 }
@@ -1491,7 +1504,7 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
     if let Some(url) = &req.fetch {
         spec["fetch"] = json!({"url": url});
     }
-    let mut run = new_run(ctx, "job", &title, &target, &spec);
+    let mut run = new_run(ctx, new_id(), "job", &title, &target, &spec);
     // A job that commits files holds its thread: the database lets only one be queued or running at a time.
     if !commit.is_null() {
         run.thread_key = format!(
@@ -2560,11 +2573,17 @@ pub async fn result_link(app: &App, ctx: &Ctx<'_>, id: &str) -> Result<(String, 
 /// # Errors
 /// The database could not be reached.
 pub async fn expire_results(app: &App, now: i64) -> Result<()> {
-    for (id, folder) in store::results_to_remove(app.db.pool(), now - KEEP_RESULTS_MS, 100).await? {
+    let before_ms = now - KEEP_RESULTS_MS;
+    for (id, folder, bytes, finished_ms) in
+        store::results_to_remove(app.db.pool(), before_ms, 100).await?
+    {
         // A file that is already gone is what was wanted.
         match app.places.delete(&folder, &result_name(&id)).await {
             Ok(()) | Err(loamz_lake::files::FileError::NotFound) => {
-                store::set_result(app.db.pool(), &id, 0, "").await?;
+                // Keep tracking an erased in-flight upload until its storage credential has expired.
+                if bytes > 0 || finished_ms < before_ms {
+                    store::set_result(app.db.pool(), &id, 0, "").await?;
+                }
             }
             Err(e) => tracing::warn!(run = id, error = %e, "a result file could not be removed"),
         }
