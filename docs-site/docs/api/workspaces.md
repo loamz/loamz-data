@@ -565,6 +565,32 @@ Its token is in the answer, once. It starts with `lsp_`, is sent as a bearer tok
 
 ---
 
+## `GET` /api/v1/workspaces/{ws}/search
+
+**Search securables the caller may see in this workspace by case-insensitive substring (`q`), kind, exact tag or exact owner. Results are ordered by name and id and include a path. Hidden entries are filtered before being returned; there are no totals or paging hints. At least one filter is required. The default limit is 25 (maximum 100).**
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+| `q` | `query` | No | `string` | Case-insensitive substring in name, description, tags or owner (up to 2000 characters). |
+| `kind` | `query` | No | `string` | `catalog`, `schema`, `table`, `volume` or `view`. |
+| `tag` | `query` | No | `string` | Exact tag. |
+| `owner` | `query` | No | `string` | Exact principal. |
+| `limit` | `query` | No | `integer` | 1–100; defaults to 25. |
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `200` | Visible matches (`items`), with each hit's full path. |
+| `400` | An RFC 9457 problem document. |
+| `401` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+
+---
+
 ## `GET` /api/v1/workspaces/{ws}/securables
 
 **List what is directly inside a parent (the metastore when `parent_id` is empty) that the caller may see from this workspace.**
@@ -684,6 +710,38 @@ Its token is in the answer, once. It starts with `lsp_`, is sent as a bearer tok
   **Fields:**
 
   - `owner` (`string`): 
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `204` | Done |
+| `400` | An RFC 9457 problem document. |
+| `401` | An RFC 9457 problem document. |
+| `403` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+
+---
+
+## `PUT` /api/v1/workspaces/{ws}/securables/{id}/metadata
+
+**Replace a securable's description and tags. Needs MODIFY. Changes are audited.**
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+| `id` | `path` | Yes | `string` | A securable id. |
+
+### Request Body
+
+- **Content-Type**: `application/json` (`object`)
+
+  **Fields:**
+
+  - `description` (`string|null`): Up to 2000 characters; `null` clears it.
+  - `tags` (`string[]`): Up to 20 unique lowercase words, 1–32 characters each.
 
 ### Responses
 

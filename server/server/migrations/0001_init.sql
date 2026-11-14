@@ -59,7 +59,11 @@ CREATE TABLE securables (
     kind           TEXT NOT NULL,
     parent_id      TEXT NOT NULL,
     name           TEXT NOT NULL,
+    description    TEXT,
+    description_folded TEXT NOT NULL DEFAULT '',
+    tags           TEXT NOT NULL DEFAULT '[]',
     owner          TEXT NOT NULL,
+    owner_folded   TEXT NOT NULL DEFAULT '',
     classification TEXT NOT NULL,
     placement      TEXT NOT NULL,
     consistency    TEXT NOT NULL,
@@ -73,6 +77,7 @@ CREATE TABLE securables (
 CREATE INDEX securables_parent ON securables (org_id, parent_id);
 CREATE INDEX securables_owner ON securables (org_id, owner);
 CREATE INDEX securables_workspace ON securables (org_id, workspace_id);
+CREATE INDEX securables_search_order ON securables (org_id, workspace_id, name, id);
 
 -- One privilege on one securable (or on the metastore, `metastore:<org>`) for one principal.
 CREATE TABLE grants (

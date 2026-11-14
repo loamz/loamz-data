@@ -64,11 +64,23 @@ export interface Securable {
   kind: Kind;
   parent_id: string;
   name: string;
+  description: string | null;
+  tags: string[];
   owner: string;
   classification: string;
   placement: string;
   consistency: string;
   created_ms: number;
+}
+export interface SearchHit extends Securable {
+  path: string;
+}
+export interface SearchFilters {
+  q?: string;
+  kind?: Kind;
+  tag?: string;
+  owner?: string;
+  limit?: number;
 }
 export interface Held {
   principal: string;
@@ -205,6 +217,13 @@ export const unentitle = (ws: string, principal: string, entitlement: string) =>
 // The catalog, in a workspace
 export const list = async (ws: string, parent = "") => (await json<{ items: Securable[] }>(send("GET", `${W(ws)}/securables?parent_id=${enc(parent)}`))).items;
 export const get = (ws: string, id: string) => json<Securable>(send("GET", `${W(ws)}/securables/${enc(id)}`));
+export const search = async (ws: string, filters: SearchFilters = {}) => {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== "") query.set(key, String(value));
+  }
+  return (await json<{ items: SearchHit[] }>(send("GET", `${W(ws)}/search?${query}`))).items;
+};
 export const create = (ws: string, b: { kind: Kind; parent_id: string; name: string; classification?: string; consistency?: string; location?: string }) => json<Securable>(send("POST", `${W(ws)}/securables`, b));
 export const drop = (ws: string, id: string) => json<{ task_id: string }>(send("DELETE", `${W(ws)}/securables/${enc(id)}`));
 export const transfer = (ws: string, id: string, owner: string) => none(send("PUT", `${W(ws)}/securables/${enc(id)}/owner`, { owner }));

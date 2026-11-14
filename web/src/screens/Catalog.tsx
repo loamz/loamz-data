@@ -1,5 +1,5 @@
 import { Copy, Database, RefreshCw, MoreHorizontal, Plus, TerminalSquare, Trash2, Upload, UserCog } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Body, Button, DataTable, DetailBlock, DetailRow, Dialog, DialogContent, DialogFooter, Menu, MenuContent, MenuItem, MenuTrigger, ObjectHeader, Page, PageEmpty, Tabs, TabsContent, TabsList, TabsTrigger, TreePane, WithRail, confirmAction, toast, type Column } from "@/design";
 import * as api from "@/api";
 import { go } from "@/route";
@@ -80,8 +80,39 @@ export function Catalog({ ws, id, me }: { ws: string; id: string | null; me: api
   const where = parentOfNew ? `Inside ${parentOfNew.name}` : "At the top of your space";
   const topEmpty = loaded && (children[""] ?? []).length === 0;
 
-  const flat = useMemo(() => Object.values(children).flat(), [children]);
   const [filter, setFilter] = useState("");
+  const [searchState, setSearchState] = useState<{
+    workspace: string;
+    query: string;
+    hits?: api.SearchHit[];
+    error?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const query = filter.trim();
+    if (!query) return;
+    let active = true;
+    const timer = setTimeout(() => {
+      void api.search(ws, { q: query, limit: 100 }).then(
+        (hits) => {
+          if (active) setSearchState({ workspace: ws, query, hits });
+        },
+        (error: unknown) => {
+          if (active) {
+            setSearchState({
+              workspace: ws,
+              query,
+              error: error instanceof Error ? error.message : "Could not search the catalog.",
+            });
+          }
+        },
+      );
+    }, 200);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [filter, ws]);
 
   if (here.error) {
     return (
@@ -93,8 +124,29 @@ export function Catalog({ ws, id, me }: { ws: string; id: string | null; me: api
     );
   }
 
-  const shown = filter.trim() ? flat.filter((s) => s.name.toLowerCase().includes(filter.trim().toLowerCase())) : null;
+  const searching = filter.trim().length > 0;
+  const currentSearch = searchState?.workspace === ws && searchState.query === filter.trim() ? searchState : null;
+  const shown = searching ? currentSearch?.hits ?? null : null;
+  const searchError = currentSearch?.error ?? "";
   const top = children[""] ?? [];
+  let searchContent: ReactNode;
+  if (searchError) {
+    searchContent = <p className="px-3 py-6 text-center text-xs text-muted" role="alert">{searchError}</p>;
+  } else if (shown === null) {
+    searchContent = <p className="px-3 py-6 text-center text-xs text-muted">Searching…</p>;
+  } else if (shown.length === 0) {
+    searchContent = <p className="px-3 py-6 text-center text-xs text-muted">No matches.</p>;
+  } else {
+    searchContent = (
+      <ul className="flex flex-col gap-px">
+        {shown.map((s) => (
+          <li key={s.id}>
+            <TreeRow depth={0} icon={kindIcon[s.kind]} label={s.path} active={id === s.id} onOpen={() => open(s.id)} />
+          </li>
+        ))}
+      </ul>
+    );
+  }
 
   const tree = (
     <TreePane
@@ -112,16 +164,10 @@ export function Catalog({ ws, id, me }: { ws: string; id: string | null; me: api
       filter={filter}
       onFilter={setFilter}
     >
-      {topEmpty ? (
+      {!searching && topEmpty ? (
         <p className="px-3 py-6 text-center text-xs text-muted">Nothing here yet. Create a catalog to begin.</p>
-      ) : shown ? (
-        <ul className="flex flex-col gap-px">
-          {shown.map((s) => (
-            <li key={s.id}>
-              <TreeRow depth={0} icon={kindIcon[s.kind]} label={s.name} active={id === s.id} onOpen={() => open(s.id)} />
-            </li>
-          ))}
-        </ul>
+      ) : searching ? (
+        searchContent
       ) : (
         <Tree byParent={children} expanded={expanded} selected={id} onToggle={toggle} onOpen={(s) => open(s.id)} />
       )}

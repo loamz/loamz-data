@@ -3,10 +3,23 @@ use sqlx::{Any, Executor, Row};
 use super::model::{Kind, Securable};
 use crate::kernel::error::{Error, Result};
 
-const COLUMNS: &str = "id, org_id, workspace_id, folder, kind, parent_id, name, owner, classification, placement, consistency, state, created_ms, metadata";
+const COLUMNS: &str = "id, org_id, workspace_id, folder, kind, parent_id, name, description, tags, owner, classification, placement, consistency, state, created_ms, metadata";
+
+pub struct CandidateSearch<'a> {
+    pub org: &'a str,
+    pub workspace: &'a str,
+    pub kind: &'a str,
+    pub owner: &'a str,
+    pub tag_pattern: &'a str,
+    pub text_pattern: &'a str,
+    pub after_name: &'a str,
+    pub after_id: &'a str,
+    pub limit: i64,
+}
 
 fn row(r: &sqlx::any::AnyRow) -> Result<Securable> {
     let kind: String = r.try_get("kind")?;
+    let tags: String = r.try_get("tags")?;
     Ok(Securable {
         id: r.try_get("id")?,
         org_id: r.try_get("org_id")?,
@@ -16,6 +29,9 @@ fn row(r: &sqlx::any::AnyRow) -> Result<Securable> {
             .ok_or_else(|| Error::Internal(format!("unknown kind {kind} in the database")))?,
         parent_id: r.try_get("parent_id")?,
         name: r.try_get("name")?,
+        description: r.try_get("description")?,
+        tags: serde_json::from_str(&tags)
+            .map_err(|_| Error::Internal("stored securable tags are damaged".into()))?,
         owner: r.try_get("owner")?,
         classification: r.try_get("classification")?,
         placement: r.try_get("placement")?,
@@ -27,8 +43,11 @@ fn row(r: &sqlx::any::AnyRow) -> Result<Securable> {
 }
 
 pub async fn insert<'e, E: Executor<'e, Database = Any>>(e: E, s: &Securable) -> Result<()> {
+    let description_folded = s.description.as_deref().unwrap_or("").to_lowercase();
+    let owner_folded = s.owner.to_lowercase();
     sqlx::query(&format!(
-        "INSERT INTO securables ({COLUMNS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"
+        "INSERT INTO securables ({COLUMNS}, description_folded, owner_folded)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)"
     ))
     .bind(&s.id)
     .bind(&s.org_id)
@@ -37,6 +56,11 @@ pub async fn insert<'e, E: Executor<'e, Database = Any>>(e: E, s: &Securable) ->
     .bind(s.kind.as_str())
     .bind(&s.parent_id)
     .bind(&s.name)
+    .bind(&s.description)
+    .bind(
+        serde_json::to_string(&s.tags)
+            .map_err(|_| Error::Internal("tags could not be saved".into()))?,
+    )
     .bind(&s.owner)
     .bind(&s.classification)
     .bind(&s.placement)
@@ -44,9 +68,67 @@ pub async fn insert<'e, E: Executor<'e, Database = Any>>(e: E, s: &Securable) ->
     .bind(&s.state)
     .bind(s.created_ms)
     .bind(&s.metadata)
+    .bind(description_folded)
+    .bind(owner_folded)
     .execute(e)
     .await?;
     Ok(())
+}
+
+pub async fn set_metadata(
+    c: &mut sqlx::AnyConnection,
+    org: &str,
+    id: &str,
+    description: Option<&str>,
+    tags: &[String],
+) -> Result<bool> {
+    let description_folded = description.unwrap_or("").to_lowercase();
+    let tags = serde_json::to_string(tags)
+        .map_err(|_| Error::Internal("tags could not be saved".into()))?;
+    let result = sqlx::query(
+        "UPDATE securables SET description = $3, tags = $4, description_folded = $5
+         WHERE org_id = $1 AND id = $2 AND state = 'active'",
+    )
+    .bind(org)
+    .bind(id)
+    .bind(description)
+    .bind(tags)
+    .bind(description_folded)
+    .execute(&mut *c)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// One bounded, stable page of active workspace entries matching the supplied filters.
+pub async fn search_candidates<'e, E: Executor<'e, Database = Any>>(
+    e: E,
+    search: CandidateSearch<'_>,
+) -> Result<Vec<Securable>> {
+    let rows = sqlx::query(&format!(
+        "SELECT {COLUMNS} FROM securables
+         WHERE org_id = $1 AND workspace_id = $2 AND state = 'active'
+           AND ($3 = '' OR kind = $3)
+           AND ($4 = '' OR owner = $4)
+           AND ($5 = '' OR lower(tags) LIKE lower($5) ESCAPE '\\')
+           AND ($6 = '' OR lower(name) LIKE $6 ESCAPE '\\'
+             OR description_folded LIKE $6 ESCAPE '\\'
+             OR lower(tags) LIKE $6 ESCAPE '\\'
+             OR owner_folded LIKE $6 ESCAPE '\\')
+           AND ($7 = '' OR name > $7 OR (name = $7 AND id > $8))
+         ORDER BY name, id LIMIT $9"
+    ))
+    .bind(search.org)
+    .bind(search.workspace)
+    .bind(search.kind)
+    .bind(search.owner)
+    .bind(search.tag_pattern)
+    .bind(search.text_pattern)
+    .bind(search.after_name)
+    .bind(search.after_id)
+    .bind(search.limit)
+    .fetch_all(e)
+    .await?;
+    rows.iter().map(row).collect()
 }
 
 /// How many catalogs the workspace owns.
@@ -115,6 +197,46 @@ pub async fn children<'e, E: Executor<'e, Database = Any>>(
     rows.iter().map(row).collect()
 }
 
+/// Whether one of these securables sits below a container, without loading its children.
+pub async fn has_descendant(
+    c: &mut sqlx::AnyConnection,
+    org: &str,
+    parent: &str,
+    interesting: &[&str],
+    depth: usize,
+) -> Result<bool> {
+    let depth = i64::try_from(depth)
+        .map_err(|_| Error::Internal("catalog hierarchy depth is out of range".into()))?;
+    for ids in interesting.chunks(500) {
+        let placeholders = (4..4 + ids.len())
+            .map(|n| format!("${n}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let query = format!(
+            "WITH RECURSIVE descendants(id, depth) AS (
+               SELECT id, 0 FROM securables WHERE org_id = $1 AND id = $2
+               UNION ALL
+               SELECT child.id, descendants.depth + 1
+               FROM securables child JOIN descendants ON child.parent_id = descendants.id
+               WHERE child.org_id = $1 AND child.state = 'active' AND descendants.depth < $3
+             )
+             SELECT CASE WHEN EXISTS (SELECT 1 FROM descendants WHERE id IN ({placeholders}))
+               THEN CAST(1 AS BIGINT) ELSE CAST(0 AS BIGINT) END"
+        );
+        let mut query = sqlx::query_scalar::<_, i64>(&query)
+            .bind(org)
+            .bind(parent)
+            .bind(depth);
+        for id in ids {
+            query = query.bind(*id);
+        }
+        if query.fetch_one(&mut *c).await? != 0 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub async fn owned_by<'e, E: Executor<'e, Database = Any>>(
     e: E,
     org: &str,
@@ -151,12 +273,15 @@ pub async fn set_owner<'e, E: Executor<'e, Database = Any>>(
     id: &str,
     owner: &str,
 ) -> Result<()> {
-    sqlx::query("UPDATE securables SET owner = $3 WHERE org_id = $1 AND id = $2")
-        .bind(org)
-        .bind(id)
-        .bind(owner)
-        .execute(e)
-        .await?;
+    sqlx::query(
+        "UPDATE securables SET owner = $3, owner_folded = $4 WHERE org_id = $1 AND id = $2",
+    )
+    .bind(org)
+    .bind(id)
+    .bind(owner)
+    .bind(owner.to_lowercase())
+    .execute(e)
+    .await?;
     Ok(())
 }
 

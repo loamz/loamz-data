@@ -46,9 +46,9 @@ Cloud, behind `Entitlements` and `UsageSink`).
 their storage keys into OpenBao, external objects and storage grants, an installer for a customer's machine (runner, gVisor, worker),
 and a guide for pointing a Modal account at us.
 
-**Built since 13 Nov:** a store per storage location (a catalog on a customer's bucket is read and written with that location's own credential, proven on RustFS), write-only credential custody in OpenBao, the write path on compute (import from a volume file or an https address, replace, compaction and snapshot expiry, all through two narrow doors in gVisor), job schedules and failure alerts, a statement's whole result as an Arrow file read by a signed address, a Parquet result saved in a person's volume with an idempotency key, and the console's import dialog. **Written but not yet merged:** abuse limits and organization suspension, the agent installer, and the docs pages for schedules, maintenance and storage. **Next:** agent sandboxes that read data through the storage broker (proposal 0006), the BI connection, search, and the AI phase once its scope is confirmed.
+**Built since 13 Nov:** a store per storage location (a catalog on a customer's bucket is read and written with that location's own credential, proven on RustFS), write-only credential custody in OpenBao, the write path on compute (import from a volume file or an https address, replace, compaction and snapshot expiry, all through two narrow doors in gVisor), job schedules and failure alerts, a statement's whole result as an Arrow file read by a signed address, a Parquet result saved in a person's volume with an idempotency key, the console's import dialog, and workspace catalog metadata and visibility-filtered search. **Written but not yet merged:** abuse limits and organization suspension, the agent installer, and the docs pages for schedules, maintenance and storage. **Next:** agent sandboxes that read data through the storage broker (proposal 0006), the BI connection, and the AI phase once its scope is confirmed.
 
-**Confirmed by the owner (14 Nov):** the AI phase is in the beta in full: functions as agent tools, agent sandboxes, MLflow for ML (experiments, models) and for GenAI (traces, evaluations, prompts), and Loamz Agents connected to all of it. Designed in [0008](../proposals/0008-ai-phase.md); still to confirm: which of BI connectors, search, network isolation and traces beyond the AI phase.
+**Confirmed by the owner (14 Nov):** the AI phase is in the beta in full: functions as agent tools, agent sandboxes, MLflow for ML (experiments, models) and for GenAI (traces, evaluations, prompts), and Loamz Agents connected to all of it. Designed in [0008](../proposals/0008-ai-phase.md); still to confirm: which of BI connectors, network isolation and traces beyond the AI phase.
 
 > **Note:** this roadmap is a plan, not a promise. Built features are marked in the Today column.
 
@@ -90,7 +90,7 @@ and a guide for pointing a Modal account at us.
 | MLflow ML: experiments, runs, models, through a governing gateway in front of the upstream server (0008) | data | | | | 📅 | | |
 | MLflow GenAI: traces, evaluations, prompts; Loamz Agents sends its traces and loads its prompts here (0008) | data | | | | 📅 | | |
 | Materialized views | data | | | | | | ❓ |
-| Search across catalogs by name, description, tag, owner | data | | | | | | ❓ |
+| Search across workspace catalogs by name, description, tag and owner; return only visible securables | data | ✅ | | | | | |
 | Data quality checks | data | | | | | | ❓ |
 | **Compute** | | | | | | | |
 | Jobs on machines, each run in gVisor | compute | ✅ | | | | | |
