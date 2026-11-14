@@ -1,5 +1,7 @@
 //! What a catalog entry is, and the rules for a good one. Pure.
 
+use std::collections::HashSet;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Catalog,
@@ -87,6 +89,8 @@ pub struct Securable {
     pub kind: Kind,
     pub parent_id: String,
     pub name: String,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
     pub owner: String,
     pub classification: String,
     pub placement: String,
@@ -96,6 +100,12 @@ pub struct Securable {
     pub created_ms: i64,
     /// A table's current Iceberg metadata file, a path inside its folder. Empty for everything else.
     pub metadata: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Metadata {
+    pub description: Option<String>,
+    pub tags: Vec<String>,
 }
 
 /// What a caller asks for. Empty choices get the defaults.
@@ -126,6 +136,36 @@ pub fn valid_name(n: &str) -> bool {
     chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && n.len() <= 63
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// Metadata is deliberately plain text so it is safe to show in the catalog.
+pub fn check_metadata(description: &Option<String>, tags: &[String]) -> Result<(), String> {
+    if description
+        .as_ref()
+        .is_some_and(|text| text.chars().count() > 2000)
+    {
+        return Err("description must be 2000 characters or fewer".into());
+    }
+    if tags.len() > 20 {
+        return Err("there may be at most 20 tags".into());
+    }
+    let mut seen = HashSet::new();
+    for tag in tags {
+        if tag.is_empty()
+            || tag.len() > 32
+            || !tag
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+        {
+            return Err(
+                "tags must be 1-32 lower case letters, digits, hyphens or underscores".into(),
+            );
+        }
+        if !seen.insert(tag) {
+            return Err("tags must be unique".into());
+        }
+    }
+    Ok(())
 }
 
 /// Fills in defaults and refuses what cannot be honoured.

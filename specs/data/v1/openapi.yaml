@@ -649,6 +649,55 @@ paths:
           $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
+  /api/v1/workspaces/{ws}/search:
+    get:
+      summary: Search securables the caller may see in this workspace. Hidden entries never appear in results or paging metadata.
+      parameters:
+      - *id002
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+          maxLength: 2000
+        description: Case-insensitive substring in name, description, tags or owner.
+      - name: kind
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [catalog, schema, table, volume, view]
+      - name: tag
+        in: query
+        required: false
+        schema:
+          type: string
+          maxLength: 32
+          pattern: '^[a-z0-9_-]+$'
+        description: Exact tag.
+      - name: owner
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Exact principal.
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 25
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: Visible matches, sorted by name and id. No totals or paging hints are returned.
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
   /api/v1/workspaces/{ws}/securables:
     post:
       summary: Create a catalog, schema, table, volume or view. Needs the matching CREATE privilege on the parent (CREATE CATALOG on the metastore).
@@ -747,6 +796,43 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/Owner'
+  /api/v1/workspaces/{ws}/securables/{id}/metadata:
+    put:
+      summary: Replace a securable's description and tags. Needs MODIFY. Changes are audited.
+      parameters:
+      - *id002
+      - *id004
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [description, tags]
+              properties:
+                description:
+                  type: [string, 'null']
+                  maxLength: 2000
+                tags:
+                  type: array
+                  maxItems: 20
+                  uniqueItems: true
+                  items:
+                    type: string
+                    minLength: 1
+                    maxLength: 32
+                    pattern: '^[a-z0-9_-]+$'
+      responses:
+        '204':
+          description: Done
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
   /api/v1/workspaces/{ws}/securables/{id}/policy:
     get:
       summary: The row filter and column masks of a table (empty when it has none). Needs MANAGE.

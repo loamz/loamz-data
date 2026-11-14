@@ -935,6 +935,352 @@ async fn catalog_rules(s: Server) {
 }
 both!(catalog_rules);
 
+async fn securable_metadata_is_validated_authorized_and_audited(s: Server) {
+    let ws = s.acme().await;
+    s.assign(&ws, &[&bob()]).await;
+    let (catalog, schema, volume) = tree(&s, &ws).await;
+    let table = s.table(&ws, &ana(), &schema, "orders", "").await;
+    let view = s.make(&ws, &ana(), "view", &schema, "summary").await;
+    let metadata = |id: &str| format!("{}/{id}/metadata", securables(&ws));
+
+    for (id, tag) in [
+        (&catalog, "catalog"),
+        (&schema, "schema"),
+        (&volume, "volume"),
+        (&table, "table"),
+        (&view, "view"),
+    ] {
+        let changed = s
+            .put(
+                &metadata(id),
+                &ana(),
+                json!({"description": format!("About the {tag}"), "tags": [tag]}),
+            )
+            .await;
+        assert_eq!(changed.status, 204, "{}", changed.text());
+        let stored = s
+            .get(&format!("{}/{id}", securables(&ws)), &ana())
+            .await
+            .json();
+        assert_eq!(stored["description"], format!("About the {tag}"));
+        assert_eq!(stored["tags"], json!([tag]));
+    }
+
+    let visible = s
+        .put(
+            &format!("{}/{volume}/grants", securables(&ws)),
+            &ana(),
+            json!({"principal": "user:bob", "role": "reader"}),
+        )
+        .await;
+    assert_eq!(visible.status, 204);
+    assert_eq!(
+        s.put(
+            &metadata(&volume),
+            &bob(),
+            json!({"description": "Reader cannot modify", "tags": []}),
+        )
+        .await
+        .status,
+        403,
+        "a visible reader lacks MODIFY"
+    );
+    assert_eq!(
+        s.put(
+            &metadata(&view),
+            &bob(),
+            json!({"description": "Hidden object", "tags": []}),
+        )
+        .await
+        .status,
+        404,
+        "an unseen securable stays hidden"
+    );
+    assert_eq!(
+        s.put(
+            &metadata(&view),
+            &bob(),
+            json!({"description": "ignored", "tags": ["INVALID TAG"]}),
+        )
+        .await
+        .status,
+        404,
+        "metadata validation does not reveal whether an unseen securable exists"
+    );
+    s.grant(&ws, &ana(), &volume, "user:bob", "contributor")
+        .await;
+    assert_eq!(
+        s.put(
+            &metadata(&volume),
+            &bob(),
+            json!({"description": null, "tags": []}),
+        )
+        .await
+        .status,
+        204,
+        "a grant that includes MODIFY may change metadata"
+    );
+    let cleared = s
+        .get(&format!("{}/{volume}", securables(&ws)), &ana())
+        .await
+        .json();
+    assert!(cleared["description"].is_null());
+    assert_eq!(cleared["tags"], json!([]));
+
+    let long_description = "é".repeat(2000);
+    assert_eq!(
+        s.put(
+            &metadata(&volume),
+            &ana(),
+            json!({"description": long_description, "tags": []}),
+        )
+        .await
+        .status,
+        204,
+        "the bound counts characters, not UTF-8 bytes"
+    );
+    for incomplete in [json!({"tags": []}), json!({"description": null})] {
+        assert_eq!(
+            s.put(&metadata(&volume), &ana(), incomplete).await.status,
+            400,
+            "both replacement fields are required"
+        );
+    }
+    for bad in [
+        json!({"description": 7, "tags": []}),
+        json!({"description": "é".repeat(2001), "tags": []}),
+        json!({"description": null, "tags": ["UPPER"]}),
+        json!({"description": null, "tags": ["bad tag"]}),
+        json!({"description": null, "tags": ["quote\"tag"]}),
+        json!({"description": null, "tags": ["a".repeat(33)]}),
+        json!({"description": null, "tags": ["same", "same"]}),
+        json!({"description": null, "tags": (0..21).map(|i| format!("tag_{i}")).collect::<Vec<_>>()}),
+    ] {
+        assert_eq!(
+            s.put(&metadata(&volume), &ana(), bad).await.status,
+            400,
+            "invalid metadata was accepted"
+        );
+    }
+
+    let audit = s
+        .get(&format!("/api/v1/orgs/{ACME}/audit?limit=500"), &ana())
+        .await;
+    assert!(
+        items(&audit)
+            .iter()
+            .any(|entry| entry["action"] == "securable.metadata.set"),
+        "metadata changes need an audit entry: {}",
+        audit.text()
+    );
+}
+both!(securable_metadata_is_validated_authorized_and_audited);
+
+async fn search_returns_only_visible_matches_in_visible_order(s: Server) {
+    let ws = s.acme().await;
+    s.assign(&ws, &[&bob()]).await;
+    let (catalog, schema, _) = tree(&s, &ws).await;
+    let alpha = s.make(&ws, &ana(), "volume", &schema, "alpha").await;
+    let hidden = s
+        .make(&ws, &ana(), "volume", &schema, "middle_hidden")
+        .await;
+    let zulu = s.make(&ws, &ana(), "volume", &schema, "zulu").await;
+    s.grant(&ws, &ana(), &alpha, "user:bob", "reader").await;
+    s.grant(&ws, &ana(), &zulu, "user:bob", "reader").await;
+
+    let response = s
+        .get(
+            &format!("/api/v1/workspaces/{ws}/search?kind=volume&owner=user%3Aana&limit=2"),
+            &bob(),
+        )
+        .await;
+    assert_eq!(response.status, 200, "{}", response.text());
+    let body = response.json();
+    assert_eq!(
+        body.as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>(),
+        ["items"],
+        "do not return totals or paging hints"
+    );
+    let results = body["items"].as_array().unwrap();
+    assert_eq!(results.len(), 2);
+    assert_eq!(
+        results
+            .iter()
+            .map(|hit| hit["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [alpha.as_str(), zulu.as_str()],
+        "hidden matches must not enter the result set or affect visible ordering"
+    );
+    assert_eq!(
+        results[0]["path"],
+        format!("sales.raw.{}", results[0]["name"].as_str().unwrap())
+    );
+    assert!(results.iter().all(|hit| hit["id"] != hidden));
+    assert!(results.iter().all(|hit| hit["id"] != catalog));
+
+    let visible_container = s
+        .get(
+            &format!("/api/v1/workspaces/{ws}/search?kind=schema&q=raw"),
+            &bob(),
+        )
+        .await;
+    assert_eq!(visible_container.status, 200);
+    assert_eq!(
+        visible_container.json()["items"][0]["id"].as_str(),
+        Some(schema.as_str())
+    );
+
+    s.make(&ws, &ana(), "catalog", "", "secret").await;
+    let hidden_container = s
+        .get(
+            &format!("/api/v1/workspaces/{ws}/search?kind=catalog&q=secret"),
+            &bob(),
+        )
+        .await;
+    assert_eq!(hidden_container.status, 200);
+    assert_eq!(hidden_container.json()["items"], json!([]));
+
+    let hidden_only = s
+        .get(&format!("/api/v1/workspaces/{ws}/search?q=middle"), &bob())
+        .await;
+    assert_eq!(hidden_only.status, 200);
+    assert_eq!(hidden_only.json()["items"], json!([]));
+    assert_eq!(
+        s.get(&format!("/api/v1/workspaces/{ws}/search"), &bob(),)
+            .await
+            .status,
+        400,
+        "an unfiltered search is refused"
+    );
+    assert_eq!(
+        s.get(
+            &format!("/api/v1/workspaces/{ws}/search?kind=unknown"),
+            &bob(),
+        )
+        .await
+        .status,
+        400
+    );
+    assert_eq!(
+        s.get(
+            &format!("/api/v1/workspaces/{ws}/search?q=x&limit=101"),
+            &bob(),
+        )
+        .await
+        .status,
+        400
+    );
+}
+both!(search_returns_only_visible_matches_in_visible_order);
+
+async fn search_filters_are_exact_and_like_wildcards_are_literals(s: Server) {
+    let ws = s.acme().await;
+    let (_, schema, uploads) = tree(&s, &ws).await;
+    assert_eq!(
+        s.put(
+            &format!("{}/{uploads}/owner", securables(&ws)),
+            &ana(),
+            json!({"owner": "user:cy"}),
+        )
+        .await
+        .status,
+        204
+    );
+    let underscore = s.make(&ws, &ana(), "volume", &schema, "underscore").await;
+    let hyphen = s.make(&ws, &ana(), "volume", &schema, "hyphen").await;
+    for (id, description, tag) in [
+        (
+            &underscore,
+            "100% safe _ stock \\ archive CAFÉ",
+            "finance_x",
+        ),
+        (&hyphen, "different text", "finance-x"),
+    ] {
+        let response = s
+            .put(
+                &format!("{}/{id}/metadata", securables(&ws)),
+                &ana(),
+                json!({"description": description, "tags": [tag]}),
+            )
+            .await;
+        assert_eq!(response.status, 204, "{}", response.text());
+    }
+
+    for (filter, expected) in [
+        ("q=%25", vec![underscore.clone()]),
+        ("q=%5F", vec![underscore.clone()]),
+        ("q=%5C", vec![underscore.clone()]),
+        ("q=SAFE", vec![underscore.clone()]),
+        ("q=caf%C3%A9", vec![underscore.clone()]),
+        ("tag=finance_x", vec![underscore.clone()]),
+        ("tag=finance-x", vec![hyphen.clone()]),
+        (
+            "kind=volume&owner=user%3Aana",
+            vec![hyphen.clone(), underscore.clone()],
+        ),
+        (
+            "kind=volume&owner=user%3Aana&tag=finance_x",
+            vec![underscore.clone()],
+        ),
+        ("kind=volume&q=user%3Acy", vec![uploads.clone()]),
+    ] {
+        let response = s
+            .get(&format!("/api/v1/workspaces/{ws}/search?{filter}"), &ana())
+            .await;
+        assert_eq!(response.status, 200, "{filter}: {}", response.text());
+        let body = response.json();
+        let found = body["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|hit| hit["id"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(found, expected, "{filter}");
+    }
+    assert_eq!(
+        s.get(
+            &format!("/api/v1/workspaces/{ws}/search?tag=financeX"),
+            &ana(),
+        )
+        .await
+        .status,
+        400,
+        "tag filters follow the same plain-word rules as metadata"
+    );
+    for filter in ["tag=finance__x", "q=x%25%27%20OR%201%3D1"] {
+        let response = s
+            .get(&format!("/api/v1/workspaces/{ws}/search?{filter}"), &ana())
+            .await;
+        assert_eq!(response.status, 200, "{filter}: {}", response.text());
+        assert_eq!(response.json()["items"], json!([]), "{filter}");
+    }
+    assert_eq!(
+        s.get(
+            &format!("/api/v1/workspaces/{ws}/search?q=too%20long"),
+            &ana(),
+        )
+        .await
+        .status,
+        200,
+        "ordinary substring search remains available"
+    );
+    assert_eq!(
+        s.get(
+            &format!("/api/v1/workspaces/{ws}/search?q={}", "x".repeat(2001)),
+            &ana(),
+        )
+        .await
+        .status,
+        400,
+        "oversized search text is bounded"
+    );
+}
+both!(search_filters_are_exact_and_like_wildcards_are_literals);
+
 // ---- who may do what ---------------------------------------------------------------------------------------------
 
 async fn privileges(s: Server) {

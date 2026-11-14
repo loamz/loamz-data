@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use super::{
-    model::{Draft, Kind, Securable, check, join_folder},
+    model::{Draft, Kind, Metadata, Securable, check, check_metadata, join_folder},
     policy::{self, Policy, Resolved},
     store,
 };
@@ -23,6 +23,9 @@ use crate::{
 };
 
 const MAX_DEPTH: usize = 4;
+const SEARCH_PAGE_LIMIT: i64 = 100;
+const SEARCH_PAGE_SIZE: usize = 100;
+const SEARCH_PAGES: usize = 20;
 
 fn level(kind: Kind) -> Level {
     match kind {
@@ -186,6 +189,8 @@ pub async fn create(
         kind: draft.kind,
         parent_id: draft.parent_id,
         name: draft.name,
+        description: None,
+        tags: Vec::new(),
         // The one who asked owns it; an agent acting for them is given everything on it so it can keep working.
         owner: owner_of(identity),
         classification: draft.classification,
@@ -244,17 +249,15 @@ async fn contains_any(
     if interesting.contains(entry_id) {
         return Ok(true);
     }
-    if depth == 0 {
-        return Ok(false);
-    }
-    for child in store::children(app.db.pool(), org, entry_id).await? {
-        if child.state == "active"
-            && Box::pin(contains_any(app, org, &child.id, interesting, depth - 1)).await?
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    let mut conn = app.db.pool().acquire().await?;
+    store::has_descendant(
+        &mut conn,
+        org,
+        entry_id,
+        &interesting.iter().copied().collect::<Vec<_>>(),
+        depth,
+    )
+    .await
 }
 
 async fn may_view(
@@ -357,6 +360,196 @@ pub async fn list(
         }
     }
     Ok(out)
+}
+
+fn escape_like(value: &str) -> String {
+    format!(
+        "%{}%",
+        value
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    )
+}
+
+async fn display_path(app: &App, org: &str, entry: &Securable) -> Result<String> {
+    let current = store::get(app.db.pool(), org, &entry.id)
+        .await?
+        .filter(|s| s.state == "active" && s.workspace_id == entry.workspace_id)
+        .ok_or_else(|| Error::NotFound("not found".into()))?;
+    let mut names = vec![current.name];
+    let mut parent = current.parent_id;
+    let mut depth = 0;
+    while !parent.is_empty() {
+        if depth >= MAX_DEPTH {
+            return Err(Error::Internal("catalog hierarchy is too deep".into()));
+        }
+        let ancestor = store::get(app.db.pool(), org, &parent)
+            .await?
+            .filter(|s| s.state == "active")
+            .ok_or_else(|| Error::NotFound("not found".into()))?;
+        names.push(ancestor.name.clone());
+        parent = ancestor.parent_id;
+        depth += 1;
+    }
+    names.reverse();
+    Ok(names.join("."))
+}
+
+/// Search filters supplied by one workspace search request.
+pub struct SearchRequest {
+    pub q: Option<String>,
+    pub kind: Option<String>,
+    pub tag: Option<String>,
+    pub owner: Option<String>,
+    pub limit: Option<i64>,
+}
+
+/// Searches a bounded set of workspace candidates and only returns entries accepted by the catalog visibility rule.
+///
+/// # Errors
+/// The filter is invalid, or the database could not be read.
+pub async fn search(
+    app: &App,
+    workspace: &str,
+    org: &str,
+    sides: &[Side],
+    request: SearchRequest,
+) -> Result<Vec<(Securable, String)>> {
+    let limit = request.limit.unwrap_or(25);
+    if !(1..=100).contains(&limit) {
+        return Err(Error::Invalid("limit must be between 1 and 100".into()));
+    }
+    let result_limit = usize::try_from(limit)
+        .map_err(|_| Error::Invalid("limit must be between 1 and 100".into()))?;
+    let kind = request.kind.as_deref().unwrap_or("");
+    if !kind.is_empty() && Kind::parse(kind).is_none() {
+        return Err(Error::Invalid(
+            "kind must be catalog, schema, table, volume or view".into(),
+        ));
+    }
+    let owner = request.owner.as_deref().unwrap_or("");
+    if !owner.is_empty() && !crate::governance::orgs::model::valid_principal(owner) {
+        return Err(Error::Invalid("owner must be a valid principal".into()));
+    }
+    let tag = request.tag.as_deref().unwrap_or("");
+    if !tag.is_empty() && check_metadata(&None, &[tag.to_owned()]).is_err() {
+        return Err(Error::Invalid(
+            "tag must be a plain word of up to 32 characters".into(),
+        ));
+    }
+    let q = request.q.as_deref().unwrap_or("");
+    if q.chars().count() > 2000 {
+        return Err(Error::Invalid("q must be 2000 characters or fewer".into()));
+    }
+    if q.is_empty() && kind.is_empty() && tag.is_empty() && owner.is_empty() {
+        return Err(Error::Invalid("provide q, kind, tag or owner".into()));
+    }
+    let tag_pattern = if tag.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "%\"{}\"%",
+            tag.replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        )
+    };
+    let text_pattern = if q.is_empty() {
+        String::new()
+    } else {
+        escape_like(&q.to_lowercase())
+    };
+    let grants = iam::grants_of(app, org, sides).await?;
+    let mut visible = Vec::new();
+    let mut after_name = String::new();
+    let mut after_id = String::new();
+    for _ in 0..SEARCH_PAGES {
+        let candidates = store::search_candidates(
+            app.db.pool(),
+            store::CandidateSearch {
+                org,
+                workspace,
+                kind,
+                owner,
+                tag_pattern: &tag_pattern,
+                text_pattern: &text_pattern,
+                after_name: &after_name,
+                after_id: &after_id,
+                limit: SEARCH_PAGE_LIMIT,
+            },
+        )
+        .await?;
+        if candidates.is_empty() {
+            break;
+        }
+        let full_page = candidates.len() == SEARCH_PAGE_SIZE;
+        if let Some(last) = candidates.last() {
+            after_name.clone_from(&last.name);
+            after_id.clone_from(&last.id);
+        }
+        for candidate in candidates {
+            let (entry, target) = match target_in(app, workspace, org, &candidate.id).await {
+                Ok(found) => found,
+                Err(Error::NotFound(_)) => continue,
+                Err(error) => return Err(error),
+            };
+            if may_view(app, org, sides, &grants, &entry, &target).await? {
+                let path = match display_path(app, org, &entry).await {
+                    Ok(path) => path,
+                    Err(Error::NotFound(_)) => continue,
+                    Err(error) => return Err(error),
+                };
+                visible.push((entry, path));
+                if visible.len() == result_limit {
+                    return Ok(visible);
+                }
+            }
+        }
+        if !full_page {
+            break;
+        }
+    }
+    Ok(visible)
+}
+
+/// Replaces description and tags, with the audit entry in the same transaction. Needs MODIFY.
+///
+/// # Errors
+/// The entry is not visible, the caller lacks MODIFY, metadata is invalid, or the database could not be written.
+pub async fn set_metadata(
+    app: &App,
+    identity: &Identity,
+    workspace: &str,
+    org: &str,
+    sides: &[Side],
+    id: &str,
+    metadata: Metadata,
+) -> Result<()> {
+    let (_, target) = target_in(app, workspace, org, id).await?;
+    iam::require(app, identity, org, sides, Privilege::Modify, &target).await?;
+    check_metadata(&metadata.description, &metadata.tags).map_err(Error::Invalid)?;
+    let mut uow = Uow::begin(app).await?;
+    if !store::set_metadata(
+        &mut uow.tx,
+        org,
+        id,
+        metadata.description.as_deref(),
+        &metadata.tags,
+    )
+    .await?
+    {
+        return Err(Error::NotFound("not found".into()));
+    }
+    uow.audit(
+        org,
+        &Who::of(identity),
+        "securable.metadata.set",
+        &target.label,
+        "ok",
+    )
+    .await?;
+    uow.commit().await
 }
 
 /// Hands an entry to a new owner. Needs `MANAGE`.

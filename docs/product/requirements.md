@@ -43,7 +43,7 @@ Status: **Built** is in the code today; **Planned** names its proposal and task 
 | D7 | MLflow: ML (experiments, models) and GenAI (traces, evals, prompts). The standard `mlflow` client works. | Planned |
 | D8 | Erase and drop are durable tasks: leased, retried, verified, audited. | Built |
 | D9 | Bring data in: upload files in the console, load from S3 or a URL, connect to a database. | Under consideration |
-| D10 | Search across catalogs by name, description, tag and owner. | Under consideration |
+| D10 | Search workspace catalogs by name, description, tag and owner, returning only securables the caller may see; descriptions and tags are editable with MODIFY. | Built |
 
 ### Compute
 | id | requirement | status |
