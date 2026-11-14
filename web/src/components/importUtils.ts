@@ -1,6 +1,9 @@
 import { validName } from "@/kinds";
 import type { ImportFileRequest } from "@/api";
 
+export type ImportSourceType = "volume" | "url";
+export type ImportMode = "create" | "append" | "replace";
+
 export function inferFormat(path: string): "csv" | "parquet" | null {
   const lower = path.toLowerCase().trim();
   if (lower.endsWith(".csv")) return "csv";
@@ -8,8 +11,63 @@ export function inferFormat(path: string): "csv" | "parquet" | null {
   return null;
 }
 
-export function deriveDefaultTableName(filePath: string): string {
-  const filename = filePath.split("/").pop() ?? "";
+export function inferFormatFromUrl(url: string): "csv" | "parquet" | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    return inferFormat(u.pathname);
+  } catch {
+    const pathOnly = url.split("?")[0]?.split("#")[0] ?? "";
+    return inferFormat(pathOnly);
+  }
+}
+
+export function validateUrl(url: string): { valid: boolean; error?: string } {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return { valid: false, error: "Enter a web address." };
+  }
+  if (!trimmed.toLowerCase().startsWith("https://")) {
+    return { valid: false, error: "Address must start with https://" };
+  }
+  const afterScheme = trimmed.slice(8);
+  if (!afterScheme || afterScheme.startsWith("/") || afterScheme.startsWith("?") || afterScheme.startsWith(":")) {
+    return { valid: false, error: "Address has no host." };
+  }
+  if (trimmed.length > 4096) {
+    return { valid: false, error: "Address is too long (maximum 4096 characters)." };
+  }
+  let u: URL;
+  try {
+    u = new URL(trimmed);
+  } catch {
+    return { valid: false, error: "Address is not a valid URL." };
+  }
+  if (u.protocol !== "https:") {
+    return { valid: false, error: "Address must start with https://" };
+  }
+  if (u.username || u.password) {
+    return { valid: false, error: "Address must not contain a user name or password." };
+  }
+  if (u.port && u.port !== "443") {
+    return { valid: false, error: "Address must use the standard HTTPS port (443)." };
+  }
+  if (!u.hostname) {
+    return { valid: false, error: "Address has no host." };
+  }
+  return { valid: true };
+}
+
+export function deriveDefaultTableName(filePathOrUrl: string): string {
+  let target = filePathOrUrl;
+  if (target.startsWith("http://") || target.startsWith("https://")) {
+    try {
+      target = new URL(target).pathname;
+    } catch {
+      target = target.split("?")[0]?.split("#")[0] ?? "";
+    }
+  }
+  const filename = target.split("/").pop() ?? "";
   const base = filename.replace(/\.(csv|parquet)$/i, "").toLowerCase();
   const sanitized = base.replace(/[^a-z0-9_]/g, "_").replace(/^[^a-z]+/, "");
   if (sanitized && validName(sanitized)) {
@@ -21,11 +79,24 @@ export function deriveDefaultTableName(filePath: string): string {
 export interface ValidateImportParams {
   schema: string;
   tableName: string;
-  volumeId: string;
-  filePath: string;
+  sourceType: ImportSourceType;
+  volumeId?: string;
+  filePath?: string;
+  url?: string;
+  mode: ImportMode;
+  explicitFormat?: "csv" | "parquet" | "";
 }
 
-export function validateImport({ schema, tableName, volumeId, filePath }: ValidateImportParams): {
+export function validateImport({
+  schema,
+  tableName,
+  sourceType,
+  volumeId,
+  filePath,
+  url,
+  mode,
+  explicitFormat,
+}: ValidateImportParams): {
   valid: boolean;
   error?: string;
 } {
@@ -41,13 +112,35 @@ export function validateImport({ schema, tableName, volumeId, filePath }: Valida
       error: "Table name must start with a letter and contain only lower-case letters, digits, and underscores (max 63 characters).",
     };
   }
-  if (!volumeId.trim()) {
+  if (!["create", "append", "replace"].includes(mode)) {
+    return { valid: false, error: "Mode must be create, append, or replace." };
+  }
+
+  if (sourceType === "url") {
+    const urlCheck = validateUrl(url ?? "");
+    if (!urlCheck.valid) {
+      return urlCheck;
+    }
+    const detectedFormat = inferFormatFromUrl(url ?? "");
+    const format = explicitFormat || detectedFormat;
+    if (!format) {
+      return {
+        valid: false,
+        error: "Choose a format (CSV or Parquet) when the address has no file extension.",
+      };
+    }
+    return { valid: true };
+  }
+
+  // Volume source
+  if (!volumeId?.trim()) {
     return { valid: false, error: "Choose a source volume." };
   }
-  if (!filePath.trim()) {
+  if (!filePath?.trim()) {
     return { valid: false, error: "Choose a source file." };
   }
-  const format = inferFormat(filePath);
+  const detectedFormat = inferFormat(filePath);
+  const format = explicitFormat || detectedFormat;
   if (!format) {
     return { valid: false, error: "Only CSV and Parquet files can be imported." };
   }
@@ -57,28 +150,46 @@ export function validateImport({ schema, tableName, volumeId, filePath }: Valida
 export interface BuildImportParams {
   schema: string;
   tableName: string;
-  volumeId: string;
-  filePath: string;
-  mode: "create" | "append";
-  format?: "csv" | "parquet";
+  sourceType: ImportSourceType;
+  volumeId?: string;
+  filePath?: string;
+  url?: string;
+  mode: ImportMode;
+  format?: "csv" | "parquet" | "";
 }
 
 export function buildImportPayload({
   schema,
   tableName,
+  sourceType,
   volumeId,
   filePath,
+  url,
   mode,
   format,
 }: BuildImportParams): ImportFileRequest {
-  const cleanPath = filePath.trim().replace(/^\/+/, "");
-  const detectedFormat = format ?? inferFormat(cleanPath) ?? undefined;
+  const target = `${schema.trim()}.${tableName.trim()}`;
+  if (sourceType === "url") {
+    const cleanUrl = (url ?? "").trim();
+    const detected = inferFormatFromUrl(cleanUrl);
+    const chosenFormat = (format ? format : detected) ?? undefined;
+    return {
+      target,
+      url: cleanUrl,
+      mode,
+      ...(chosenFormat ? { format: chosenFormat } : {}),
+    };
+  }
+
+  const cleanPath = (filePath ?? "").trim().replace(/^\/+/, "");
+  const detected = inferFormat(cleanPath);
+  const chosenFormat = (format ? format : detected) ?? undefined;
   return {
-    target: `${schema.trim()}.${tableName.trim()}`,
-    volume: volumeId.trim(),
+    target,
+    volume: (volumeId ?? "").trim(),
     path: cleanPath,
     mode,
-    ...(detectedFormat ? { format: detectedFormat } : {}),
+    ...(chosenFormat ? { format: chosenFormat } : {}),
   };
 }
 

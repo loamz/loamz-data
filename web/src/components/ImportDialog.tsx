@@ -1,4 +1,4 @@
-import { CheckCircle2, ChevronRight, FileUp, Loader2, Table2, Upload, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronRight, FileUp, Loader2, Table2, Upload, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import * as api from "@/api";
 import { StateBadge } from "@/components/RunBits";
@@ -8,8 +8,11 @@ import {
   buildImportPayload,
   deriveDefaultTableName,
   inferFormat,
+  inferFormatFromUrl,
   parseImportOutput,
   validateImport,
+  type ImportMode,
+  type ImportSourceType,
 } from "./importUtils";
 
 export interface ImportDialogProps {
@@ -38,7 +41,12 @@ export function ImportDialog({
   const [schemas, setSchemas] = useState<{ value: string; label: string }[]>([]);
   const [selectedSchema, setSelectedSchema] = useState("");
   const [tableName, setTableName] = useState("");
-  const [mode, setMode] = useState<"create" | "append">("create");
+  const [mode, setMode] = useState<ImportMode>("create");
+
+  // Source selection: volume vs web address
+  const [sourceType, setSourceType] = useState<ImportSourceType>("volume");
+  const [webUrl, setWebUrl] = useState("");
+  const [urlFormat, setUrlFormat] = useState<"csv" | "parquet" | "">("");
 
   // Volume & file selection (when not pre-selected)
   const [volumes, setVolumes] = useState<VolumeOption[]>([]);
@@ -68,6 +76,9 @@ export function ImportDialog({
     let live = true;
     const effectiveVolumeId = propVolumeId ?? "";
     const effectivePath = propFilePath ?? "";
+    setSourceType(propFilePath ? "volume" : "volume");
+    setWebUrl("");
+    setUrlFormat("");
     setChosenVolumeId(effectiveVolumeId);
     setChosenPath(effectivePath);
     setRun(null);
@@ -176,6 +187,8 @@ export function ImportDialog({
   const activeVolumeId = propVolumeId || chosenVolumeId;
   const activePath = propFilePath || chosenPath;
   const targetFullName = selectedSchema && tableName ? `${selectedSchema}.${tableName}` : "";
+  const detectedUrlFormat = inferFormatFromUrl(webUrl);
+  const effectiveUrlFormat = urlFormat || detectedUrlFormat || "";
 
   // Upload handler for adding a file to the chosen volume
   async function handleUpload(fileList: File[]) {
@@ -206,8 +219,12 @@ export function ImportDialog({
     const val = validateImport({
       schema: selectedSchema,
       tableName,
+      sourceType,
       volumeId: activeVolumeId,
       filePath: activePath,
+      url: webUrl,
+      mode,
+      explicitFormat: urlFormat,
     });
     if (!val.valid) {
       setError(val.error ?? "Invalid input");
@@ -223,9 +240,12 @@ export function ImportDialog({
     const payload = buildImportPayload({
       schema: selectedSchema,
       tableName,
+      sourceType,
       volumeId: activeVolumeId,
       filePath: activePath,
+      url: webUrl,
       mode,
+      format: urlFormat,
     });
 
     try {
@@ -274,6 +294,14 @@ export function ImportDialog({
   const hasFinished = run !== null && !api.isRunning(run);
   const isSuccess = hasFinished && run.state === "succeeded";
 
+  const canSubmit =
+    !isExecuting &&
+    Boolean(selectedSchema) &&
+    Boolean(tableName) &&
+    (sourceType === "volume"
+      ? Boolean(activeVolumeId) && Boolean(activePath)
+      : Boolean(webUrl.trim()) && Boolean(effectiveUrlFormat));
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -285,29 +313,31 @@ export function ImportDialog({
               : "The import job failed."
             : isExecuting
               ? "Running import job on workspace compute…"
-              : "Import a CSV or Parquet file from a volume into an Iceberg table."
+              : "Import a CSV or Parquet file from a volume or web address into an Iceberg table."
         }
       >
         <div className="mt-4 space-y-4">
-          {/* Ongoing execution view */}
+          {/* Ongoing execution view (NEVER echo web address here) */}
           {isExecuting && (
             <div className="space-y-4 rounded-xl border border-border bg-background/50 p-4">
               <div className="flex items-center gap-3">
                 <Loader2 className="size-5 animate-spin text-accent" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-foreground">Importing {activePath}</span>
+                    <span className="text-sm font-medium text-foreground">
+                      {sourceType === "url" ? "Importing from web address" : `Importing ${activePath}`}
+                    </span>
                     {run && <StateBadge state={run.state} />}
                   </div>
                   <p className="truncate text-xs text-muted">
-                    Target: {targetFullName} · Mode: {mode === "create" ? "new table" : "append"}
+                    Target: {targetFullName} · Mode: {mode === "create" ? "new table" : mode === "append" ? "append" : "replace rows"}
                   </p>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Finished view: Success */}
+          {/* Finished view: Success (NEVER echo web address here) */}
           {isSuccess && (
             <div className="space-y-4 rounded-xl border border-border bg-background/50 p-4">
               <div className="flex items-start gap-3">
@@ -352,59 +382,130 @@ export function ImportDialog({
           {/* Configuration form (visible before submission or if trying again) */}
           {!isExecuting && !isSuccess && (
             <div className="space-y-4">
-              {/* Source Volume & File Selection if not fixed */}
-              {!propVolumeId && (
-                <label className="block space-y-1.5">
-                  <span className="text-xs font-medium text-foreground">Source Volume</span>
-                  <Select
-                    aria-label="Source Volume"
-                    value={chosenVolumeId}
-                    onValueChange={setChosenVolumeId}
-                    options={volumes.map((v) => ({ value: v.id, label: v.fullName }))}
-                    placeholder="Select volume…"
-                  />
-                </label>
-              )}
-
+              {/* Source Choice if not fixed to a specific volume file */}
               {!propFilePath && (
                 <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-foreground">File</span>
-                    <FilePicker
-                      variant="ghost"
-                      size="sm"
-                      onFiles={(files) => void handleUpload(files)}
-                      disabled={uploading || (!activeVolumeId && volumes.length === 0)}
-                    >
-                      <Upload className="size-3.5" /> {uploading ? "Uploading…" : "Upload file"}
-                    </FilePicker>
-                  </div>
-                  {volumeFiles.length === 0 ? (
-                    <p className="rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted">
-                      No CSV or Parquet files in this volume. Upload one to continue.
-                    </p>
-                  ) : (
-                    <Select
-                      aria-label="Source File"
-                      value={chosenPath}
-                      onValueChange={(val) => {
-                        setChosenPath(val);
-                        if (!initialTarget) {
-                          setTableName(deriveDefaultTableName(val));
-                        }
-                      }}
-                      options={volumeFiles.map((f) => ({ value: f.path, label: f.path }))}
-                    />
-                  )}
+                  <span className="block text-xs font-medium text-foreground">Source</span>
+                  <Segmented
+                    label="Source choice"
+                    value={sourceType}
+                    onChange={(v) => {
+                      setSourceType(v as ImportSourceType);
+                      setError(null);
+                    }}
+                    options={[
+                      { value: "volume", label: "From a volume" },
+                      { value: "url", label: "From a web address" },
+                    ]}
+                  />
                 </div>
               )}
 
-              {/* Readonly info if source file was already selected */}
-              {propFilePath && (
-                <div className="rounded-lg border border-border/60 bg-muted/20 p-2.5 text-xs">
-                  <span className="text-muted">Source file: </span>
-                  <span className="font-mono text-foreground">{propFilePath}</span>
-                  <span className="ml-2 text-2xs text-muted">({inferFormat(propFilePath)?.toUpperCase()})</span>
+              {/* Volume source controls */}
+              {sourceType === "volume" && (
+                <>
+                  {!propVolumeId && (
+                    <label className="block space-y-1.5">
+                      <span className="text-xs font-medium text-foreground">Source Volume</span>
+                      <Select
+                        aria-label="Source Volume"
+                        value={chosenVolumeId}
+                        onValueChange={setChosenVolumeId}
+                        options={volumes.map((v) => ({ value: v.id, label: v.fullName }))}
+                        placeholder="Select volume…"
+                      />
+                    </label>
+                  )}
+
+                  {!propFilePath && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-foreground">File</span>
+                        <FilePicker
+                          variant="ghost"
+                          size="sm"
+                          onFiles={(files) => void handleUpload(files)}
+                          disabled={uploading || (!activeVolumeId && volumes.length === 0)}
+                        >
+                          <Upload className="size-3.5" /> {uploading ? "Uploading…" : "Upload file"}
+                        </FilePicker>
+                      </div>
+                      {volumeFiles.length === 0 ? (
+                        <p className="rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted">
+                          No CSV or Parquet files in this volume. Upload one to continue.
+                        </p>
+                      ) : (
+                        <Select
+                          aria-label="Source File"
+                          value={chosenPath}
+                          onValueChange={(val) => {
+                            setChosenPath(val);
+                            if (!initialTarget) {
+                              setTableName(deriveDefaultTableName(val));
+                            }
+                          }}
+                          options={volumeFiles.map((f) => ({ value: f.path, label: f.path }))}
+                        />
+                      )}
+                    </div>
+                  )}
+
+                  {/* Readonly info if source file was already selected */}
+                  {propFilePath && (
+                    <div className="rounded-lg border border-border/60 bg-muted/20 p-2.5 text-xs">
+                      <span className="text-muted">Source file: </span>
+                      <span className="font-mono text-foreground">{propFilePath}</span>
+                      <span className="ml-2 text-2xs text-muted">({inferFormat(propFilePath)?.toUpperCase()})</span>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Web address source controls */}
+              {sourceType === "url" && (
+                <div className="space-y-3">
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-foreground">Web address</span>
+                    <Input
+                      aria-label="Web address"
+                      value={webUrl}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setWebUrl(v);
+                        if (!initialTarget && v) {
+                          const derived = deriveDefaultTableName(v);
+                          if (derived) setTableName(derived);
+                        }
+                      }}
+                      placeholder="https://example.com/data.parquet"
+                      spellCheck={false}
+                    />
+                    <span className="block text-2xs text-muted">
+                      An https:// address (port 443, no user name or password). A signed address works; it is never shown back.
+                    </span>
+                  </label>
+
+                  {/* Format picker for address */}
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-medium text-foreground">
+                      File format {detectedUrlFormat ? `(detected: ${detectedUrlFormat.toUpperCase()})` : "(required)"}
+                    </span>
+                    <Select
+                      aria-label="File format"
+                      value={effectiveUrlFormat}
+                      onValueChange={(val) => setUrlFormat(val as "csv" | "parquet")}
+                      options={[
+                        { value: "csv", label: "CSV" },
+                        { value: "parquet", label: "Parquet" },
+                      ]}
+                      placeholder="Select format…"
+                    />
+                    {!detectedUrlFormat && (
+                      <span className="block text-2xs text-muted">
+                        This address does not end in .csv or .parquet. Choose the format of the file.
+                      </span>
+                    )}
+                  </label>
                 </div>
               )}
 
@@ -439,17 +540,29 @@ export function ImportDialog({
                 <Segmented
                   label="Import mode"
                   value={mode}
-                  onChange={setMode}
+                  onChange={(m) => setMode(m as ImportMode)}
                   options={[
                     { value: "create", label: "New table" },
                     { value: "append", label: "Add rows" },
+                    { value: "replace", label: "Replace rows" },
                   ]}
                 />
                 <span className="block text-2xs text-muted">
                   {mode === "create"
                     ? "Creates a new Iceberg table matching the file schema."
-                    : "Appends rows to an existing Iceberg table."}
+                    : mode === "append"
+                      ? "Appends rows to an existing Iceberg table."
+                      : "Replaces all existing rows in the table with the file's rows."}
                 </span>
+
+                {mode === "replace" && (
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-xs text-warning">
+                    <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
+                    <span>
+                      <strong>Warning:</strong> The table&apos;s current rows will be completely removed and replaced with the imported rows. Existing table columns are kept and must match the file schema.
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -467,7 +580,7 @@ export function ImportDialog({
                 <Button
                   variant="primary"
                   onClick={() => void handleStartImport()}
-                  disabled={isExecuting || !activeVolumeId || !activePath || !selectedSchema || !tableName}
+                  disabled={!canSubmit}
                 >
                   <FileUp /> {isExecuting ? "Importing…" : "Start import"}
                 </Button>

@@ -304,9 +304,10 @@ export const runStatement = (ws: string, sql: string, limit: number, waitS = 30,
 export const submitJob = (ws: string, b: { title: string; script: string; inputs: string[]; output: string; timeout_s?: number }) => json<Run>(send("POST", `${W(ws)}/runs`, b));
 export interface ImportFileRequest {
   target: string;
-  volume: string;
-  path: string;
-  mode?: "create" | "append";
+  volume?: string;
+  path?: string;
+  url?: string;
+  mode?: "create" | "append" | "replace";
   format?: "csv" | "parquet";
   target_compute?: string;
 }

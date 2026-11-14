@@ -489,7 +489,103 @@ async function run() {
     console.log(`   Count after append: ${count2}`);
     assert.equal(Number(count2.replace(/,/g, "")), 3, `Expected 3 rows after append import, got ${count2}`);
 
-    pass(`Imported CSV into new table ${testImportTable} (2 rows), verified via SQL, and appended rows from second CSV (total 3 rows)`);
+    // Now test replace mode from Table page: "Import from a file" with Replace rows
+    console.log(`   Opening table page nyc.main.${testImportTable} for replace import...`);
+    await page.goto(`${wsOrigin}/catalog`);
+    await page.waitForSelector("text='Catalogs'", { timeout: 15000 });
+
+    // Prepare temp CSV 3 (replace mode - single row)
+    const csvFile3 = path.join(tmpDir, "test_orders_replace.csv");
+    fs.writeFileSync(csvFile3, "id,customer,amount\n201,Zoe,999.00\n", "utf-8");
+
+    // Navigate to the table in catalog tree
+    const expandNyc3 = page.getByRole("button", { name: "Expand nyc" }).or(page.locator("button[aria-label='Expand nyc']")).first();
+    await expandNyc3.waitFor({ state: "visible", timeout: 15000 });
+    await expandNyc3.click();
+    const expandMain3 = page.getByRole("button", { name: "Expand main" }).or(page.locator("button[aria-label='Expand main']")).first();
+    await expandMain3.waitFor({ state: "visible", timeout: 15000 });
+    await expandMain3.click();
+
+    const targetTblRow3 = page.getByRole("button", { name: testImportTable, exact: true })
+      .or(page.locator("li[role='treeitem'] button").filter({ hasText: new RegExp(`^${testImportTable}$`) })).first();
+    await targetTblRow3.waitFor({ state: "visible", timeout: 15000 });
+    await targetTblRow3.click();
+
+    // Click "Import from a file" action on table header
+    const importFromFileBtn3 = page.getByRole("button", { name: "Import from a file" }).first();
+    await importFromFileBtn3.waitFor({ state: "visible", timeout: 15000 });
+    await importFromFileBtn3.click();
+
+    // Dialog opens
+    const replaceDialog = page.locator("[role='dialog']").first();
+    await replaceDialog.waitFor({ state: "visible", timeout: 10000 });
+
+    // Switch mode to "Replace rows"
+    const replaceModeRadio = replaceDialog.getByRole("radio", { name: "Replace rows" }).first();
+    await replaceModeRadio.waitFor({ state: "visible", timeout: 10000 });
+    await replaceModeRadio.click();
+
+    // Check warning is visible
+    const replaceWarning = replaceDialog.getByText(/table's current rows will be completely removed/i).first();
+    await replaceWarning.waitFor({ state: "visible", timeout: 10000 });
+
+    // Wait until source volume is loaded in dialog
+    const volSelect3 = replaceDialog.getByRole("combobox", { name: "Source Volume" }).first();
+    await volSelect3.waitFor({ state: "visible", timeout: 15000 });
+    await page.waitForTimeout(1000);
+
+    // Upload csvFile3 via dialog's upload button
+    console.log("   Uploading test_orders_replace.csv through dialog upload...");
+    const dialogFileInput3 = replaceDialog.locator("input[type=file]").first();
+    await dialogFileInput3.setInputFiles(csvFile3);
+    await page.waitForSelector("text='test_orders_replace.csv'", { timeout: 15000 });
+    const fileSelect3 = replaceDialog.getByRole("combobox", { name: "Source File" }).first();
+    if (await fileSelect3.isVisible()) {
+      await fileSelect3.click();
+      await page.waitForTimeout(200);
+      const opt3 = page.getByRole("option", { name: "test_orders_replace.csv" }).or(page.locator("[role='option']:has-text('test_orders_replace.csv')")).first();
+      if (await opt3.isVisible()) {
+        await opt3.click();
+      }
+    }
+    await page.waitForTimeout(300);
+
+    // Click 'Start import'
+    const startReplaceBtn = replaceDialog.getByRole("button", { name: /start import/i }).first();
+    await startReplaceBtn.click();
+
+    // Wait for import job to complete
+    console.log("   Waiting for replace import job to complete...");
+    await page.waitForSelector("[role='dialog']:has-text('Import complete')", { timeout: 60000 });
+    const replaceSuccessMsg = await replaceDialog.innerText();
+    assert.ok(replaceSuccessMsg.includes("1 row") || replaceSuccessMsg.includes("complete"), "Expected 1 row replaced");
+
+    // Dismiss dialog
+    const replaceDoneBtn = replaceDialog.getByRole("button", { name: "Done" }).first();
+    await replaceDoneBtn.click();
+    await replaceDialog.waitFor({ state: "hidden", timeout: 10000 }).catch(() => {});
+
+    // Go back to SQL screen to verify count is now 1 (replaced, not 4)
+    console.log(`   Verifying SELECT count(*) FROM nyc.main.${testImportTable} after replace...`);
+    await page.goto(`${wsOrigin}/sql`);
+    await page.waitForSelector(".cm-content", { timeout: 15000 });
+    const cm3 = page.locator(".cm-content").first();
+    await cm3.click();
+    await page.keyboard.press("Control+A");
+    await page.keyboard.type(`SELECT count(*) FROM nyc.main.${testImportTable}`);
+
+    const sqlRunBtn3 = page.getByRole("button", { name: "Run", exact: true }).first();
+    await page.waitForSelector('button:has-text("Run"):not([disabled])', { timeout: 15000 });
+    await sqlRunBtn3.click();
+
+    await page.waitForSelector("tbody tr td", { timeout: 45000 });
+    const resCell3 = page.locator("tbody tr td").nth(1);
+    await resCell3.waitFor({ state: "visible", timeout: 15000 });
+    const count3 = (await resCell3.innerText()).trim();
+    console.log(`   Count after replace: ${count3}`);
+    assert.equal(Number(count3.replace(/,/g, "")), 1, `Expected 1 row after replace import, got ${count3}`);
+
+    pass(`Imported CSV into new table ${testImportTable} (2 rows), appended rows (3 rows), and replaced rows (1 row)`);
 
     console.log(`\n=================================================`);
     console.log(`ALL 7 E2E WORKFLOW TESTS PASSED (${stepsPassed}/7)!`);
