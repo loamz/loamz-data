@@ -329,6 +329,89 @@ Its token is in the answer, once. It starts with `lsp_`, is sent as a bearer tok
 
 ---
 
+## `GET` /api/v1/workspaces/{ws}/storage/credentials/{id}
+
+**Read non-secret credential metadata.**
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+| `id` | `path` | Yes | `string` | Credential ID. |
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `200` | OK |
+| `401` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+
+---
+
+## `POST` /api/v1/workspaces/{ws}/storage/credentials/{id}/check
+
+**Check a location without returning the credential.**
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+| `id` | `path` | Yes | `string` | Credential ID. |
+
+### Request Body
+
+- **Content-Type**: `application/json` (`object`)
+
+  **Fields:**
+
+  - `location_id` (`string`): A registered storage location that uses this credential.
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `200` | OK |
+| `400` | An RFC 9457 problem document. |
+| `401` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+| `413` | An RFC 9457 problem document. |
+| `422` | An RFC 9457 problem document. |
+
+---
+
+## `PUT` /api/v1/workspaces/{ws}/storage/credentials/{id}/secret
+
+**Replace the complete secret if the generation matches.**
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+| `id` | `path` | Yes | `string` | Credential ID. |
+| `If-Match` | `header` | Yes | `string` | The current generation (integer string). |
+
+### Request Body
+
+- **Content-Type**: `application/json` (`object`, write-only provider secret fields)
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `204` | Done |
+| `400` | An RFC 9457 problem document. |
+| `401` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+| `412` | Precondition Failed |
+| `413` | An RFC 9457 problem document. |
+| `503` | An RFC 9457 problem document. |
+
+---
+
 ## `GET` /api/v1/workspaces/{ws}/storage/locations
 
 **The buckets and prefixes this workspace may use. Workspace admins.**
@@ -1251,6 +1334,38 @@ Its token is in the answer, once. It starts with `lsp_`, is sent as a bearer tok
 
 ---
 
+## `POST` /api/v1/workspaces/{ws}/tables/{id}/maintenance
+
+**Queue table compaction or snapshot expiry. Needs MODIFY and no applicable row or column rules.**
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+| `id` | `path` | Yes | `string` | Target table ID. |
+
+### Request Body
+
+- **Content-Type**: `application/json` (`object`)
+
+  **Fields:**
+
+  - `action` (`string`): Either `compact` or `expire`.
+  - `older_than` (`integer`): For `expire`, snapshot retention cutoff in seconds (defaults to 604800, max 31536000).
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `202` | Accepted (returns queued run) |
+| `400` | An RFC 9457 problem document. |
+| `401` | An RFC 9457 problem document. |
+| `403` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+
+---
+
 ## `GET` /api/v1/workspaces/{ws}/compute/targets
 
 **The compute attached to this workspace, and whether each is answering.**
@@ -1642,6 +1757,149 @@ When input access cannot be verified, result_access is restricted and results, l
 | `200` | The new secret, once |
 | `401` | An RFC 9457 problem document. |
 | `403` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+
+---
+
+## `GET` /api/v1/workspaces/{ws}/schedules
+
+**List schedules owned by the caller, or all schedules for a workspace admin.**
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `200` | OK |
+| `401` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+
+---
+
+## `POST` /api/v1/workspaces/{ws}/schedules
+
+**Schedule an immutable SQL statement, job, or table maintenance action as the current person.**
+
+Give one UTC cron expression or interval_seconds, and exactly one of sql, job, or maintenance. webhook_ref is an optional vault reference and is never returned.
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+
+### Request Body
+
+- **Content-Type**: `application/json` (`object`)
+
+  **Fields:**
+
+  - `name` (`string`): A display name for the schedule.
+  - `cron` (`string`): A 5-part UTC cron expression (e.g. `*/15 * * * *`).
+  - `interval_seconds` (`integer`): Repeat interval in seconds (minimum 60).
+  - `sql` (`string`): A SQL statement to run on each tick.
+  - `job` (`object`): A sandboxed job specification.
+  - `maintenance` (`object`): Table maintenance action (`table`, `action: compact | expire`, optional `older_than_seconds`).
+  - `webhook_ref` (`string`): Optional secret reference in the vault for failure alert notifications.
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `201` | Created |
+| `400` | An RFC 9457 problem document. |
+| `401` | An RFC 9457 problem document. |
+| `403` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+| `409` | An RFC 9457 problem document. |
+
+---
+
+## `DELETE` /api/v1/workspaces/{ws}/schedules/{id}
+
+**Delete a schedule. Its owner or a workspace admin.**
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+| `id` | `path` | Yes | `string` | Schedule ID. |
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `204` | Done |
+| `401` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+
+---
+
+## `PUT` /api/v1/workspaces/{ws}/schedules/{id}/pause
+
+**Pause a schedule. Its owner or a workspace admin.**
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+| `id` | `path` | Yes | `string` | Schedule ID. |
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `204` | Done |
+| `401` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+
+---
+
+## `PUT` /api/v1/workspaces/{ws}/schedules/{id}/resume
+
+**Resume a schedule from its next future firing. Its owner or a workspace admin.**
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+| `id` | `path` | Yes | `string` | Schedule ID. |
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `204` | Done |
+| `401` | An RFC 9457 problem document. |
+| `404` | An RFC 9457 problem document. |
+
+---
+
+## `GET` /api/v1/workspaces/{ws}/schedules/{id}/alerts
+
+**List recorded failure alerts for a schedule.**
+
+### Parameters
+
+| Name | In | Required | Type | Description |
+|---|---|---|---|---|
+| `ws` | `path` | Yes | `string` | A workspace id. |
+| `id` | `path` | Yes | `string` | Schedule ID. |
+
+### Responses
+
+| Status | Description |
+|---|---|
+| `200` | OK |
+| `401` | An RFC 9457 problem document. |
 | `404` | An RFC 9457 problem document. |
 
 ---
