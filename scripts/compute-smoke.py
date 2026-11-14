@@ -162,6 +162,21 @@ try:
     step(f"an append added a row: {cnt2['result']['rows']}")
     assert cnt2["result"]["rows"] == [[4]], cnt2
 
+    # Replace swaps the rows; an address on the machine's own network is refused before anything is fetched.
+    call("PUT", f"{S}/volumes/{out}/files/fresh.csv", ana, raw=b"id,name,age\n9,Zed,60\n8,Yan,20\n")
+    _, imp3 = call("POST", f"{S}/imports", ana, {"target": "shop.main.people", "volume": out, "path": "fresh.csv", "mode": "replace"})
+    replaced = wait_run(imp3["id"])
+    if replaced["state"] != "succeeded":
+        sys.exit("the replace failed: " + json.dumps({k: replaced[k] for k in ("state", "error", "stderr", "stdout")})[:1500])
+    _, cnt3 = call("POST", f"{S}/sql/statements", ana, {"sql": "SELECT count(*), sum(age) FROM shop.main.people", "wait_s": 60})
+    step(f"a replace swapped the rows: {cnt3['result']['rows']}")
+    assert cnt3["result"]["rows"] == [[2, "80"]], cnt3
+    _, bad = call("POST", f"{S}/imports", ana, {"target": "shop.main.fetched", "url": "https://127.0.0.1/x.csv"})
+    refused = wait_run(bad["id"])
+    step(f"an address on the machine's own network was refused: {refused['state']}, {refused['error'] or refused['stderr']!r}"[:200])
+    assert refused["state"] == "failed" and "x.csv" not in json.dumps(refused), refused
+    _, http = call("POST", f"{S}/imports", ana, {"target": "shop.main.fetched", "url": "http://example.com/x.csv"}, ok=(400,))
+
     # The doors refuse what the run did not declare, from inside the sandbox.
     probe = (
         "import sys, json, urllib.request, urllib.error\nsys.path.insert(0, '/inputs/job')\nimport loamz_doors\n"

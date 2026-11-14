@@ -15,6 +15,7 @@ pub mod broker;
 pub mod check;
 pub mod door;
 pub mod exec;
+pub mod fetch;
 pub mod pool;
 pub mod spec;
 pub mod work;

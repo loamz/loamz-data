@@ -432,6 +432,9 @@ pub struct JobRequest {
     /// on its schema). The sandbox reaches them through two narrow doors; see proposal 0005.
     #[serde(default)]
     pub table_writes: Vec<String>,
+    /// An address the runner downloads into `/inputs/fetched/data` before the sandbox starts. Set only by the server's own import.
+    #[serde(skip)]
+    pub fetch: Option<String>,
     pub target: Option<String>,
     pub memory_mb: Option<i64>,
     pub cpu_millis: Option<i64>,
@@ -869,18 +872,25 @@ async fn checked_table_writes(app: &App, ctx: &Ctx<'_>, names: &[String]) -> Res
     Ok(out)
 }
 
-/// What a person asks for to bring a file in as a table.
+/// What a person asks for to bring a file in as a table. The file is a volume's file (`volume` and `path`), or an address that the
+/// machine downloads (`url`): exactly one of the two.
 #[derive(Deserialize)]
 pub struct ImportRequest {
     /// The table to make or add to, as `catalog.schema.table`.
     pub target: String,
     /// The volume that holds the file, and the file's path inside it.
+    #[serde(default)]
     pub volume: String,
+    #[serde(default)]
     pub path: String,
+    /// An `https://` address to download instead. A signed address (for a file in a bucket) works: it is never shown back.
+    #[serde(default)]
+    pub url: String,
     /// `csv` or `parquet`; left out, it is read from the file's extension.
     #[serde(default)]
     pub format: String,
-    /// `create` (the default: a new table) or `append` (add rows to a table that exists).
+    /// `create` (the default: a new table), `append` (add rows to a table that exists) or `replace` (swap a table's rows for the
+    /// file's: the table keeps its columns).
     #[serde(default)]
     pub mode: String,
     pub target_compute: Option<String>,
@@ -899,13 +909,9 @@ fn hex_encode(bytes: &[u8]) -> String {
 /// The program a file import runs, with its few values filled in: it is ours, never the person's.
 const IMPORT_JOB: &str = include_str!("import_job.py");
 
-/// Asks for a file to be brought in as a table. It is an ordinary job with a table to write and one volume to read, run by a program
-/// the server wrote: the person needs `READ` on the volume and `CREATE TABLE` (or `MODIFY` for an append) on the target.
-///
-/// # Errors
-/// Not allowed, the request is not valid, or no compute is answering.
-pub async fn submit_import(app: &App, ctx: &Ctx<'_>, req: ImportRequest) -> Result<Run> {
-    let path = req.path.trim_start_matches('/');
+/// A volume file's path, checked.
+fn checked_file_path(raw: &str) -> Result<&str> {
+    let path = raw.trim_start_matches('/');
     if path.is_empty()
         || path.len() > 1024
         || path
@@ -915,11 +921,71 @@ pub async fn submit_import(app: &App, ctx: &Ctx<'_>, req: ImportRequest) -> Resu
     {
         return Err(Error::Invalid("the file's path is not valid".into()));
     }
+    Ok(path)
+}
+
+/// Where an import's file comes from, as far as the server can check; the machine that downloads it checks the rest.
+enum Source<'a> {
+    Volume(&'a str),
+    Address(reqwest::Url),
+}
+
+impl<'a> Source<'a> {
+    fn of(req: &'a ImportRequest) -> Result<Self> {
+        match (req.volume.is_empty() && req.path.is_empty(), req.url.is_empty()) {
+            (false, true) if !req.volume.is_empty() && !req.path.is_empty() => {
+                Ok(Self::Volume(checked_file_path(&req.path)?))
+            }
+            (true, false) => {
+                let url = reqwest::Url::parse(&req.url)
+                    .map_err(|_| Error::Invalid("the address is not valid".into()))?;
+                if req.url.len() > 4096
+                    || url.scheme() != "https"
+                    || !url.username().is_empty()
+                    || url.password().is_some()
+                    || url.host_str().is_none()
+                    || url.port().is_some_and(|p| p != 443)
+                {
+                    return Err(Error::Invalid(
+                        "the address must be an https:// address with a host, and no user name or password".into(),
+                    ));
+                }
+                Ok(Self::Address(url))
+            }
+            _ => Err(Error::Invalid(
+                "name the file by a volume and path, or by a url, not both".into(),
+            )),
+        }
+    }
+
+    /// What to read the file's extension from: never the query (it may be a signature).
+    fn name(&self) -> String {
+        match self {
+            Self::Volume(path) => (*path).to_owned(),
+            Self::Address(url) => format!("{}{}", url.host_str().unwrap_or_default(), url.path()),
+        }
+    }
+
+    /// What titles say about the file: a volume's path, or only the host of an address (its path may carry a secret too).
+    fn label(&self) -> String {
+        match self {
+            Self::Volume(path) => (*path).to_owned(),
+            Self::Address(url) => url.host_str().unwrap_or_default().to_owned(),
+        }
+    }
+}
+
+/// Asks for a file to be brought in as a table. It is an ordinary job with a table to write and, for a volume file, one volume to
+/// read, run by a program the server wrote: the person needs `READ` on the volume and `CREATE TABLE` (or `MODIFY` to add to or
+/// replace one) on the target. An address is downloaded by the machine before the sandbox starts, which has no network.
+///
+/// # Errors
+/// Not allowed, the request is not valid, or no compute is answering.
+pub async fn submit_import(app: &App, ctx: &Ctx<'_>, req: ImportRequest) -> Result<Run> {
+    let source = Source::of(&req)?;
+    let name = source.name();
     let format = if req.format.is_empty() {
-        path.rsplit('.')
-            .next()
-            .unwrap_or_default()
-            .to_ascii_lowercase()
+        name.rsplit('.').next().unwrap_or_default().to_ascii_lowercase()
     } else {
         req.format.to_ascii_lowercase()
     };
@@ -933,8 +999,8 @@ pub async fn submit_import(app: &App, ctx: &Ctx<'_>, req: ImportRequest) -> Resu
     } else {
         req.mode.as_str()
     };
-    if !matches!(mode, "create" | "append") {
-        return Err(Error::Invalid("mode is create or append".into()));
+    if !matches!(mode, "create" | "append" | "replace") {
+        return Err(Error::Invalid("mode is create, append or replace".into()));
     }
     let parts: Vec<&str> = req.target.split('.').collect();
     if parts.len() != 3
@@ -948,21 +1014,30 @@ pub async fn submit_import(app: &App, ctx: &Ctx<'_>, req: ImportRequest) -> Resu
         ));
     }
     let spec = json!({
-        "target": req.target, "path": path, "format": format, "mode": mode, "workspace": ctx.workspace.id,
+        "target": req.target, "format": format, "mode": mode, "workspace": ctx.workspace.id,
+        "source": match &source { Source::Volume(path) => json!({"path": path}), Source::Address(_) => json!({"fetched": true}) },
     });
     let script = IMPORT_JOB.replace("__SPEC__", &hex_encode(spec.to_string().as_bytes()));
     let job = JobRequest {
-        title: format!("Import {path} into {}", req.target),
+        title: format!("Import {} into {}", source.label(), req.target),
         script,
-        inputs: vec![req.volume],
+        inputs: match &source {
+            Source::Volume(_) => vec![req.volume.clone()],
+            Source::Address(_) => vec![],
+        },
         output: String::new(),
         table_writes: vec![req.target.clone()],
+        fetch: match &source {
+            Source::Volume(_) => None,
+            Source::Address(url) => Some(url.to_string()),
+        },
         target: req.target_compute,
         memory_mb: None,
         cpu_millis: None,
         timeout_s: Some(600),
     };
-    // An append needs the table to exist, and a create needs it not to: the person's mistake is better said now than by a failed run.
+    // Add and replace need the table to exist, and a create needs it not to: the person's mistake is better said now than by a
+    // failed run.
     let exists = catalogs::resolve(
         app,
         &ctx.workspace.id,
@@ -973,11 +1048,11 @@ pub async fn submit_import(app: &App, ctx: &Ctx<'_>, req: ImportRequest) -> Resu
     .is_ok();
     if mode == "create" && exists {
         return Err(Error::Conflict(format!(
-            "{} already exists: use mode append to add to it",
+            "{} already exists: use mode append to add to it or replace to swap its rows",
             req.target
         )));
     }
-    if mode == "append" && !exists {
+    if mode != "create" && !exists {
         return Err(Error::NotFound(format!("{} was not found", req.target)));
     }
     submit_job(app, ctx, job).await
@@ -1093,7 +1168,10 @@ pub async fn submit_job(app: &App, ctx: &Ctx<'_>, req: JobRequest) -> Result<Run
     let limits = limits_for(&target, req.memory_mb, req.cpu_millis, req.timeout_s, 600)
         .map_err(Error::Invalid)?;
     let title = job_title(&req.title, &req.script);
-    let spec = json!({"as": As::of(ctx.identity), "script": req.script, "inputs": inputs, "output": output_id, "table_writes": table_writes, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
+    let mut spec = json!({"as": As::of(ctx.identity), "script": req.script, "inputs": inputs, "output": output_id, "table_writes": table_writes, "memory_mb": limits.memory_mb, "cpu_millis": limits.cpu_millis, "timeout_s": limits.timeout_s});
+    if let Some(url) = &req.fetch {
+        spec["fetch"] = json!({"url": url});
+    }
     let run = new_run(ctx, "job", &title, &target, &spec);
     queue(app, ctx, &run, "job.submit").await?;
     Ok(run)

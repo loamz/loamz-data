@@ -1460,8 +1460,9 @@ paths:
   /api/v1/workspaces/{ws}/imports:
     post:
       summary: >-
-        Bring a file in as a table. A job the server writes runs on the workspace's compute, reads the file from a volume and writes the
-        table through the catalog. Needs READ on the volume and CREATE TABLE on the schema (MODIFY for an append). Answers 202 with the run.
+        Bring a file in as a table. A job the server writes runs on the workspace's compute, reads the file (from a volume, or downloaded
+        by the machine from an https address) and writes the table through the catalog. Needs READ on the volume and CREATE TABLE on the
+        schema (MODIFY to append or replace). Answers 202 with the run.
       parameters:
       - *id002
       requestBody:
@@ -1470,25 +1471,33 @@ paths:
           application/json:
             schema:
               type: object
-              required: [target, volume, path]
+              required: [target]
               properties:
                 target:
                   type: string
                   description: The table, as catalog.schema.table.
                 volume:
                   type: string
-                  description: The id of the volume that holds the file.
+                  description: The id of the volume that holds the file. Give volume and path, or url, not both.
                 path:
                   type: string
                   description: The file's path inside the volume.
+                url:
+                  type: string
+                  description: >-
+                    An https:// address (port 443, no user name or password) that the compute machine downloads before the run starts.
+                    It must resolve to public addresses only, follows at most 3 redirects, and is capped at 2 GiB and 10 minutes. A signed
+                    address (a file in a bucket) works; it is never shown back.
                 format:
                   type: string
                   enum: [csv, parquet]
                   description: Read from the file's extension when left out.
                 mode:
                   type: string
-                  enum: [create, append]
-                  description: create (the default) makes a new table; append adds rows to one that exists.
+                  enum: [create, append, replace]
+                  description: >-
+                    create (the default) makes a new table; append adds rows to one that exists; replace swaps its rows for the
+                    file's and keeps its columns.
                 target_compute:
                   type: string
       responses:

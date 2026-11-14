@@ -13,18 +13,24 @@ import loamz_doors  # noqa: E402
 SPEC = json.loads(bytes.fromhex("__SPEC__").decode())
 
 catalog, schema, table = SPEC["target"].split(".")
-# The source volume is mounted under its own name; folders left over from other runs may also be there, so look for the file itself.
-relative = os.path.normpath(SPEC["path"])
-if relative.startswith(("..", "/")):
-    sys.exit("the source file's path is not valid")
-found = [
-    os.path.join("/inputs", d, relative)
-    for d in sorted(os.listdir("/inputs"))
-    if d not in ("job", "doors") and os.path.isfile(os.path.join("/inputs", d, relative))
-]
-if len(found) != 1:
-    sys.exit(f"the source file was found in {len(found)} places, not one")
-path = found[0]
+if SPEC["source"].get("fetched"):
+    # The machine downloaded it before this sandbox started.
+    path = "/inputs/fetched/data"
+    if not os.path.isfile(path):
+        sys.exit("the file was not downloaded")
+else:
+    # The source volume is mounted under its own name; folders left over from other runs may also be there, so look for the file.
+    relative = os.path.normpath(SPEC["source"]["path"])
+    if relative.startswith(("..", "/")):
+        sys.exit("the source file's path is not valid")
+    found = [
+        os.path.join("/inputs", d, relative)
+        for d in sorted(os.listdir("/inputs"))
+        if d not in ("job", "doors", "fetched") and os.path.isfile(os.path.join("/inputs", d, relative))
+    ]
+    if len(found) != 1:
+        sys.exit(f"the source file was found in {len(found)} places, not one")
+    path = found[0]
 
 catalog_endpoint, storage_endpoint = loamz_doors.start(SPEC["workspace"])
 con = duckdb.connect(
@@ -49,6 +55,12 @@ reader = {"csv": "read_csv", "parquet": "read_parquet"}[SPEC["format"]]
 target = f'lake."{schema}"."{table}"'
 if SPEC["mode"] == "append":
     con.execute(f"INSERT INTO {target} SELECT * FROM {reader}(?)", [path])
+elif SPEC["mode"] == "replace":
+    # The table keeps its columns: the file's must fit them, and the rows are swapped in one transaction.
+    con.execute("BEGIN")
+    con.execute(f"DELETE FROM {target}")
+    con.execute(f"INSERT INTO {target} SELECT * FROM {reader}(?)", [path])
+    con.execute("COMMIT")
 else:
     con.execute(f"CREATE TABLE {target} AS SELECT * FROM {reader}(?)", [path])
 rows = con.execute(f"SELECT count(*) FROM {reader}(?)", [path]).fetchone()[0]

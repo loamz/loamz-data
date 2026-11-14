@@ -2204,7 +2204,37 @@ async fn a_file_import_is_a_job_the_server_wrote(s: Server) {
             400,
         ),
         (
+            json!({"target": "sales.raw.fresh", "volume": l.out, "path": "data.csv", "mode": "swap"}),
+            400,
+        ),
+        (
             json!({"target": "sales.raw.fresh", "volume": l.out, "path": "data.csv", "mode": "replace"}),
+            404,
+        ),
+        // The file is a volume's or an address, one of the two, and an address must be a plain https one.
+        (json!({"target": "sales.raw.fresh"}), 400),
+        (
+            json!({"target": "sales.raw.fresh", "volume": l.out, "path": "data.csv", "url": "https://example.com/a.csv"}),
+            400,
+        ),
+        (
+            json!({"target": "sales.raw.fresh", "volume": l.out, "url": "https://example.com/a.csv"}),
+            400,
+        ),
+        (
+            json!({"target": "sales.raw.fresh", "url": "http://example.com/a.csv"}),
+            400,
+        ),
+        (
+            json!({"target": "sales.raw.fresh", "url": "https://user:pw@example.com/a.csv"}),
+            400,
+        ),
+        (
+            json!({"target": "sales.raw.fresh", "url": "https://example.com:8443/a.csv"}),
+            400,
+        ),
+        (
+            json!({"target": "sales.raw.fresh", "url": "https://example.com/a.xlsx"}),
             400,
         ),
         (
@@ -2240,3 +2270,37 @@ async fn a_file_import_is_a_job_the_server_wrote(s: Server) {
     assert!(!script.contains("__SPEC__"));
 }
 both!(a_file_import_is_a_job_the_server_wrote);
+
+async fn an_import_from_an_address_is_downloaded_by_the_machine_and_never_shown_back(s: Server) {
+    let l = lab(&s).await;
+    let (secret, _) = attach(&s).await;
+    let url = format!("/api/v1/workspaces/{}/imports", l.ws);
+    let signed = "https://files.example.com/exports/data.csv?X-Amz-Signature=topsecret";
+    let r = s
+        .post(&url, &ana(), json!({"target": "sales.raw.fresh", "url": signed}))
+        .await;
+    assert_eq!(r.status, 202, "{}", r.text());
+    let run = r.json();
+    let title = run["title"].as_str().unwrap();
+    assert!(title.contains("files.example.com"), "{title}");
+    assert!(!title.contains("exports") && !title.contains("topsecret"), "{title}");
+    let lease = agent(&s, "POST", "/api/v1/agent/lease", &secret, None)
+        .await
+        .json();
+    let spec = &lease["run"]["spec"];
+    assert_eq!(spec["fetch"]["url"], signed, "the machine is told where to download");
+    assert_eq!(spec["inputs"].as_array().unwrap().len(), 0, "no volume is read");
+    let script = spec["script"].as_str().unwrap();
+    assert!(!script.contains("topsecret") && !script.contains("files.example.com"));
+    // What people can look at says there was a download, not from where.
+    let shown = s
+        .get(
+            &format!("/api/v1/workspaces/{}/runs/{}", l.ws, run["id"].as_str().unwrap()),
+            &ana(),
+        )
+        .await;
+    assert_eq!(shown.status, 200);
+    assert!(!shown.text().contains("topsecret"), "{}", shown.text());
+    assert_eq!(shown.json()["spec"]["fetch"], true);
+}
+both!(an_import_from_an_address_is_downloaded_by_the_machine_and_never_shown_back);

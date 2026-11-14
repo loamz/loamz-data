@@ -58,6 +58,10 @@ fn run_view(r: &Run, detail: bool) -> Value {
         let mut spec = json_of(&r.spec);
         if let Some(o) = spec.as_object_mut() {
             o.remove("as");
+            // An address may carry a signature: say that there was a download, never from where.
+            if o.contains_key("fetch") {
+                o.insert("fetch".into(), json!(true));
+            }
         }
         v["spec"] = spec;
         v["stdout"] = json!(r.stdout);

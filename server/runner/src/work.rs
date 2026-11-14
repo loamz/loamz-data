@@ -547,6 +547,13 @@ async fn stage(lease: &Lease, api: &Api, dir: &Path, writing: bool) -> Result<St
         }
         mounts.push((name.to_owned(), folder));
     }
+    // An import from an address: the download happens here, under the fetch rules, and the sandbox only sees the file.
+    if let Some(address) = spec["fetch"]["url"].as_str() {
+        let folder = dir.join("inputs").join("fetched");
+        tokio::fs::create_dir_all(&folder).await.map_err(io)?;
+        crate::fetch::download(address, &folder.join("data")).await?;
+        mounts.push(("fetched".to_owned(), folder));
+    }
     tokio::fs::write(
         code.join("main.py"),
         spec["script"].as_str().ok_or("the job has no script")?,
