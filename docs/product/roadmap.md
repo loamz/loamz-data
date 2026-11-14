@@ -74,7 +74,7 @@ search, network isolation and traces are in the beta.
 | Apps act as a principal, never with more access | governance | ✅ | | | | | |
 | A catalog belongs to one workspace | governance | ✅ | | | | | |
 | Grants on compute and storage | governance | | 📅 | | | | |
-| Row filters and column masks | governance | | | | ✅ | | |
+| Row filters and column masks, enforced by rewriting the statement on the server | governance | ✅ | | | | | |
 | Lineage | governance | | | | | | ❓ |
 | Erase a person's data; the audit chain stays verifiable (`/audit/verify`) | governance | ✅ | | | | | |
 | Personal data: column tags, retention, erasure across table snapshots | governance | | | | | | ❓ |
@@ -98,12 +98,13 @@ search, network isolation and traces are in the beta.
 | Serverless SQL | compute | ✅ | | | | | |
 | Active-run cap per organization | compute | ✅ | | | | | |
 | Benchmark of the query path (`bench/run.py`) | compute | ✅ | | | | | |
-| Warm engine (Rust, DuckDB, all cores), on machines (built, being measured); on serverless | compute | | | 🛠️ | | | |
+| Warm engine (Rust, DuckDB, all cores) on machines: 0.19 to 0.29 s warm in gVisor | compute | ✅ | | | | | |
+| The same warm engine on serverless (Modal) | compute | | | 📅 | | | |
 | A statement's whole result as an Arrow file read by a signed address, or as Parquet saved in the person's volume | compute | ✅ | | | | | |
 | Arrow results streamed while the statement runs | compute | | | 📅 | | | |
-| Ranged reads instead of downloading tables (through the broker, being measured) | compute | | | 🛠️ | | | |
+| Ranged reads instead of downloading tables, through the storage broker with a shared cache (measured: a column or a filter moves a fraction of a file) | compute | ✅ | | | | | |
 | Credential cache: the same table read twice asks the store once | compute | ✅ | | | | | |
-| Notifications instead of polling | compute | | | 📅 | | | |
+| Notifications instead of polling (a waiting request and the agent are woken when work is queued or a run ends) | compute | ✅ | | | | | |
 | Sandboxes for agents: a thread's results and files in the person's volume, read through the storage broker (proposal 0006) | compute | | | | 🛠️ | | |
 | Run cap per workspace (below the organization's), set by account admins | compute | ✅ | | | | | |
 | Sandbox lifecycle (create, idle, stop, delete) | compute | | | | | 📅 | |
@@ -111,7 +112,7 @@ search, network isolation and traces are in the beta.
 | Triggers (on a table change) | compute | | | | | | ❓ |
 | **Storage** | | | | | | | |
 | S3-compatible store; short-lived credentials scoped to one folder (R2) | storage | ✅ | | | | | |
-| Credentials and locations per workspace; paths never overlap | storage | ✅ | |
+| Credentials and locations per workspace; paths never overlap | storage | ✅ | | | | | |
 | A catalog on a registered location (its root is the location's folder) | storage | ✅ | | | | | |
 | A store per location: a customer's own bucket (RustFS proven; MinIO and R2 gated on conformance tests; AWS needs our own AWS identity) | storage | ✅ | | | | | |
 | Write-only storage credentials in OpenBao: rotate, check, delete | storage | ✅ | | | | | |
@@ -121,7 +122,7 @@ search, network isolation and traces are in the beta.
 | Defined behavior when access is revoked | storage | | | | | 📅 | |
 | **Secrets and recovery** | | | | | | | |
 | Every secret in OpenBao; the server keeps references (dev: OpenBao in compose) | secrets | ✅ | | | | | |
-| Production OpenBao: audit device, three-share unseal, snapshots, a tested restore (role written, being run on a test machine) | secrets | | | | | 🛠️ | |
+| Production OpenBao: three-share unseal and root token revoked (proven on a test host); audit device, snapshots and a tested restore still to prove | secrets | | | | | 🛠️ | |
 | One sign-in for operator tools: OpenBao and RustFS through Keycloak (development) | identity | ✅ | | | | | |
 | The same in production: the realm template and each tool's settings (written, being tested) | identity | | | | | 🛠️ | |
 | Tables readable without our server (version hint) | recovery | ✅ | | | | | |
@@ -135,7 +136,7 @@ search, network isolation and traces are in the beta.
 | Traces | platform | | | | | 📅 | |
 | Outbound traffic denied by default | platform | | | | | 📅 | |
 | Production deployment (`*.data.loamz.com`) | platform | | | | | 🛠️ | |
-| Limits an organization's admin sets (`Entitlements`), with safety caps | platform | | | | | 📅 | |
+| Limits an organization's admin sets (`Entitlements`: who may use SQL, jobs, compute) | platform | ✅ | | | | | |
 | Durable usage events (outbox) and cost allocation (`UsageSink`) | platform | | | | | | 📅 |
 | Self-hosted install: guide, one-organization default, upgrades | platform | | | | | | 📅 |
 | Loamz Cloud: sign-up, plans, billing, one private service for every product | platform | | | | | | 📅 |
